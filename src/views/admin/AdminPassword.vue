@@ -5,6 +5,7 @@ import { useToast } from 'primevue/usetoast';
 import { adminApi } from '@/api';
 import { useAdminSession } from '@/stores/session';
 import { errorMessage } from '@/utils/format';
+import { hasMinimumAdminPasswordLength, minimumAdminPasswordCharacters } from '@/utils/passwordPolicy';
 
 const router = useRouter();
 const toast = useToast();
@@ -17,8 +18,8 @@ const error = ref('');
 
 async function submit() {
   error.value = '';
-  if (newPassword.value.length < 14 || newPassword.value !== confirmation.value) {
-    error.value = 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 14 ตัวอักษรและยืนยันให้ตรงกัน';
+  if (!currentPassword.value || !hasMinimumAdminPasswordLength(newPassword.value) || newPassword.value !== confirmation.value) {
+    error.value = `กรอกรหัสผ่านปัจจุบัน และตั้งรหัสผ่านใหม่อย่างน้อย ${minimumAdminPasswordCharacters} ตัวอักษรโดยยืนยันให้ตรงกัน`;
     return;
   }
   loading.value = true;
@@ -40,7 +41,7 @@ async function submit() {
       <Message v-if="error" severity="error" :closable="false" class="mb-5">{{ error }}</Message>
       <form class="grid gap-5" @submit.prevent="submit">
         <div class="grid gap-2"><label for="current">รหัสผ่านปัจจุบัน</label><Password input-id="current" v-model="currentPassword" :feedback="false" toggle-mask fluid /></div>
-        <div class="grid gap-2"><label for="new">รหัสผ่านใหม่ (อย่างน้อย 14 ตัว)</label><Password input-id="new" v-model="newPassword" toggle-mask fluid /></div>
+        <div class="grid gap-2"><label for="new">รหัสผ่านใหม่ (อย่างน้อย {{ minimumAdminPasswordCharacters }} ตัว)</label><Password input-id="new" v-model="newPassword" toggle-mask fluid /></div>
         <div class="grid gap-2"><label for="confirm">ยืนยันรหัสผ่านใหม่</label><Password input-id="confirm" v-model="confirmation" :feedback="false" toggle-mask fluid /></div>
         <Button type="submit" label="บันทึกรหัสผ่าน" icon="pi pi-shield" :loading="loading" />
       </form>

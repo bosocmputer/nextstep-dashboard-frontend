@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAdminSession } from '@/stores/session';
 import { errorMessage } from '@/utils/format';
+import { hasAdminLoginInput } from '@/utils/passwordPolicy';
 
 const route = useRoute();
 const router = useRouter();
@@ -14,8 +15,8 @@ const error = ref('');
 
 async function submit() {
   error.value = '';
-  if (!username.value.trim() || password.value.length < 12) {
-    error.value = 'กรุณากรอก username และรหัสผ่านอย่างน้อย 12 ตัวอักษร';
+  if (!hasAdminLoginInput(username.value, password.value)) {
+    error.value = 'กรุณากรอก username และรหัสผ่าน';
     return;
   }
   loading.value = true;
