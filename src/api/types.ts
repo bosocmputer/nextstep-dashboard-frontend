@@ -26,6 +26,7 @@ export type ReportRowPage = components['schemas']['ReportRowPage'];
 export type ViewerMe = components['schemas']['ViewerMe'];
 export type ViewerTenant = components['schemas']['ViewerTenant'];
 export type DeliveryPage = components['schemas']['DeliveryPage'];
+export type LineQuotaStatus = components['schemas']['LineQuotaStatus'];
 export type AuditPage = components['schemas']['AuditPage'];
 export type CreateReportRunInput = components['schemas']['CreateReportRunInput'];
 

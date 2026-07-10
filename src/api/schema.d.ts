@@ -321,6 +321,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/line-quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Provider-wide shared OA quota status. Consumption includes messages sent by other systems and LINE Official Account Manager. */
+        get: operations["getLineQuota"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/line-deliveries": {
         parameters: {
             query?: never;
@@ -831,6 +848,19 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             expiresAt: string;
+        };
+        LineQuotaStatus: {
+            /** @enum {string} */
+            state: "READY" | "UNLIMITED" | "STALE" | "UNSYNCED";
+            /** @description Provider target limit; null means unlimited or not yet synced, distinguished by state. */
+            providerLimit: number | null;
+            /** @description Approximate provider-wide consumption including Nexflow and OA Manager. */
+            providerConsumed: number | null;
+            /** @description Push messages accepted from Nextstep Dashboard in the current month. */
+            locallyAccepted: number;
+            operationalReservePercent: number;
+            /** Format: date-time */
+            syncedAt: string | null;
         };
         DeliveryPage: {
             data: components["schemas"]["Delivery"][];
@@ -1665,6 +1695,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportRunPage"];
+                };
+            };
+        };
+    };
+    getLineQuota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe quota metadata without channel credentials. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LineQuotaStatus"];
                 };
             };
         };

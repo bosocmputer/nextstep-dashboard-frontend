@@ -1,12 +1,36 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { apiRequest } from '@/api/client';
-import { reportDefinitions } from '@/api';
+import { adminApi, reportDefinitions, type LineQuotaStatus } from '@/api';
 
 const ready = ref<'checking' | 'ready' | 'unavailable'>('checking');
+const lineQuota = ref<LineQuotaStatus>();
 onMounted(async () => {
-  try { await apiRequest('/api/v1/health/ready', { timeoutMs: 3000 }); ready.value = 'ready'; }
-  catch { ready.value = 'unavailable'; }
+  const [healthResult, quotaResult] = await Promise.allSettled([
+    apiRequest('/api/v1/health/ready', { timeoutMs: 3000 }), adminApi.lineQuota()
+  ]);
+  ready.value = healthResult.status === 'fulfilled' ? 'ready' : 'unavailable';
+  if (quotaResult.status === 'fulfilled') lineQuota.value = quotaResult.value;
+});
+
+const quotaPercent = computed(() => {
+  const status = lineQuota.value;
+  if (!status?.providerLimit || status.providerConsumed === null) return 0;
+  return Math.min(100, Math.round(status.providerConsumed / status.providerLimit * 100));
+});
+const quotaRemaining = computed(() => {
+  const status = lineQuota.value;
+  if (status?.providerLimit === null || status?.providerConsumed === null || status?.providerLimit === undefined) return undefined;
+  return Math.max(0, status.providerLimit - status.providerConsumed);
+});
+const quotaSeverity = computed(() => {
+  const status = lineQuota.value;
+  if (!status || status.state === 'UNSYNCED' || status.state === 'STALE') return 'warn';
+  if (status.providerLimit && status.providerConsumed !== null) {
+    const usable = status.providerLimit * (100 - status.operationalReservePercent) / 100;
+    if (status.providerConsumed >= usable) return 'danger';
+  }
+  return 'success';
 });
 
 const shortcuts = [
@@ -18,6 +42,18 @@ const shortcuts = [
 
 <template>
   <div class="page-header"><div><h1 class="page-title">ภาพรวมระบบ</h1><p class="page-subtitle">ศูนย์ควบคุมรายงาน SML และ LINE delivery</p></div><Tag :severity="ready === 'ready' ? 'success' : ready === 'checking' ? 'secondary' : 'danger'" :value="ready === 'ready' ? 'API พร้อมใช้งาน' : ready === 'checking' ? 'กำลังตรวจสอบ' : 'API ไม่พร้อม'" /></div>
+  <section class="surface-card rounded-xl p-5 mb-6" aria-labelledby="line-quota-title">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 id="line-quota-title" class="text-lg font-semibold m-0">LINE OA กลาง</h2><p class="m-0 mt-1 text-sm text-muted-color">ยอดประมาณจาก LINE รวม Nexflow และ OA Manager · Nextstep accepted {{ (lineQuota?.locallyAccepted ?? 0).toLocaleString('th-TH') }} ข้อความ</p></div>
+      <Tag :severity="quotaSeverity" :value="lineQuota?.state ?? 'กำลังโหลด'" />
+    </div>
+    <template v-if="lineQuota?.state === 'READY' && lineQuota.providerLimit !== null && lineQuota.providerConsumed !== null">
+      <div class="flex flex-wrap justify-between gap-2 mt-4 mb-2 text-sm"><span>ใช้แล้ว {{ lineQuota.providerConsumed.toLocaleString('th-TH') }} / {{ lineQuota.providerLimit.toLocaleString('th-TH') }}</span><span>เหลือประมาณ {{ quotaRemaining?.toLocaleString('th-TH') }} · สำรอง {{ lineQuota.operationalReservePercent }}%</span></div>
+      <ProgressBar :value="quotaPercent" :show-value="false" style="height: .6rem" />
+    </template>
+    <Message v-else-if="lineQuota?.state === 'STALE' || lineQuota?.state === 'UNSYNCED' || !lineQuota" severity="warn" :closable="false" class="mt-4">ข้อมูล quota ยังไม่สด ระบบส่งยังใช้ retry และจะปฏิบัติต่อ LINE 429 เป็นเหตุขัดข้องชั่วคราว</Message>
+    <Message v-else-if="lineQuota.state === 'UNLIMITED'" severity="success" :closable="false" class="mt-4">OA นี้ไม่มี target limit ที่ LINE รายงาน</Message>
+  </section>
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
     <RouterLink v-for="item in shortcuts" :key="item.to" :to="item.to" class="surface-card rounded-xl p-5 no-underline text-color hover:border-primary transition-colors">
       <div class="flex items-start justify-between"><div><h2 class="text-lg font-semibold mt-0 mb-2">{{ item.label }}</h2><p class="m-0 text-muted-color">{{ item.detail }}</p></div><span class="grid place-items-center w-11 h-11 rounded-xl bg-primary-50 dark:bg-primary-950 text-primary"><i :class="['pi', item.icon]" /></span></div>

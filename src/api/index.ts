@@ -1,7 +1,7 @@
 import { apiRequest, newIdempotencyKey, queryString } from './client';
 import type {
   AdminSession, AuditPage, CreateReportRunInput, DataPage, DeliveryPage, Recipient, RecipientPage, ReportDefinition,
-  FlexPreview, FlexPreviewInput, NotificationExecution, ReportKey, ReportRowPage, ReportRun, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
+  FlexPreview, FlexPreviewInput, LineQuotaStatus, NotificationExecution, ReportKey, ReportRowPage, ReportRun, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
   SMLConnectionInput, SMLConnectionStatus, SMLConnectionTestResult, Tenant, TenantInput, TenantPage, TenantPatch,
   ViewerMe, ViewerTenant
 } from './types';
@@ -30,6 +30,7 @@ export const adminApi = {
   activateSchedule: (tenantId: string, scheduleId: string) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/activate`, { method: 'POST', scope: 'admin' }),
   pauseSchedule: (tenantId: string, scheduleId: string) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/pause`, { method: 'POST', scope: 'admin' }),
   testSendSchedule: (tenantId: string, scheduleId: string) => apiRequest<NotificationExecution>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/test-send`, { method: 'POST', scope: 'admin', idempotencyKey: newIdempotencyKey('schedule-test-send') }),
+  lineQuota: () => apiRequest<LineQuotaStatus>(`${api}/admin/line-quota`),
   reportRuns: (filters: { cursor?: string; tenantId?: string; status?: string } = {}) => apiRequest<ReportRunPage>(`${api}/admin/report-runs${queryString({ ...filters, pageSize: 50 })}`),
   deliveries: (filters: { cursor?: string; tenantId?: string } = {}) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: 50 })}`),
   audit: (filters: { cursor?: string; tenantId?: string } = {}) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: 50 })}`)

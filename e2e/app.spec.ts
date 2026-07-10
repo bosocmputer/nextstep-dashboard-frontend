@@ -29,6 +29,10 @@ async function mockAdminLogin(page: Page) {
     return route.fulfill(json(session));
   });
   await page.route(`**${api}/health/ready`, (route) => route.fulfill(json({ status: 'ready' })));
+  await page.route(`**${api}/admin/line-quota`, (route) => route.fulfill(json({
+    state: 'READY', providerLimit: 5000, providerConsumed: 4200, locallyAccepted: 24,
+    operationalReservePercent: 10, syncedAt: '2026-07-10T12:00:00Z'
+  })));
 }
 
 test('admin guard redirects an anonymous user to sign in', async ({ page }) => {
@@ -53,6 +57,7 @@ test('admin can sign in and sees API readiness', async ({ page }) => {
   await expect(page).toHaveURL('/admin');
   await expect(page.getByRole('heading', { name: 'ภาพรวมระบบ' })).toBeVisible();
   await expect(page.getByText('API พร้อมใช้งาน')).toBeVisible();
+  await expect(page.getByText('ใช้แล้ว 4,200 / 5,000')).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 
