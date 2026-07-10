@@ -115,6 +115,47 @@ test('mobile viewer renders only reports returned by permission API', async ({ p
   expect(consoleErrors).toEqual([]);
 });
 
+test('mobile report details use stacked rows without horizontal overflow', async ({ page }) => {
+  const consoleErrors = captureUnexpectedConsoleErrors(page);
+  const runId = '77777777-7777-4777-8777-777777777777';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({
+    recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-11T00:00:00Z'
+  })));
+  await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({
+    data: [{ id: tenantId, name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', reportKeys: ['sales_goods_services'] }],
+    page: { hasMore: false }
+  })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({
+    data: [{ reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false }],
+    page: { hasMore: false }
+  })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports/sales_goods_services/runs**`, (route) => {
+    if (route.request().url().includes('/rows')) {
+      return route.fulfill(json({
+        runId, columns: ['doc_no', 'total_amount'], data: [{ doc_no: 'IV-001', total_amount: '1250.00' }],
+        page: { hasMore: false }
+      }));
+    }
+    return route.fulfill(json({
+      id: runId, tenantId, reportKey: 'sales_goods_services', status: 'SUCCEEDED', periodPreset: 'YESTERDAY',
+      dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 1, isTruncated: false,
+      summary: { document_count: '1', total_amount: '1250.00' }, queuedAt: '2026-07-10T00:00:00Z',
+      finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z'
+    }, route.request().method() === 'POST' ? 201 : 200));
+  });
+
+  await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services`);
+
+  const mobileDetails = page.getByLabel('รายละเอียดรายงานแบบมือถือ');
+  await expect(mobileDetails).toBeVisible();
+  await expect(mobileDetails.getByText('IV-001')).toBeVisible();
+  await expect(mobileDetails.getByText('1,250')).toBeVisible();
+  const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(hasHorizontalOverflow).toBe(false);
+  expect(consoleErrors).toEqual([]);
+});
+
 test('admin previews the exact single Flex card with numeric samples', async ({ page }) => {
   const consoleErrors = captureUnexpectedConsoleErrors(page);
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
