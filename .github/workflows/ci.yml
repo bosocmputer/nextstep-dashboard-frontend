@@ -44,8 +44,24 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           build-args: VITE_LINE_LIFF_ID=ci-placeholder
           tags: nextstep-dashboard-frontend:ci
+      - name: Verify runtime security headers
+        run: |
+          set -eu
+          container=$(docker run --rm -d --add-host api:127.0.0.1 -p 127.0.0.1:18080:8080 nextstep-dashboard-frontend:ci)
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT INT TERM
+          attempts=0
+          until curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; do
+            attempts=$((attempts + 1))
+            if [ "$attempts" -ge 30 ]; then
+              docker logs "$container"
+              exit 1
+            fi
+            sleep 1
+          done
+          ./deploy/nginx-headers-test.sh
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
