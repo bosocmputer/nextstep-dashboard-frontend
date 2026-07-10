@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDateOnly, formatMetric, metricLabel } from './format';
+import { errorMessage, formatDateOnly, formatMetric, metricLabel } from './format';
 
 describe('format utilities', () => {
   it('preserves the local calendar date instead of converting through UTC', () => {
@@ -14,6 +14,12 @@ describe('format utilities', () => {
 
   it('uses Thai KPI labels with a readable fallback', () => {
     expect(metricLabel('gross_profit_amount')).toBe('กำไรขั้นต้น');
+    expect(metricLabel('doc_no')).toBe('เลขที่เอกสาร');
     expect(metricLabel('custom_metric')).toBe('custom metric');
+  });
+
+  it('turns known API error codes into actionable Thai messages', () => {
+    expect(errorMessage({ code: 'REPORT_CONCURRENCY_LIMIT', message: 'English provider text' })).toContain('กำลังสร้างรายงาน');
+    expect(errorMessage({ code: 'FUTURE_ERROR', message: 'ข้อความสำรอง' })).toBe('ข้อความสำรอง');
   });
 });

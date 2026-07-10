@@ -11,7 +11,7 @@ const { login } = useAdminSession();
 const username = ref('superadmin');
 const password = ref('');
 const loading = ref(false);
-const error = ref('');
+const error = ref(route.query.sessionError === '1' ? 'ไม่สามารถตรวจสอบ Session ได้ กรุณาเข้าสู่ระบบใหม่' : '');
 
 async function submit() {
   error.value = '';
@@ -34,10 +34,10 @@ async function submit() {
 
 <template>
   <main class="min-h-screen grid place-items-center px-4 py-10 bg-surface-50 dark:bg-surface-950">
-    <section class="w-full max-w-md surface-card rounded-2xl p-7 md:p-9 shadow-sm">
+    <section class="login-card w-full max-w-md surface-card p-7 md:p-9">
       <div class="flex items-center gap-3 mb-7">
-        <div class="grid place-items-center w-12 h-12 rounded-xl bg-primary text-primary-contrast"><i class="pi pi-chart-line text-xl" /></div>
-        <div><h1 class="m-0 text-2xl font-bold">Nextstep Admin</h1><p class="m-0 mt-1 text-muted-color">เข้าสู่ระบบผู้ดูแลส่วนกลาง</p></div>
+        <div class="login-mark grid place-items-center w-12 h-12 bg-primary text-primary-contrast"><i class="pi pi-chart-line text-xl" /></div>
+        <div class="min-w-0"><h1 class="login-title m-0 font-bold">Nextstep Admin</h1><p class="m-0 mt-1 text-muted-color">เข้าสู่ระบบผู้ดูแลส่วนกลาง</p></div>
       </div>
       <Message v-if="error" severity="error" :closable="false" class="mb-5">{{ error }}</Message>
       <form class="grid gap-5" @submit.prevent="submit">
@@ -49,3 +49,9 @@ async function submit() {
     </section>
   </main>
 </template>
+
+<style scoped>
+.login-card { border-radius: var(--content-border-radius); }
+.login-mark { flex: 0 0 3rem; border-radius: var(--content-border-radius); }
+.login-title { font-size: 1.5rem; white-space: nowrap; }
+</style>

@@ -1,19 +1,52 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useToast } from 'primevue/usetoast';
 import liff from '@line/liff';
-import { ApiError, viewerApi } from '@/api';
+import { ApiError, reportDefinitionByKey, viewerApi } from '@/api';
+import AppShell from '@/layout/AppShell.vue';
+import type { NavigationItem } from '@/layout/menu';
 import { useViewerSession } from '@/stores/viewer';
+import { reportIcon } from '@/utils/dashboard';
 import { errorMessage } from '@/utils/format';
 
 const route = useRoute(); const router = useRouter();
-const { state, loadViewer, setViewer, setTenants, clearViewer } = useViewerSession();
+const toast = useToast();
+const { state, loadViewer, setViewer, setTenants, selectTenant, ensureReports, clearViewer } = useViewerSession();
 const stage = ref<'loading' | 'ready' | 'error'>('loading'); const message = ref('');
+const selectedTenant = computed(() => state.tenants.find((tenant) => tenant.id === state.selectedTenantId));
+const selectedTenantId = computed({
+  get: () => state.selectedTenantId,
+  set: (tenantId: string) => { void switchTenant(tenantId); }
+});
+const tenantOptions = computed(() => [...state.tenants]);
+const availableReports = computed(() => state.reportsByTenant[state.selectedTenantId]
+  ?? selectedTenant.value?.reportKeys.map((reportKey) => reportDefinitionByKey.get(reportKey)).filter((item) => item !== undefined)
+  ?? []);
+const menuModel = computed<NavigationItem[]>(() => [
+  { label: 'ภาพรวมผู้บริหาร', items: [
+    { label: 'ภาพรวมร้าน', icon: 'pi pi-fw pi-home', to: state.selectedTenantId ? `/app/tenant/${state.selectedTenantId}` : '/app' }
+  ] },
+  { label: 'รายงาน', items: availableReports.value.map((report) => ({
+    label: report.label,
+    icon: reportIcon(report.reportKey),
+    to: `/app/tenant/${state.selectedTenantId}/report/${report.reportKey}`
+  })) }
+]);
+
+async function prepareTenantContext() {
+  const routeTenantId = typeof route.params.tenantId === 'string' ? route.params.tenantId : '';
+  const tenantId = state.tenants.some((tenant) => tenant.id === routeTenantId) ? routeTenantId : state.selectedTenantId || state.tenants[0]?.id || '';
+  if (!tenantId) return;
+  selectTenant(tenantId);
+  await ensureReports(tenantId);
+  if (routeTenantId && routeTenantId !== tenantId) await router.replace(`/app/tenant/${tenantId}`);
+}
 
 async function initialize() {
   stage.value = 'loading'; message.value = '';
   try {
-    try { await loadViewer(); stage.value = 'ready'; return; }
+    try { await loadViewer(); await prepareTenantContext(); stage.value = 'ready'; return; }
     catch (cause) { if (!(cause instanceof ApiError && cause.status === 401)) throw cause; }
     const liffId = import.meta.env.VITE_LINE_LIFF_ID;
     if (!liffId || liffId.startsWith('replace-')) throw new Error('ยังไม่ได้ตั้งค่า LINE LIFF ID สำหรับ environment นี้');
@@ -24,7 +57,7 @@ async function initialize() {
     const invitationReference = route.path.endsWith('/invite') && typeof route.query.ref === 'string' ? route.query.ref : undefined;
     const deliveryReference = typeof route.query.deliveryRef === 'string' ? route.query.deliveryRef : undefined;
     const me = await viewerApi.exchange(idToken, invitationReference, deliveryReference);
-    setViewer(me); setTenants((await viewerApi.tenants()).data);
+    setViewer(me); setTenants((await viewerApi.tenants()).data); await prepareTenantContext();
     if (invitationReference || deliveryReference) await router.replace({ path: '/app' });
     stage.value = 'ready';
   } catch (cause) {
@@ -35,24 +68,43 @@ async function initialize() {
   }
 }
 
+async function switchTenant(tenantId: string) {
+  if (!tenantId || tenantId === state.selectedTenantId && route.params.tenantId === tenantId) return;
+  try {
+    await ensureReports(tenantId);
+    selectTenant(tenantId);
+    await router.push(`/app/tenant/${tenantId}`);
+  } catch (cause) { toast.add({ severity: 'error', summary: 'เปลี่ยนร้านไม่สำเร็จ', detail: errorMessage(cause), life: 4500 }); }
+}
+
 async function logout() {
   try { await viewerApi.logout(); } finally { clearViewer(); await router.replace('/app'); await initialize(); }
 }
 onMounted(initialize);
+watch(() => route.params.tenantId, (tenantId) => {
+  if (stage.value === 'ready' && typeof tenantId === 'string' && state.tenants.some((item) => item.id === tenantId) && tenantId !== state.selectedTenantId) {
+    selectTenant(tenantId);
+    void ensureReports(tenantId).catch((cause) => { toast.add({ severity: 'error', summary: 'โหลดสิทธิ์รายงานไม่สำเร็จ', detail: errorMessage(cause), life: 4500 }); });
+  }
+});
 </script>
 
 <template>
-  <div class="viewer-app min-h-screen bg-surface-50 dark:bg-surface-950">
-    <header class="sticky top-0 z-20 bg-surface-0/95 dark:bg-surface-900/95 backdrop-blur border-b border-surface">
-      <div class="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-3"><RouterLink to="/app" class="flex items-center gap-3 no-underline text-color font-bold"><span class="grid place-items-center w-10 h-10 rounded-xl bg-primary text-primary-contrast"><i class="pi pi-chart-line" /></span><span>NEXTSTEP</span></RouterLink><div v-if="stage === 'ready'" class="flex items-center gap-2"><span class="hidden sm:inline text-sm text-muted-color">{{ state.me?.displayName }}</span><Button icon="pi pi-sign-out" text rounded aria-label="ออกจากระบบ" @click="logout" /></div></div>
-    </header>
-    <main class="max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-8">
-      <div v-if="stage === 'loading'" class="max-w-2xl mx-auto surface-card rounded-2xl p-6"><div class="flex items-center gap-4 mb-5"><ProgressSpinner style="width: 2rem; height: 2rem" stroke-width="6" /><div><h1 class="text-xl font-semibold m-0">กำลังยืนยัน LINE</h1><p class="text-muted-color mt-1 mb-0">ตรวจสอบตัวตนและสิทธิ์ล่าสุด</p></div></div><Skeleton height="10rem" /></div>
-      <section v-else-if="stage === 'error'" class="max-w-xl mx-auto surface-card rounded-2xl p-7 text-center"><i class="pi pi-shield text-5xl text-red-500" /><h1 class="text-2xl font-bold mb-2">ไม่สามารถเปิด Dashboard</h1><p class="text-muted-color safe-wrap">{{ message }}</p><Button label="ลองใหม่" icon="pi pi-refresh" class="mt-4" @click="initialize" /></section>
-      <RouterView v-else />
-    </main>
+  <div v-if="stage !== 'ready'" class="viewer-gate min-h-screen grid place-items-center px-4 bg-surface-50 dark:bg-surface-950">
+    <div v-if="stage === 'loading'" class="w-full max-w-2xl surface-card surface-card-panel p-6"><div class="flex items-center gap-4 mb-5"><ProgressSpinner style="width: 2rem; height: 2rem" stroke-width="6" /><div><h1 class="text-xl font-semibold m-0">กำลังยืนยัน LINE</h1><p class="text-muted-color mt-1 mb-0">ตรวจสอบตัวตนและสิทธิ์ล่าสุด</p></div></div><Skeleton height="10rem" /></div>
+    <section v-else class="w-full max-w-xl surface-card surface-card-panel p-7 text-center"><i class="pi pi-shield text-5xl text-red-500" /><h1 class="text-2xl font-bold mb-2">ไม่สามารถเปิด Dashboard</h1><p class="text-muted-color safe-wrap">{{ message }}</p><Button label="ลองใหม่" icon="pi pi-refresh" class="mt-4" @click="initialize" /></section>
   </div>
-  <Toast />
+  <AppShell v-else :menu-model="menuModel" :home-to="selectedTenant ? `/app/tenant/${selectedTenant.id}` : '/app'" :account-label="state.me?.displayName" @sign-out="logout">
+    <template #topbar-context>
+      <Select v-if="state.tenants.length > 1" v-model="selectedTenantId" :options="tenantOptions" option-label="name" option-value="id" aria-label="เลือกร้านค้า" class="viewer-tenant-select" />
+      <span v-else-if="selectedTenant" class="hidden sm:inline self-center text-sm font-medium"><i class="pi pi-building mr-2 text-primary" />{{ selectedTenant.name }}</span>
+    </template>
+    <RouterView />
+  </AppShell>
 </template>
 
-<style scoped>.viewer-app { color: var(--text-color); }</style>
+<style scoped>
+.surface-card-panel { border-radius: var(--content-border-radius); }
+.viewer-tenant-select { width: min(15rem, 30vw); }
+@media (max-width: 575px) { .viewer-tenant-select { width: 8rem; } }
+</style>

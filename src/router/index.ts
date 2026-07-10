@@ -27,6 +27,7 @@ const router = createRouter({
       children: [
         { path: '', name: 'viewer-home', component: () => import('@/views/viewer/ViewerHome.vue') },
         { path: 'invite', name: 'viewer-invite', component: () => import('@/views/viewer/ViewerHome.vue') },
+        { path: 'tenant/:tenantId', name: 'viewer-overview', component: () => import('@/views/viewer/ExecutiveOverview.vue') },
         { path: 'tenant/:tenantId/report/:reportKey', name: 'viewer-report', component: () => import('@/views/viewer/ViewerReport.vue') }
       ]
     },
@@ -37,12 +38,16 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const { state, ensureAdminSession } = useAdminSession();
   if (to.meta.requiresAdmin) {
-    const authenticated = await ensureAdminSession();
+    let authenticated: boolean;
+    try { authenticated = await ensureAdminSession(); }
+    catch { return { name: 'admin-login', query: { redirect: to.fullPath, sessionError: '1' } }; }
     if (!authenticated) return { name: 'admin-login', query: { redirect: to.fullPath } };
     if (state.session?.mustRotateBootstrapPassword && to.name !== 'admin-password') return { name: 'admin-password' };
   }
   if (to.meta.guestOnly) {
-    const authenticated = await ensureAdminSession();
+    let authenticated: boolean;
+    try { authenticated = await ensureAdminSession(); }
+    catch { return true; }
     if (authenticated) return { name: state.session?.mustRotateBootstrapPassword ? 'admin-password' : 'admin-dashboard' };
   }
   return true;

@@ -34,14 +34,14 @@ const quotaSeverity = computed(() => {
 });
 
 const shortcuts = [
-  { label: 'จัดการร้านค้า', detail: 'SML, ผู้รับ และ schedule', icon: 'pi-building', to: '/admin/tenants' },
-  { label: 'ตรวจ Report Runs', detail: 'ดู queue, success และ failure', icon: 'pi-database', to: '/admin/report-runs' },
-  { label: 'ตรวจ LINE Delivery', detail: 'ดู retry และผลส่ง', icon: 'pi-send', to: '/admin/deliveries' }
+  { label: 'จัดการร้านค้า', detail: 'SML ผู้รับ และตารางส่งรายงาน', icon: 'pi-building', to: '/admin/tenants' },
+  { label: 'ตรวจการสร้างรายงาน', detail: 'ดูคิว งานสำเร็จ และข้อผิดพลาด', icon: 'pi-database', to: '/admin/report-runs' },
+  { label: 'ตรวจการส่ง LINE', detail: 'ดูสถานะส่งซ้ำและผลการส่ง', icon: 'pi-send', to: '/admin/deliveries' }
 ];
 </script>
 
 <template>
-  <div class="page-header"><div><h1 class="page-title">ภาพรวมระบบ</h1><p class="page-subtitle">ศูนย์ควบคุมรายงาน SML และ LINE delivery</p></div><Tag :severity="ready === 'ready' ? 'success' : ready === 'checking' ? 'secondary' : 'danger'" :value="ready === 'ready' ? 'API พร้อมใช้งาน' : ready === 'checking' ? 'กำลังตรวจสอบ' : 'API ไม่พร้อม'" /></div>
+  <div class="page-header"><div><h1 class="page-title">ภาพรวมระบบ</h1><p class="page-subtitle">ศูนย์ควบคุมรายงาน SML และการส่ง LINE</p></div><Tag :severity="ready === 'ready' ? 'success' : ready === 'checking' ? 'secondary' : 'danger'" :value="ready === 'ready' ? 'ระบบพร้อมใช้งาน' : ready === 'checking' ? 'กำลังตรวจสอบ' : 'ระบบไม่พร้อม'" /></div>
   <section class="surface-card rounded-xl p-5 mb-6" aria-labelledby="line-quota-title">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div><h2 id="line-quota-title" class="text-lg font-semibold m-0">LINE OA กลาง</h2><p class="m-0 mt-1 text-sm text-muted-color">ยอดประมาณจาก LINE รวม Nexflow และ OA Manager · Nextstep accepted {{ (lineQuota?.locallyAccepted ?? 0).toLocaleString('th-TH') }} ข้อความ</p></div>
@@ -60,7 +60,7 @@ const shortcuts = [
     </RouterLink>
   </div>
   <div class="surface-card rounded-xl p-6">
-    <div class="flex items-center justify-between gap-3 mb-4"><div><h2 class="text-xl font-semibold m-0">Report Catalog V1</h2><p class="text-muted-color mt-1 mb-0">SQL ที่อนุมัติล่วงหน้าเท่านั้น</p></div><Badge :value="reportDefinitions.length" /></div>
+    <div class="flex items-center justify-between gap-3 mb-4"><div><h2 class="text-xl font-semibold m-0">รายงานที่รองรับ</h2><p class="text-muted-color mt-1 mb-0">ใช้เฉพาะคำสั่ง SQL ที่ระบบตรวจสอบไว้ล่วงหน้า</p></div><Badge :value="reportDefinitions.length" /></div>
     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"><div v-for="report in reportDefinitions" :key="report.reportKey" class="rounded-lg border border-surface p-4"><div class="flex items-start justify-between gap-2"><span class="font-medium">{{ report.label }}</span><i v-if="report.isSensitive" class="pi pi-lock text-orange-500" title="ข้อมูลอ่อนไหว" /></div><code class="block mt-2 text-xs text-muted-color safe-wrap">{{ report.reportKey }}</code></div></div>
   </div>
 </template>

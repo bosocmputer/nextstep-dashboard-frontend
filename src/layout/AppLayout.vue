@@ -1,35 +1,31 @@
-<script setup>
-import { useLayout } from '@/layout/composables/layout';
-import { computed } from 'vue';
-import AppFooter from './AppFooter.vue';
-import AppSidebar from './AppSidebar.vue';
-import AppTopbar from './AppTopbar.vue';
+<script setup lang="ts">
+import { useRouter } from 'vue-router';
+import { useAdminSession } from '@/stores/session';
+import type { NavigationItem } from './menu';
+import AppShell from './AppShell.vue';
 
-const { layoutConfig, layoutState, hideMobileMenu } = useLayout();
+const router = useRouter();
+const { state, logout } = useAdminSession();
+const model: NavigationItem[] = [
+  { label: 'จัดการระบบ', items: [
+    { label: 'ภาพรวม', icon: 'pi pi-fw pi-home', to: '/admin' },
+    { label: 'ร้านค้า', icon: 'pi pi-fw pi-building', to: '/admin/tenants' }
+  ] },
+  { label: 'ติดตามการทำงาน', items: [
+    { label: 'การสร้างรายงาน', icon: 'pi pi-fw pi-database', to: '/admin/report-runs' },
+    { label: 'การส่ง LINE', icon: 'pi pi-fw pi-send', to: '/admin/deliveries' },
+    { label: 'ประวัติการใช้งาน', icon: 'pi pi-fw pi-history', to: '/admin/audit' }
+  ] }
+];
 
-const containerClass = computed(() => {
-    return {
-        'layout-overlay': layoutConfig.menuMode === 'overlay',
-        'layout-static': layoutConfig.menuMode === 'static',
-        'layout-overlay-active': layoutState.overlayMenuActive,
-        'layout-mobile-active': layoutState.mobileMenuActive,
-        'layout-static-inactive': layoutState.staticMenuInactive
-    };
-});
+async function signOut() {
+  await logout();
+  await router.replace('/admin/login');
+}
 </script>
 
 <template>
-    <div class="layout-wrapper" :class="containerClass">
-        <AppTopbar />
-        <AppSidebar />
-        <div class="layout-main-container">
-            <div class="layout-main">
-                <router-view />
-            </div>
-            <AppFooter />
-        </div>
-        <div class="layout-mask animate-fadein" @click="hideMobileMenu" />
-    </div>
-    <Toast />
-    <ConfirmDialog />
+  <AppShell :menu-model="model" home-to="/admin" :account-label="state.session?.username" confirm-dialogs @sign-out="signOut">
+    <RouterView />
+  </AppShell>
 </template>

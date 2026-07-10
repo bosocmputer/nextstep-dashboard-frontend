@@ -450,6 +450,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/viewer/tenants/{tenantId}/executive-overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getViewerExecutiveOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/viewer/tenants/{tenantId}/executive-overview/refreshes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createViewerDashboardRefresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/viewer/tenants/{tenantId}/executive-overview/refreshes/{refreshId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getViewerDashboardRefresh"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/viewer/tenants/{tenantId}/reports/{reportKey}/runs": {
         parameters: {
             query?: never;
@@ -474,6 +522,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getViewerReportRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/viewer/tenants/{tenantId}/reports/{reportKey}/runs/{runId}/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getViewerReportDashboard"];
         put?: never;
         post?: never;
         delete?: never;
@@ -564,7 +628,8 @@ export interface components {
             id: string;
             slug: string;
             name: string;
-            timezone: string;
+            /** @enum {string} */
+            timezone: "Asia/Bangkok";
             status: components["schemas"]["TenantStatus"];
             /** Format: date-time */
             accessEndsAt: string;
@@ -581,13 +646,15 @@ export interface components {
         TenantInput: {
             slug: string;
             name: string;
-            timezone: string;
+            /** @enum {string} */
+            timezone: "Asia/Bangkok";
             /** Format: date-time */
             accessEndsAt: string;
         };
         TenantPatch: {
             name?: string;
-            timezone?: string;
+            /** @enum {string} */
+            timezone?: "Asia/Bangkok";
             status?: components["schemas"]["TenantStatus"];
             /** Format: date-time */
             accessEndsAt?: string;
@@ -675,7 +742,8 @@ export interface components {
             name: string;
             daysOfWeek: number[];
             localTime: string;
-            timezone: string;
+            /** @enum {string} */
+            timezone: "Asia/Bangkok";
             periodPreset: components["schemas"]["PeriodPreset"];
             reportKeys: components["schemas"]["ReportKey"][];
             recipientIds: string[];
@@ -684,7 +752,8 @@ export interface components {
             name: string;
             daysOfWeek: number[];
             localTime: string;
-            timezone: string;
+            /** @enum {string} */
+            timezone: "Asia/Bangkok";
             periodPreset: components["schemas"]["PeriodPreset"];
             reportKeys: components["schemas"]["ReportKey"][];
             recipientIds: string[];
@@ -812,6 +881,100 @@ export interface components {
                 [key: string]: unknown;
             }[];
             page: components["schemas"]["PageInfo"];
+        };
+        ReportPeriod: {
+            /** @enum {string} */
+            preset: "YESTERDAY" | "TODAY_TO_NOW" | "MONTH_TO_DATE" | "AS_OF_RUN" | "CUSTOM";
+            /** Format: date */
+            dateFrom: string;
+            /** Format: date */
+            dateTo: string;
+        };
+        /** @enum {string} */
+        MetricUnit: "THB" | "COUNT" | "PERCENT" | "QUANTITY" | "RATIO";
+        MetricComparison: {
+            /** @enum {string} */
+            availability: "AVAILABLE" | "UNAVAILABLE";
+            previousValue?: string;
+            delta?: string;
+            percent?: string;
+            /** @enum {string} */
+            direction?: "UP" | "DOWN" | "SAME";
+        };
+        DashboardMetric: {
+            key: string;
+            label: string;
+            value: string;
+            unit: components["schemas"]["MetricUnit"];
+            comparison: components["schemas"]["MetricComparison"];
+        };
+        VisualizationSeries: {
+            key: string;
+            label: string;
+            values: string[];
+            pointLabels?: string[];
+        };
+        DashboardVisualization: {
+            key: string;
+            title: string;
+            /** @enum {string} */
+            intent: "TREND" | "RANKING" | "COMPOSITION" | "EXCEPTION";
+            unit: components["schemas"]["MetricUnit"];
+            categories: string[];
+            series: components["schemas"]["VisualizationSeries"][];
+            note?: string;
+        };
+        DashboardQuality: {
+            /** @enum {string} */
+            status: "OK" | "WARNING";
+            warnings: string[];
+        };
+        ReportDashboard: {
+            reportKey: components["schemas"]["ReportKey"];
+            version: string;
+            period: components["schemas"]["ReportPeriod"];
+            comparisonPeriod: components["schemas"]["ReportPeriod"];
+            /** @enum {string} */
+            timezone: "Asia/Bangkok";
+            /** Format: date-time */
+            generatedAt: string;
+            kpis: components["schemas"]["DashboardMetric"][];
+            visualizations: components["schemas"]["DashboardVisualization"][];
+            quality: components["schemas"]["DashboardQuality"];
+        };
+        DashboardSnapshot: {
+            /** Format: uuid */
+            runId: string;
+            dashboard: components["schemas"]["ReportDashboard"];
+        };
+        ExecutiveOverview: {
+            /** Format: uuid */
+            tenantId: string;
+            /** @enum {string} */
+            timezone: "Asia/Bangkok";
+            items: components["schemas"]["DashboardSnapshot"][];
+        };
+        DashboardRefreshRun: {
+            reportKey: components["schemas"]["ReportKey"];
+            /** Format: uuid */
+            runId: string;
+            status: components["schemas"]["ReportRunStatus"];
+        };
+        DashboardRefresh: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** @enum {string} */
+            status: "QUEUED" | "RUNNING" | "PARTIAL" | "SUCCEEDED" | "FAILED";
+            total: number;
+            completed: number;
+            failed: number;
+            runs: components["schemas"]["DashboardRefreshRun"][];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            finishedAt?: string | null;
         };
         LineSessionInput: {
             idToken: string;
@@ -1881,6 +2044,83 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    getViewerExecutiveOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest compact dashboards for reports authorized to the verified viewer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutiveOverview"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createViewerDashboardRefresh: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A bounded refresh of all authorized reports was queued. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardRefresh"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getViewerDashboardRefresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                refreshId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current bundle progress derived from its report runs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardRefresh"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     createViewerReportRun: {
         parameters: {
             query?: never;
@@ -1935,6 +2175,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportRun"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getViewerReportDashboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                reportKey: components["parameters"]["ReportKey"];
+                runId: components["parameters"]["RunID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized KPI and chart-ready aggregates from this report run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportDashboard"];
                 };
             };
             403: components["responses"]["Forbidden"];

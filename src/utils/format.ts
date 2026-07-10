@@ -29,6 +29,42 @@ export function formatDateOnly(value: Date): string {
 }
 
 const metricLabels: Record<string, string> = {
+  doc_date: 'วันที่เอกสาร',
+  doc_no: 'เลขที่เอกสาร',
+  doc_time: 'เวลาเอกสาร',
+  doc_ref: 'เลขที่อ้างอิง',
+  doc_ref_date: 'วันที่อ้างอิง',
+  cust_code: 'รหัสลูกค้า/ผู้จำหน่าย',
+  cust_name: 'ชื่อลูกค้า/ผู้จำหน่าย',
+  ar_code: 'รหัสลูกหนี้',
+  ar_detail: 'ชื่อลูกหนี้',
+  item_code: 'รหัสสินค้า',
+  item_name: 'ชื่อสินค้า',
+  ic_code: 'รหัสสินค้า',
+  ic_name: 'ชื่อสินค้า',
+  barcode: 'บาร์โค้ด',
+  wh_code: 'คลัง',
+  shelf_code: 'ที่เก็บ',
+  branch_code: 'สาขา',
+  unit_code: 'หน่วย',
+  unit_name: 'ชื่อหน่วย',
+  qty: 'จำนวน',
+  price: 'ราคา',
+  sum_amount: 'มูลค่ารายการ',
+  total_value: 'มูลค่าก่อนส่วนลด',
+  total_discount: 'ส่วนลดรวม',
+  total_except_discount: 'มูลค่าหลังส่วนลด',
+  total_except_vat: 'มูลค่าก่อนภาษี',
+  total_vat_value: 'ภาษีมูลค่าเพิ่ม',
+  vat_rate: 'อัตราภาษี',
+  vat_type: 'ประเภทภาษี',
+  cashier_code: 'รหัสผู้ทำรายการ',
+  cash_amount: 'เงินสด',
+  transfer_amount: 'เงินโอน',
+  card_amount: 'บัตร',
+  chq_amount: 'เช็ค',
+  coupon_amount: 'คูปอง',
+  total_net_value: 'ยอดสุทธิ',
   document_count: 'จำนวนเอกสาร',
   total_amount: 'ยอดรวม',
   gross_profit_amount: 'กำไรขั้นต้น',
@@ -48,6 +84,21 @@ export function metricLabel(key: string): string {
 }
 
 export function errorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = String(error.code);
+    const messages: Record<string, string> = {
+      INVALID_CREDENTIALS: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง',
+      LOGIN_LOCKED: 'กรอกรหัสผ่านผิดหลายครั้ง ระบบล็อกชั่วคราว กรุณาลองใหม่ภายหลัง',
+      REPORT_ACCESS_FORBIDDEN: 'LINE บัญชีนี้ไม่มีสิทธิ์เปิดรายงานดังกล่าว',
+      REPORT_CONCURRENCY_LIMIT: 'ร้านนี้กำลังสร้างรายงานอยู่ กรุณารอสักครู่แล้วลองใหม่',
+      REPORT_ROWS_EXPIRED: 'ข้อมูลรายละเอียดหมดอายุแล้ว กรุณาอัปเดตรายงานใหม่',
+      REPORT_RUN_NOT_FOUND: 'ไม่พบรายงานนี้หรือรายงานหมดอายุแล้ว',
+      REPORT_NOT_CANCELLABLE: 'รายงานทำงานเสร็จแล้ว จึงยกเลิกไม่ได้',
+      VALIDATION_ERROR: 'ข้อมูลที่กรอกไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
+      VERSION_CONFLICT: 'ข้อมูลถูกแก้ไขจากที่อื่นแล้ว กรุณาโหลดหน้าใหม่ก่อนบันทึก'
+    };
+    if (messages[code]) return messages[code];
+  }
   if (error && typeof error === 'object' && 'message' in error) return String(error.message);
   return 'เกิดข้อผิดพลาด กรุณาลองใหม่';
 }

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { adminApi, type Tenant, type TenantInput } from '@/api';
 import { errorMessage, formatDate } from '@/utils/format';
+import { statusLabel as operationalStatusLabel } from '@/utils/status';
 
 const router = useRouter();
 const toast = useToast();
@@ -18,8 +19,8 @@ const status = ref<string | undefined>();
 const createOpen = ref(false);
 const saving = ref(false);
 const createError = ref('');
-const form = reactive<{ slug: string; name: string; timezone: string; accessEndsAt: Date }>({
-  slug: '', name: '', timezone: 'Asia/Bangkok', accessEndsAt: new Date(new Date().setFullYear(new Date().getFullYear() + 1))
+const form = reactive<{ slug: string; name: string; accessEndsAt: Date }>({
+  slug: '', name: '', accessEndsAt: new Date(new Date().setFullYear(new Date().getFullYear() + 1))
 });
 const statusOptions = [{ label: 'ทั้งหมด', value: undefined }, { label: 'ใช้งาน', value: 'ACTIVE' }, { label: 'ปิดใช้งาน', value: 'DISABLED' }, { label: 'หมดอายุ', value: 'EXPIRED' }];
 
@@ -44,7 +45,7 @@ async function createTenant() {
   }
   saving.value = true;
   try {
-    const input: TenantInput = { slug: form.slug, name: form.name.trim(), timezone: form.timezone, accessEndsAt: form.accessEndsAt.toISOString() };
+    const input: TenantInput = { slug: form.slug, name: form.name.trim(), timezone: 'Asia/Bangkok', accessEndsAt: form.accessEndsAt.toISOString() };
     const created = await adminApi.createTenant(input);
     createOpen.value = false;
     toast.add({ severity: 'success', summary: 'สร้างร้านค้าแล้ว', detail: created.name, life: 3000 });
@@ -72,8 +73,7 @@ onMounted(() => load());
     <DataTable :value="tenants" :loading="loading" data-key="id" striped-rows scrollable>
       <Column field="name" header="ร้านค้า" frozen><template #body="{ data }"><button class="text-left bg-transparent border-0 p-0 text-primary font-semibold cursor-pointer" @click="router.push(`/admin/tenants/${data.id}`)">{{ data.name }}</button><div class="text-xs text-muted-color mt-1">{{ data.slug }}</div></template></Column>
       <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="statusSeverity(data.status)" :value="statusLabel(data.status)" /></template></Column>
-      <Column field="smlReadiness" header="SML"><template #body="{ data }"><Tag :severity="data.smlReadiness === 'READY' ? 'success' : data.smlReadiness === 'FAILED' ? 'danger' : 'warn'" :value="data.smlReadiness || 'UNCONFIGURED'" /></template></Column>
-      <Column field="timezone" header="Timezone" />
+      <Column field="smlReadiness" header="SML"><template #body="{ data }"><Tag :severity="data.smlReadiness === 'READY' ? 'success' : data.smlReadiness === 'FAILED' ? 'danger' : 'warn'" :value="operationalStatusLabel(data.smlReadiness || 'UNCONFIGURED')" /></template></Column>
       <Column field="accessEndsAt" header="สิ้นสุดสิทธิ์"><template #body="{ data }">{{ formatDate(data.accessEndsAt) }}</template></Column>
       <Column header=""><template #body="{ data }"><Button icon="pi pi-chevron-right" text rounded aria-label="เปิดร้าน" @click="router.push(`/admin/tenants/${data.id}`)" /></template></Column>
       <template #empty><div class="py-8 text-center text-muted-color">ไม่พบร้านค้าที่ตรงกับเงื่อนไข</div></template>
@@ -86,7 +86,7 @@ onMounted(() => load());
     <form id="create-tenant" class="grid gap-4" @submit.prevent="createTenant">
       <div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="form.name" maxlength="160" fluid /></div>
       <div class="grid gap-2"><label for="tenant-slug">Slug</label><InputText id="tenant-slug" v-model="form.slug" maxlength="80" placeholder="my-shop" fluid /><small class="text-muted-color">ใช้ในระบบและ log ไม่ควรเปลี่ยนภายหลัง</small></div>
-      <div class="grid gap-2"><label for="tenant-timezone">Timezone</label><Select input-id="tenant-timezone" aria-label="Timezone" v-model="form.timezone" :options="['Asia/Bangkok','Asia/Singapore','Asia/Tokyo']" fluid /></div>
+      <Message severity="info" :closable="false">วันที่และเวลาทั้งหมดใช้เวลาไทย (UTC+7)</Message>
       <div class="grid gap-2"><label for="tenant-expiry">วันสิ้นสุดสิทธิ์</label><DatePicker input-id="tenant-expiry" v-model="form.accessEndsAt" show-icon show-time hour-format="24" fluid /></div>
     </form>
     <template #footer><Button label="ยกเลิก" text @click="createOpen = false" /><Button type="submit" form="create-tenant" label="สร้างร้านค้า" icon="pi pi-check" :loading="saving" /></template>

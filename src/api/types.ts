@@ -29,6 +29,17 @@ export type DeliveryPage = components['schemas']['DeliveryPage'];
 export type LineQuotaStatus = components['schemas']['LineQuotaStatus'];
 export type AuditPage = components['schemas']['AuditPage'];
 export type CreateReportRunInput = components['schemas']['CreateReportRunInput'];
+export type MetricUnit = components['schemas']['MetricUnit'];
+export type MetricComparison = components['schemas']['MetricComparison'];
+export type DashboardMetric = components['schemas']['DashboardMetric'];
+export type VisualizationSeries = components['schemas']['VisualizationSeries'];
+export type DashboardVisualization = components['schemas']['DashboardVisualization'];
+export type DashboardQuality = components['schemas']['DashboardQuality'];
+export type ReportDashboard = components['schemas']['ReportDashboard'];
+export type DashboardSnapshot = components['schemas']['DashboardSnapshot'];
+export type ExecutiveOverview = components['schemas']['ExecutiveOverview'];
+export type DashboardRefreshRun = components['schemas']['DashboardRefreshRun'];
+export type DashboardRefresh = components['schemas']['DashboardRefresh'];
 
 export interface DataPage<T> {
   data: T[];

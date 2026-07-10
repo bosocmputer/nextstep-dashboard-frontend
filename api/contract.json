@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.0.0",
-  "backendCommit": "83679455718865957c800ec4e0c05b19d7530906",
-  "generatedSchemaSha256": "9941b7265be08c1239393de6507036d8f1765d1f29c40a191ccde9bdcfa5896e"
+  "contractVersion": "1.1.0",
+  "backendCommit": "467d2a761537b771ed034b61f3d265d8c32314a2",
+  "generatedSchemaSha256": "dafaa1bd6422b4160ee91a16d07018d3ae06ca631bcc94c779ece511ec5e1207"
 }

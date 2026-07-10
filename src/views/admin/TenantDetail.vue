@@ -8,6 +8,7 @@ import {
   type ScheduleInput, type SMLConnectionStatus, type Tenant
 } from '@/api';
 import { errorMessage, formatDateTime } from '@/utils/format';
+import { statusLabel } from '@/utils/status';
 
 const route = useRoute();
 const router = useRouter();
@@ -38,8 +39,8 @@ const flexPreview = ref<FlexPreview>();
 const previewingFlex = ref(false);
 const testSendingScheduleId = ref('');
 
-const tenantForm = reactive({ name: '', timezone: 'Asia/Bangkok', status: 'DISABLED' as Tenant['status'], accessEndsAt: new Date(), version: 1 });
-const smlForm = reactive({ endpointUrl: '', configFileName: 'config.xml', databaseName: '', username: '', password: '', version: 0 });
+const tenantForm = reactive({ name: '', status: 'DISABLED' as Tenant['status'], accessEndsAt: new Date(), version: 1 });
+const smlForm = reactive({ endpointUrl: '', configFileName: 'config.xml', databaseName: '', version: 0 });
 const scheduleForm = reactive<ScheduleInput>({ name: '', daysOfWeek: [1, 2, 3, 4, 5], localTime: '09:00', timezone: 'Asia/Bangkok', periodPreset: 'YESTERDAY', reportKeys: [], recipientIds: [] });
 
 const activeRecipients = computed(() => recipients.value.filter((item) => item.status === 'ACTIVE'));
@@ -63,14 +64,14 @@ async function load() {
   loading.value = true; error.value = '';
   try {
     tenant.value = await adminApi.getTenant(tenantId);
-    Object.assign(tenantForm, { name: tenant.value.name, timezone: tenant.value.timezone, status: tenant.value.status, accessEndsAt: new Date(tenant.value.accessEndsAt), version: tenant.value.version });
-    scheduleForm.timezone = tenant.value.timezone;
+    Object.assign(tenantForm, { name: tenant.value.name, status: tenant.value.status, accessEndsAt: new Date(tenant.value.accessEndsAt), version: tenant.value.version });
+    scheduleForm.timezone = 'Asia/Bangkok';
     const [smlResult, recipientResult, scheduleResult] = await Promise.allSettled([
       adminApi.getSML(tenantId), adminApi.listRecipients(tenantId), adminApi.listSchedules(tenantId)
     ]);
     if (smlResult.status === 'fulfilled') {
       sml.value = smlResult.value;
-      Object.assign(smlForm, { endpointUrl: '', configFileName: sml.value.configFileName ?? 'config.xml', databaseName: sml.value.databaseName ?? '', username: '', password: '', version: sml.value.version });
+      Object.assign(smlForm, { endpointUrl: '', configFileName: sml.value.configFileName ?? 'config.xml', databaseName: sml.value.databaseName ?? '', version: sml.value.version });
     } else if (!(smlResult.reason instanceof ApiError && smlResult.reason.status === 404)) throw smlResult.reason;
     recipients.value = recipientResult.status === 'fulfilled' ? recipientResult.value.data : [];
     schedules.value = scheduleResult.status === 'fulfilled' ? scheduleResult.value.data : [];
@@ -86,7 +87,7 @@ function saveTenant() {
     confirm.require({
       header: 'ยืนยันการเปลี่ยนสิทธิ์ร้าน',
       message: tenantForm.status !== 'ACTIVE'
-        ? 'การบันทึกจะหยุดการเปิด Dashboard, รอบ Schedule ใหม่ และ LINE delivery ของร้านนี้ทันที'
+        ? 'การบันทึกจะหยุดการเปิด Dashboard รอบส่งรายงานใหม่ และการส่ง LINE ของร้านนี้ทันที'
         : 'คุณกำลังเปลี่ยนสถานะหรือย่อวันสิ้นสุดสิทธิ์ โปรดตรวจสอบวันที่ก่อนบันทึก',
       icon: 'pi pi-exclamation-triangle',
       acceptLabel: 'ยืนยันและบันทึก',
@@ -102,7 +103,7 @@ async function persistTenant() {
   if (!tenant.value) return;
   savingTenant.value = true;
   try {
-    const updated = await adminApi.updateTenant(tenantId, { ...tenantForm, accessEndsAt: tenantForm.accessEndsAt.toISOString() });
+    const updated = await adminApi.updateTenant(tenantId, { ...tenantForm, timezone: 'Asia/Bangkok', accessEndsAt: tenantForm.accessEndsAt.toISOString() });
     tenant.value = updated; tenantForm.version = updated.version;
     toast.add({ severity: 'success', summary: 'บันทึกร้านค้าแล้ว', life: 2500 });
   } catch (cause) { toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail: errorMessage(cause), life: 5000 }); }
@@ -112,10 +113,10 @@ async function persistTenant() {
 function saveSML() {
   if (sml.value?.isConfigured) {
     confirm.require({
-      header: 'ยืนยันแทนที่ SML Connection',
-      message: 'Schedule ของร้านจะไม่พร้อมจนกว่าจะบันทึกและทดสอบ Connection ใหม่ผ่าน',
+      header: 'ยืนยันแทนที่การเชื่อมต่อ SML',
+      message: 'ตารางส่งรายงานของร้านจะไม่พร้อม จนกว่าจะบันทึกและทดสอบการเชื่อมต่อใหม่ผ่าน',
       icon: 'pi pi-exclamation-triangle',
-      acceptLabel: 'แทนที่ Connection',
+      acceptLabel: 'แทนที่การเชื่อมต่อ',
       rejectLabel: 'ยกเลิก',
       accept: () => persistSML()
     });
@@ -128,8 +129,8 @@ async function persistSML() {
   savingSML.value = true;
   try {
     sml.value = await adminApi.replaceSML(tenantId, { ...smlForm });
-    smlForm.version = sml.value.version; smlForm.username = ''; smlForm.password = '';
-    toast.add({ severity: 'success', summary: 'บันทึก SML แล้ว', detail: 'ต้องทดสอบ connection ก่อนเปิด schedule', life: 4000 });
+    smlForm.version = sml.value.version;
+    toast.add({ severity: 'success', summary: 'บันทึก SML แล้ว', detail: 'กรุณาทดสอบการเชื่อมต่อก่อนเปิดตารางส่งรายงาน', life: 4000 });
   } catch (cause) { toast.add({ severity: 'error', summary: 'บันทึก SML ไม่สำเร็จ', detail: errorMessage(cause), life: 5000 }); }
   finally { savingSML.value = false; }
 }
@@ -180,7 +181,7 @@ function openSchedule(item?: Schedule) {
   Object.assign(scheduleForm, item ? {
     name: item.name, daysOfWeek: [...item.daysOfWeek], localTime: item.localTime, timezone: item.timezone,
     periodPreset: item.periodPreset, reportKeys: [...item.reportKeys], recipientIds: [...item.recipientIds]
-  } : { name: '', daysOfWeek: [1, 2, 3, 4, 5], localTime: '09:00', timezone: tenant.value?.timezone ?? 'Asia/Bangkok', periodPreset: 'YESTERDAY', reportKeys: [], recipientIds: [] });
+  } : { name: '', daysOfWeek: [1, 2, 3, 4, 5], localTime: '09:00', timezone: 'Asia/Bangkok', periodPreset: 'YESTERDAY', reportKeys: [], recipientIds: [] });
   scheduleOpen.value = true;
 }
 
@@ -204,15 +205,15 @@ async function previewSchedule() {
 
 async function saveSchedule() {
   if (!scheduleFormValid.value) {
-    toast.add({ severity: 'warn', summary: 'กรอก Schedule ให้ครบ', detail: 'ต้องมีชื่อ วัน เวลา 1–5 รายงาน และผู้รับอย่างน้อย 1 คน', life: 4000 }); return;
+    toast.add({ severity: 'warn', summary: 'กรอกตารางส่งรายงานให้ครบ', detail: 'ต้องมีชื่อ วัน เวลา 1–5 รายงาน และผู้รับอย่างน้อย 1 คน', life: 4000 }); return;
   }
   savingSchedule.value = true;
   try {
     if (editingSchedule.value) await adminApi.updateSchedule(tenantId, editingSchedule.value.id, { ...scheduleForm, version: editingSchedule.value.version });
     else await adminApi.createSchedule(tenantId, { ...scheduleForm });
     schedules.value = (await adminApi.listSchedules(tenantId)).data; scheduleOpen.value = false;
-    toast.add({ severity: 'success', summary: 'บันทึก Schedule แล้ว', life: 2500 });
-  } catch (cause) { toast.add({ severity: 'error', summary: 'บันทึก Schedule ไม่สำเร็จ', detail: errorMessage(cause), life: 6000 }); }
+    toast.add({ severity: 'success', summary: 'บันทึกตารางส่งรายงานแล้ว', life: 2500 });
+  } catch (cause) { toast.add({ severity: 'error', summary: 'บันทึกตารางส่งรายงานไม่สำเร็จ', detail: errorMessage(cause), life: 6000 }); }
   finally { savingSchedule.value = false; }
 }
 
@@ -220,19 +221,19 @@ async function changeScheduleState(item: Schedule) {
   try {
     if (item.status === 'ACTIVE') await adminApi.pauseSchedule(tenantId, item.id); else await adminApi.activateSchedule(tenantId, item.id);
     schedules.value = (await adminApi.listSchedules(tenantId)).data;
-    toast.add({ severity: 'success', summary: item.status === 'ACTIVE' ? 'พัก Schedule แล้ว' : 'เปิด Schedule แล้ว', life: 2500 });
+    toast.add({ severity: 'success', summary: item.status === 'ACTIVE' ? 'พักตารางส่งรายงานแล้ว' : 'เปิดตารางส่งรายงานแล้ว', life: 2500 });
   } catch (cause) { toast.add({ severity: 'error', summary: 'เปลี่ยนสถานะไม่ได้', detail: errorMessage(cause), life: 6000 }); }
 }
 
 function confirmScheduleState(item: Schedule) {
   const activating = item.status !== 'ACTIVE';
   confirm.require({
-    header: activating ? 'ยืนยันเปิด Schedule' : 'ยืนยันพัก Schedule',
+    header: activating ? 'ยืนยันเปิดตารางส่งรายงาน' : 'ยืนยันพักตารางส่งรายงาน',
     message: activating
       ? `ระบบจะเริ่มรันตามรอบถัดไปของ “${item.name}”`
       : `ระบบจะหยุดรอบใหม่ของ “${item.name}” แต่ Run ที่กำลังทำงานจะไม่ถูกยกเลิก`,
     icon: activating ? 'pi pi-play' : 'pi pi-pause',
-    acceptLabel: activating ? 'เปิด Schedule' : 'พัก Schedule',
+    acceptLabel: activating ? 'เปิดใช้งาน' : 'พักไว้',
     rejectLabel: 'ยกเลิก',
     accept: () => changeScheduleState(item)
   });
@@ -240,7 +241,7 @@ function confirmScheduleState(item: Schedule) {
 
 function confirmTestSchedule(item: Schedule) {
   if (item.readinessBlockers.length) {
-    toast.add({ severity: 'warn', summary: 'Schedule ยังไม่พร้อม', detail: 'แก้ไขรายการความพร้อมก่อนทดสอบส่ง', life: 4500 });
+    toast.add({ severity: 'warn', summary: 'ตารางส่งรายงานยังไม่พร้อม', detail: 'แก้ไขรายการความพร้อมก่อนทดสอบส่ง', life: 4500 });
     return;
   }
   confirm.require({
@@ -257,7 +258,7 @@ async function testSchedule(item: Schedule) {
   testSendingScheduleId.value = item.id;
   try {
     const execution = await adminApi.testSendSchedule(tenantId, item.id);
-    toast.add({ severity: 'success', summary: 'รับคำขอทดสอบส่งแล้ว', detail: `Run ${execution.id} กำลังดึงข้อมูลและส่งแบบ asynchronous`, life: 5000 });
+    toast.add({ severity: 'success', summary: 'รับคำขอทดสอบส่งแล้ว', detail: `งาน ${execution.id} กำลังดึงข้อมูลและส่งในเบื้องหลัง`, life: 5000 });
   } catch (cause) {
     toast.add({ severity: 'error', summary: 'ทดสอบส่งไม่สำเร็จ', detail: errorMessage(cause), life: 6000 });
   } finally {
@@ -266,7 +267,7 @@ async function testSchedule(item: Schedule) {
 }
 
 function blockerLabel(code: string) {
-  return ({ TENANT_INACTIVE: 'ร้านยังไม่ Active/หมดอายุ', SML_NOT_READY: 'SML ยังไม่ Ready', RECIPIENT_NOT_ACTIVE: 'มีผู้รับที่ยังไม่ยืนยัน LINE', RECIPIENT_PERMISSION_MISMATCH: 'สิทธิ์ผู้รับไม่ตรงกับรายงาน', LINE_NOT_CONFIGURED: 'LINE OA ยังไม่พร้อม' } as Record<string, string>)[code] ?? code;
+  return ({ TENANT_INACTIVE: 'ร้านยังไม่เปิดใช้งานหรือหมดอายุ', SML_NOT_READY: 'SML ยังไม่พร้อม', RECIPIENT_NOT_ACTIVE: 'มีผู้รับที่ยังไม่ยืนยัน LINE', RECIPIENT_PERMISSION_MISMATCH: 'สิทธิ์ผู้รับไม่ตรงกับรายงาน', LINE_NOT_CONFIGURED: 'LINE OA ยังไม่พร้อม' } as Record<string, string>)[code] ?? code;
 }
 watch(() => [scheduleForm.periodPreset, ...scheduleForm.reportKeys], () => { flexPreview.value = undefined; });
 onMounted(load);
@@ -276,35 +277,39 @@ onMounted(load);
   <div v-if="loading" class="surface-card rounded-xl p-8"><Skeleton height="2rem" width="15rem" class="mb-4" /><Skeleton height="12rem" /></div>
   <Message v-else-if="error" severity="error" :closable="false">{{ error }} <Button label="ลองใหม่" text @click="load" /></Message>
   <template v-else-if="tenant">
-    <div class="page-header"><div><Button label="ร้านค้าทั้งหมด" icon="pi pi-arrow-left" text class="-ml-3 mb-1" @click="router.push('/admin/tenants')" /><h1 class="page-title">{{ tenant.name }}</h1><p class="page-subtitle">{{ tenant.slug }} · {{ tenant.timezone }}</p></div><div class="flex gap-2"><Tag :severity="tenant.status === 'ACTIVE' ? 'success' : 'secondary'" :value="tenant.status" /><Tag :severity="sml?.readinessStatus === 'READY' ? 'success' : 'warn'" :value="`SML ${sml?.readinessStatus ?? 'UNCONFIGURED'}`" /></div></div>
+    <div class="page-header"><div><Button label="ร้านค้าทั้งหมด" icon="pi pi-arrow-left" text class="-ml-3 mb-1" @click="router.push('/admin/tenants')" /><h1 class="page-title">{{ tenant.name }}</h1><p class="page-subtitle">{{ tenant.slug }} · เวลาไทย (UTC+7)</p></div><div class="flex gap-2"><Tag :severity="tenant.status === 'ACTIVE' ? 'success' : 'secondary'" :value="statusLabel(tenant.status)" /><Tag :severity="sml?.readinessStatus === 'READY' ? 'success' : 'warn'" :value="`SML ${statusLabel(sml?.readinessStatus ?? 'UNCONFIGURED')}`" /></div></div>
     <Tabs value="overview">
-      <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">SML Connection</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">Schedules</Tab></TabList>
+      <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">การเชื่อมต่อ SML</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">ตารางส่งรายงาน</Tab></TabList>
       <TabPanels>
-        <TabPanel value="overview"><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveTenant"><div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="tenantForm.name" fluid /></div><div class="grid gap-2"><label for="tenant-status">สถานะ</label><Select input-id="tenant-status" aria-label="สถานะ" v-model="tenantForm.status" :options="['ACTIVE','DISABLED','EXPIRED']" fluid /></div><div class="grid gap-2"><label for="tenant-timezone">Timezone</label><Select input-id="tenant-timezone" aria-label="Timezone" v-model="tenantForm.timezone" :options="['Asia/Bangkok','Asia/Singapore','Asia/Tokyo']" fluid /></div><div class="grid gap-2"><label for="tenant-access-end">สิ้นสุดสิทธิ์</label><DatePicker input-id="tenant-access-end" v-model="tenantForm.accessEndsAt" show-icon show-time hour-format="24" fluid /></div><div class="md:col-span-2"><Button type="submit" label="บันทึกข้อมูลร้าน" icon="pi pi-save" :loading="savingTenant" /></div></form></TabPanel>
-        <TabPanel value="sml"><Message severity="info" :closable="false" class="mb-5">กรอก Base URL ได้ ระบบจะเติม <code>/SMLJavaWebService/DotNetFrameWork</code> อัตโนมัติ · Basic Auth ไม่บังคับ; หากใช้ต้องกรอกทั้ง Username และ Password ซึ่งจะถูกเข้ารหัสและไม่ส่งกลับมาที่ browser</Message><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveSML"><div class="grid gap-2 md:col-span-2"><label for="sml-endpoint">Java Web Service Base URL</label><InputText id="sml-endpoint" v-model="smlForm.endpointUrl" placeholder="http://shop.example.com:8092" fluid /></div><div class="grid gap-2"><label for="sml-config-file">Config file</label><InputText id="sml-config-file" v-model="smlForm.configFileName" fluid /></div><div class="grid gap-2"><label for="sml-database">Database</label><InputText id="sml-database" v-model="smlForm.databaseName" fluid /></div><div class="grid gap-2"><label for="sml-username">Username (ถ้ามี Basic Auth)</label><InputText id="sml-username" v-model="smlForm.username" autocomplete="off" fluid /></div><div class="grid gap-2"><label for="sml-password">Password (ถ้ามี Basic Auth)</label><Password input-id="sml-password" v-model="smlForm.password" :feedback="false" toggle-mask autocomplete="new-password" fluid /></div><div class="md:col-span-2 flex flex-wrap gap-3"><Button type="submit" label="บันทึก Connection" icon="pi pi-save" :loading="savingSML" /><Button type="button" label="ทดสอบ Connection" icon="pi pi-bolt" outlined :disabled="!sml?.isConfigured" :loading="testingSML" @click="testSML" /></div></form></TabPanel>
-        <TabPanel value="recipients"><div class="flex justify-end mb-4"><Button label="เชิญผู้รับ" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''" /></div><DataTable :value="recipients" data-key="id" striped-rows scrollable><Column field="displayName" header="ชื่อ" /><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="data.status" /></template></Column><Column header="สิทธิ์"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template></Column><Column field="verifiedAt" header="ยืนยันเมื่อ"><template #body="{ data }">{{ formatDateTime(data.verifiedAt) }}</template></Column><Column header=""><template #body="{ data }"><Button label="กำหนดสิทธิ์" icon="pi pi-lock" text @click="editPermissions(data)" /></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ</div></template></DataTable></TabPanel>
-        <TabPanel value="schedules"><div class="flex justify-between items-center gap-3 mb-4"><p class="m-0 text-muted-color">หนึ่ง Card รองรับสูงสุด 5 รายงาน × 2 metrics</p><Button label="เพิ่ม Schedule" icon="pi pi-calendar-plus" @click="openSchedule()" /></div><DataTable :value="schedules" data-key="id" striped-rows scrollable><Column field="name" header="Schedule"><template #body="{ data }"><span class="font-medium">{{ data.name }}</span><div class="text-xs text-muted-color mt-1">{{ data.localTime }} · {{ data.timezone }}</div></template></Column><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : data.status === 'PAUSED' ? 'warn' : 'secondary'" :value="data.status" /></template></Column><Column header="รายงาน/ผู้รับ"><template #body="{ data }">{{ data.reportKeys.length }} / {{ data.recipientIds.length }}</template></Column><Column header="รอบถัดไป"><template #body="{ data }">{{ formatDateTime(data.nextOccurrences[0]) }}</template></Column><Column header="ความพร้อม"><template #body="{ data }"><div v-if="data.readinessBlockers.length" class="flex flex-wrap gap-1"><Tag v-for="code in data.readinessBlockers" :key="code" severity="danger" :value="blockerLabel(code)" /></div><Tag v-else severity="success" value="พร้อม" /></template></Column><Column header=""><template #body="{ data }"><div class="flex"><Button icon="pi pi-pencil" text rounded aria-label="แก้ไข" :disabled="data.status === 'ACTIVE'" @click="openSchedule(data)" /><Button icon="pi pi-send" text rounded severity="info" aria-label="ทดสอบส่ง LINE" title="ดึงข้อมูล SML ใหม่และส่ง LINE จริง" :disabled="data.readinessBlockers.length > 0 || !!testSendingScheduleId" :loading="testSendingScheduleId === data.id" @click="confirmTestSchedule(data)" /><Button :icon="data.status === 'ACTIVE' ? 'pi pi-pause' : 'pi pi-play'" text rounded :severity="data.status === 'ACTIVE' ? 'warn' : 'success'" :aria-label="data.status === 'ACTIVE' ? 'พัก' : 'เปิด'" :disabled="data.status !== 'ACTIVE' && data.readinessBlockers.length > 0" @click="confirmScheduleState(data)" /></div></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มี Schedule</div></template></DataTable></TabPanel>
+        <TabPanel value="overview"><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveTenant"><div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="tenantForm.name" fluid /></div><div class="grid gap-2"><label for="tenant-status">สถานะ</label><Select input-id="tenant-status" aria-label="สถานะ" v-model="tenantForm.status" :options="['ACTIVE','DISABLED','EXPIRED']" fluid /></div><div class="grid gap-2"><label for="tenant-access-end">สิ้นสุดสิทธิ์ (เวลาไทย)</label><DatePicker input-id="tenant-access-end" v-model="tenantForm.accessEndsAt" show-icon show-time hour-format="24" fluid /></div><div class="md:col-span-2"><Button type="submit" label="บันทึกข้อมูลร้าน" icon="pi pi-save" :loading="savingTenant" /></div></form></TabPanel>
+        <TabPanel value="sml"><Message severity="info" :closable="false" class="mb-5">กรอก Base URL ของร้านได้ ระบบจะเติม <code>/SMLJavaWebService/DotNetFrameWork</code> ให้อัตโนมัติ</Message><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveSML"><div class="grid gap-2 md:col-span-2"><label for="sml-endpoint">Java Web Service Base URL</label><InputText id="sml-endpoint" v-model="smlForm.endpointUrl" placeholder="http://shop.example.com:8092" fluid /></div><div class="grid gap-2"><label for="sml-config-file">ไฟล์ SMLConfig</label><InputText id="sml-config-file" v-model="smlForm.configFileName" placeholder="SMLConfigDATA.xml" fluid /></div><div class="grid gap-2"><label for="sml-database">ชื่อฐานข้อมูล SML</label><InputText id="sml-database" v-model="smlForm.databaseName" fluid /></div><div class="md:col-span-2 flex flex-wrap gap-3"><Button type="submit" label="บันทึกการเชื่อมต่อ" icon="pi pi-save" :loading="savingSML" /><Button type="button" label="ทดสอบการเชื่อมต่อ" icon="pi pi-bolt" outlined :disabled="!sml?.isConfigured" :loading="testingSML" @click="testSML" /></div></form></TabPanel>
+        <TabPanel value="recipients"><div class="flex justify-end mb-4"><Button label="เชิญผู้รับ" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''" /></div><DataTable :value="recipients" data-key="id" striped-rows scrollable><Column field="displayName" header="ชื่อ" /><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template></Column><Column header="สิทธิ์"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template></Column><Column field="verifiedAt" header="ยืนยันเมื่อ"><template #body="{ data }">{{ formatDateTime(data.verifiedAt) }}</template></Column><Column header=""><template #body="{ data }"><Button label="กำหนดสิทธิ์" icon="pi pi-lock" text @click="editPermissions(data)" /></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ</div></template></DataTable></TabPanel>
+        <TabPanel value="schedules"><div class="flex justify-between items-center gap-3 mb-4"><p class="m-0 text-muted-color">หนึ่ง LINE Card รองรับสูงสุด 5 รายงาน รายงานละ 2 ตัวเลขสำคัญ</p><Button label="เพิ่มตารางส่งรายงาน" icon="pi pi-calendar-plus" @click="openSchedule()" /></div><DataTable :value="schedules" data-key="id" striped-rows scrollable><Column field="name" header="ชื่อตาราง"><template #body="{ data }"><span class="font-medium">{{ data.name }}</span><div class="text-xs text-muted-color mt-1">{{ data.localTime }} · เวลาไทย</div></template></Column><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : data.status === 'PAUSED' ? 'warn' : 'secondary'" :value="statusLabel(data.status)" /></template></Column><Column header="รายงาน/ผู้รับ"><template #body="{ data }">{{ data.reportKeys.length }} / {{ data.recipientIds.length }}</template></Column><Column header="รอบถัดไป"><template #body="{ data }">{{ formatDateTime(data.nextOccurrences[0]) }}</template></Column><Column header="ความพร้อม"><template #body="{ data }"><div v-if="data.readinessBlockers.length" class="flex flex-wrap gap-1"><Tag v-for="code in data.readinessBlockers" :key="code" severity="danger" :value="blockerLabel(code)" /></div><Tag v-else severity="success" value="พร้อม" /></template></Column><Column header=""><template #body="{ data }"><div class="flex"><Button icon="pi pi-pencil" text rounded aria-label="แก้ไข" :disabled="data.status === 'ACTIVE'" @click="openSchedule(data)" /><Button icon="pi pi-send" text rounded severity="info" aria-label="ทดสอบส่ง LINE" title="ดึงข้อมูล SML ใหม่และส่ง LINE จริง" :disabled="data.readinessBlockers.length > 0 || !!testSendingScheduleId" :loading="testSendingScheduleId === data.id" @click="confirmTestSchedule(data)" /><Button :icon="data.status === 'ACTIVE' ? 'pi pi-pause' : 'pi pi-play'" text rounded :severity="data.status === 'ACTIVE' ? 'warn' : 'success'" :aria-label="data.status === 'ACTIVE' ? 'พัก' : 'เปิด'" :disabled="data.status !== 'ACTIVE' && data.readinessBlockers.length > 0" @click="confirmScheduleState(data)" /></div></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีตารางส่งรายงาน</div></template></DataTable></TabPanel>
       </TabPanels>
     </Tabs>
   </template>
 
   <Dialog v-model:visible="inviteOpen" modal header="เชิญผู้รับผ่าน LINE" class="responsive-dialog" :style="{ width: '32rem' }"><div v-if="!inviteURL" class="grid gap-3"><label for="recipient-invite-label">ชื่อที่ใช้ระบุก่อนผู้รับยืนยัน</label><InputText id="recipient-invite-label" v-model="inviteLabel" placeholder="เช่น เจ้าของร้าน" fluid /></div><div v-else><Message severity="success" :closable="false">ส่งลิงก์นี้ให้ผู้รับที่ต้องการเท่านั้น ลิงก์มีอายุ 7 วัน</Message><InputGroup class="mt-4"><InputText :model-value="inviteURL" aria-label="ลิงก์คำเชิญ" readonly /><Button icon="pi pi-copy" aria-label="คัดลอก" @click="copyInvite" /></InputGroup></div><template #footer><Button label="ปิด" text @click="inviteOpen = false" /><Button v-if="!inviteURL" label="สร้างลิงก์" icon="pi pi-link" :loading="inviting" @click="invite" /></template></Dialog>
   <Dialog v-model:visible="permissionOpen" modal :header="`สิทธิ์รายงาน — ${permissionRecipient?.displayName ?? ''}`" class="responsive-dialog" :style="{ width: '38rem' }"><MultiSelect v-model="permissionKeys" aria-label="สิทธิ์รายงานของผู้รับ" :options="reportDefinitions" option-label="label" option-value="reportKey" display="chip" filter placeholder="เลือกรายงาน" fluid /><template #footer><Button label="ยกเลิก" text @click="permissionOpen = false" /><Button label="บันทึกสิทธิ์" icon="pi pi-save" :loading="savingPermissions" @click="savePermissions" /></template></Dialog>
-  <Dialog v-model:visible="scheduleOpen" modal :header="editingSchedule ? 'แก้ไข Schedule' : 'เพิ่ม Schedule'" class="responsive-dialog" :style="{ width: '64rem' }">
+  <Dialog v-model:visible="scheduleOpen" modal :header="editingSchedule ? 'แก้ไขตารางส่งรายงาน' : 'เพิ่มตารางส่งรายงาน'" class="responsive-dialog" :style="{ width: '64rem' }">
     <form id="schedule-form" class="grid grid-cols-1 md:grid-cols-2 gap-4" @submit.prevent="saveSchedule">
       <div class="grid gap-2 md:col-span-2"><label for="schedule-name">ชื่อ</label><InputText id="schedule-name" v-model="scheduleForm.name" fluid /></div>
       <div class="grid gap-2"><label for="schedule-days">วันส่ง</label><MultiSelect input-id="schedule-days" aria-label="วันส่ง" v-model="scheduleForm.daysOfWeek" :options="days" option-label="label" option-value="value" display="chip" fluid /></div>
-      <div class="grid gap-2"><label for="schedule-time">เวลาท้องถิ่น</label><InputMask id="schedule-time" v-model="scheduleForm.localTime" mask="99:99" placeholder="09:00" fluid /></div>
-      <div class="grid gap-2"><label for="schedule-period">Period</label><Select input-id="schedule-period" aria-label="Period" v-model="scheduleForm.periodPreset" :options="presets" option-label="label" option-value="value" fluid /></div>
-      <div class="grid gap-2"><label for="schedule-timezone">Timezone</label><Select input-id="schedule-timezone" aria-label="Schedule timezone" v-model="scheduleForm.timezone" :options="['Asia/Bangkok','Asia/Singapore','Asia/Tokyo']" fluid /></div>
-      <div class="grid gap-2 md:col-span-2"><label for="schedule-reports">รายงาน (สูงสุด 5)</label><MultiSelect input-id="schedule-reports" aria-label="รายงานใน Schedule" v-model="scheduleForm.reportKeys" :options="reportDefinitions" option-label="label" option-value="reportKey" display="chip" filter :max-selected-labels="5" fluid /></div>
-      <div class="grid gap-2 md:col-span-2"><label for="schedule-recipients">ผู้รับ</label><MultiSelect input-id="schedule-recipients" aria-label="ผู้รับใน Schedule" v-model="scheduleForm.recipientIds" :options="activeRecipients" option-label="displayName" option-value="id" display="chip" filter fluid /><small v-if="!activeRecipients.length" class="text-orange-600">ต้องมีผู้รับสถานะ ACTIVE ก่อน</small></div>
+      <div class="grid gap-2"><label for="schedule-time">เวลาส่ง (เวลาไทย)</label><InputMask id="schedule-time" v-model="scheduleForm.localTime" mask="99:99" placeholder="09:00" fluid /></div>
+      <div class="grid gap-2"><label for="schedule-period">ช่วงข้อมูล</label><Select input-id="schedule-period" aria-label="ช่วงข้อมูล" v-model="scheduleForm.periodPreset" :options="presets" option-label="label" option-value="value" fluid /></div>
+      <div class="grid gap-2"><label>เขตเวลา</label><div class="timezone-static"><i class="pi pi-clock" /> เวลาไทย (UTC+7)</div></div>
+      <div class="grid gap-2 md:col-span-2"><label for="schedule-reports">รายงาน (สูงสุด 5)</label><MultiSelect input-id="schedule-reports" aria-label="รายงานในตารางส่ง" v-model="scheduleForm.reportKeys" :options="reportDefinitions" option-label="label" option-value="reportKey" display="chip" filter :max-selected-labels="5" fluid /></div>
+      <div class="grid gap-2 md:col-span-2"><label for="schedule-recipients">ผู้รับ</label><MultiSelect input-id="schedule-recipients" aria-label="ผู้รับในตารางส่งรายงาน" v-model="scheduleForm.recipientIds" :options="activeRecipients" option-label="displayName" option-value="id" display="chip" filter fluid /><small v-if="!activeRecipients.length" class="text-orange-600">ต้องมีผู้รับสถานะใช้งานอย่างน้อย 1 คน</small></div>
     </form>
     <LineFlexPreview v-if="flexPreview" :preview="flexPreview" class="mt-5" />
     <template #footer>
       <Button label="ยกเลิก" text @click="scheduleOpen = false" />
-      <Button type="button" label="ดูตัวอย่าง Flex" icon="pi pi-eye" outlined :disabled="scheduleForm.reportKeys.length < 1 || scheduleForm.reportKeys.length > 5" :loading="previewingFlex" @click="previewSchedule" />
+      <Button type="button" label="ดูตัวอย่าง LINE Card" icon="pi pi-eye" outlined :disabled="scheduleForm.reportKeys.length < 1 || scheduleForm.reportKeys.length > 5" :loading="previewingFlex" @click="previewSchedule" />
       <Button type="submit" form="schedule-form" label="บันทึก" icon="pi pi-save" :disabled="!scheduleFormValid" :loading="savingSchedule" />
     </template>
   </Dialog>
 </template>
+
+<style scoped>
+.timezone-static { min-height: 2.85rem; display: flex; align-items: center; gap: .65rem; padding: 0 .85rem; border: 1px solid var(--surface-border); border-radius: var(--content-border-radius); background: var(--surface-50); color: var(--text-color-secondary); }
+</style>

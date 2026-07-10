@@ -11,12 +11,13 @@ const layoutConfig = reactive({
 const layoutState = reactive({
     staticMenuInactive: false,
     overlayMenuActive: false,
+    mobileMenuActive: false,
     profileSidebarVisible: false,
     configSidebarVisible: false,
     sidebarExpanded: false,
     menuHoverActive: false,
     activeMenuItem: null,
-    activePath: null
+    activePath: /** @type {string | null} */ (null)
 });
 
 export function useLayout() {
