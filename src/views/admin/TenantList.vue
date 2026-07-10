@@ -62,8 +62,8 @@ onMounted(() => load());
   <div class="page-header"><div><h1 class="page-title">ร้านค้า</h1><p class="page-subtitle">Tenant, วันหมดอายุ และความพร้อมของ SML</p></div><Button label="เพิ่มร้านค้า" icon="pi pi-plus" @click="createOpen = true" /></div>
   <div class="surface-card rounded-xl p-4 mb-4">
     <form class="grid grid-cols-1 md:grid-cols-[1fr_14rem_auto] gap-3" @submit.prevent="load()">
-      <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="ค้นหาชื่อหรือ slug" fluid /></IconField>
-      <Select v-model="status" :options="statusOptions" option-label="label" option-value="value" placeholder="ทุกสถานะ" fluid />
+      <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" aria-label="ค้นหาร้านค้าด้วยชื่อหรือ slug" placeholder="ค้นหาชื่อหรือ slug" fluid /></IconField>
+      <Select v-model="status" aria-label="กรองสถานะร้านค้า" :options="statusOptions" option-label="label" option-value="value" placeholder="ทุกสถานะ" fluid />
       <Button type="submit" label="ค้นหา" icon="pi pi-search" outlined />
     </form>
   </div>
@@ -86,7 +86,7 @@ onMounted(() => load());
     <form id="create-tenant" class="grid gap-4" @submit.prevent="createTenant">
       <div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="form.name" maxlength="160" fluid /></div>
       <div class="grid gap-2"><label for="tenant-slug">Slug</label><InputText id="tenant-slug" v-model="form.slug" maxlength="80" placeholder="my-shop" fluid /><small class="text-muted-color">ใช้ในระบบและ log ไม่ควรเปลี่ยนภายหลัง</small></div>
-      <div class="grid gap-2"><label for="tenant-timezone">Timezone</label><Select id="tenant-timezone" v-model="form.timezone" :options="['Asia/Bangkok','Asia/Singapore','Asia/Tokyo']" fluid /></div>
+      <div class="grid gap-2"><label for="tenant-timezone">Timezone</label><Select input-id="tenant-timezone" aria-label="Timezone" v-model="form.timezone" :options="['Asia/Bangkok','Asia/Singapore','Asia/Tokyo']" fluid /></div>
       <div class="grid gap-2"><label for="tenant-expiry">วันสิ้นสุดสิทธิ์</label><DatePicker input-id="tenant-expiry" v-model="form.accessEndsAt" show-icon show-time hour-format="24" fluid /></div>
     </form>
     <template #footer><Button label="ยกเลิก" text @click="createOpen = false" /><Button type="submit" form="create-tenant" label="สร้างร้านค้า" icon="pi pi-check" :loading="saving" /></template>

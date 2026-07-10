@@ -79,7 +79,7 @@ test('tenant form blocks an invalid slug before sending', async ({ page }) => {
 
   await page.getByRole('button', { name: 'เพิ่มร้านค้า' }).click();
   await page.getByLabel('ชื่อร้าน').fill('ร้านทดสอบ');
-  await page.getByLabel('Slug').fill('Invalid Slug');
+  await page.getByLabel('Slug', { exact: true }).fill('Invalid Slug');
   await page.getByRole('button', { name: 'สร้างร้านค้า' }).click();
 
   await expect(page.getByRole('dialog', { name: 'เพิ่มร้านค้า' }).getByRole('alert')).toContainText('Slug ใช้ตัวพิมพ์เล็ก');

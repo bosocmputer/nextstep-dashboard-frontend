@@ -26,7 +26,7 @@ onMounted(loadTenants);
 </script>
 
 <template>
-  <div class="page-header"><div><h1 class="page-title">รายงานของฉัน</h1><p class="page-subtitle">ระบบจะดึงข้อมูลใหม่จาก SQL ของร้านทุกครั้งที่เปิดรายงาน</p></div><Select v-if="state.tenants.length > 1" v-model="selectedTenantId" :options="tenantOptions" option-label="name" option-value="id" class="w-full sm:w-72" /></div>
+  <div class="page-header"><div><h1 class="page-title">รายงานของฉัน</h1><p class="page-subtitle">ระบบจะดึงข้อมูลใหม่จาก SQL ของร้านทุกครั้งที่เปิดรายงาน</p></div><Select v-if="state.tenants.length > 1" v-model="selectedTenantId" aria-label="เลือกร้านค้า" :options="tenantOptions" option-label="name" option-value="id" class="w-full sm:w-72" /></div>
   <Message severity="info" :closable="false" class="mb-5"><strong>{{ selectedTenant?.name }}</strong> · {{ selectedTenant?.timezone }} — สิทธิ์จะถูกตรวจซ้ำก่อนรันทุกครั้ง</Message>
   <Message v-if="error" severity="error" :closable="false">{{ error }} <Button label="ลองใหม่" text @click="loadReports" /></Message>
   <div v-else-if="loading" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"><Skeleton v-for="index in 6" :key="index" height="9rem" border-radius="1rem" /></div>
