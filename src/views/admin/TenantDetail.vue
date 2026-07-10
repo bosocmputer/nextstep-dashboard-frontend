@@ -43,6 +43,13 @@ const smlForm = reactive({ endpointUrl: '', configFileName: 'config.xml', databa
 const scheduleForm = reactive<ScheduleInput>({ name: '', daysOfWeek: [1, 2, 3, 4, 5], localTime: '09:00', timezone: 'Asia/Bangkok', periodPreset: 'YESTERDAY', reportKeys: [], recipientIds: [] });
 
 const activeRecipients = computed(() => recipients.value.filter((item) => item.status === 'ACTIVE'));
+const scheduleFormValid = computed(() =>
+  scheduleForm.name.trim().length > 0 &&
+  scheduleForm.daysOfWeek.length > 0 &&
+  /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(scheduleForm.localTime) &&
+  scheduleForm.reportKeys.length > 0 && scheduleForm.reportKeys.length <= 5 &&
+  scheduleForm.recipientIds.length > 0
+);
 const days = [
   { label: 'อาทิตย์', value: 0 }, { label: 'จันทร์', value: 1 }, { label: 'อังคาร', value: 2 },
   { label: 'พุธ', value: 3 }, { label: 'พฤหัสบดี', value: 4 }, { label: 'ศุกร์', value: 5 }, { label: 'เสาร์', value: 6 }
@@ -102,7 +109,22 @@ async function persistTenant() {
   finally { savingTenant.value = false; }
 }
 
-async function saveSML() {
+function saveSML() {
+  if (sml.value?.isConfigured) {
+    confirm.require({
+      header: 'ยืนยันแทนที่ SML Connection',
+      message: 'Schedule ของร้านจะไม่พร้อมจนกว่าจะบันทึกและทดสอบ Connection ใหม่ผ่าน',
+      icon: 'pi pi-exclamation-triangle',
+      acceptLabel: 'แทนที่ Connection',
+      rejectLabel: 'ยกเลิก',
+      accept: () => persistSML()
+    });
+    return;
+  }
+  void persistSML();
+}
+
+async function persistSML() {
   savingSML.value = true;
   try {
     sml.value = await adminApi.replaceSML(tenantId, { ...smlForm });
@@ -181,8 +203,8 @@ async function previewSchedule() {
 }
 
 async function saveSchedule() {
-  if (scheduleForm.reportKeys.length > 5) {
-    toast.add({ severity: 'warn', summary: 'เลือกได้สูงสุด 5 รายงานต่อ Card', life: 3500 }); return;
+  if (!scheduleFormValid.value) {
+    toast.add({ severity: 'warn', summary: 'กรอก Schedule ให้ครบ', detail: 'ต้องมีชื่อ วัน เวลา 1–5 รายงาน และผู้รับอย่างน้อย 1 คน', life: 4000 }); return;
   }
   savingSchedule.value = true;
   try {
@@ -282,7 +304,7 @@ onMounted(load);
     <template #footer>
       <Button label="ยกเลิก" text @click="scheduleOpen = false" />
       <Button type="button" label="ดูตัวอย่าง Flex" icon="pi pi-eye" outlined :disabled="scheduleForm.reportKeys.length < 1 || scheduleForm.reportKeys.length > 5" :loading="previewingFlex" @click="previewSchedule" />
-      <Button type="submit" form="schedule-form" label="บันทึก" icon="pi pi-save" :loading="savingSchedule" />
+      <Button type="submit" form="schedule-form" label="บันทึก" icon="pi pi-save" :disabled="!scheduleFormValid" :loading="savingSchedule" />
     </template>
   </Dialog>
 </template>
