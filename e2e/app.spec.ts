@@ -121,13 +121,18 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   const recipientId = '33333333-3333-4333-8333-333333333333';
   let previewRequests = 0;
   let testSendRequests = 0;
+  let tenantPatchRequests = 0;
 
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
-  await page.route(`**${api}/admin/tenants/${tenantId}`, (route) => route.fulfill(json({
-    id: tenantId, slug: 'sample-shop', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE',
-    accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY',
-    createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
-  })));
+  await page.route(`**${api}/admin/tenants/${tenantId}`, (route) => {
+    if (route.request().method() === 'PATCH') tenantPatchRequests++;
+    return route.fulfill(json({
+      id: tenantId, slug: 'sample-shop', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok',
+      status: route.request().method() === 'PATCH' ? 'DISABLED' : 'ACTIVE',
+      accessEndsAt: '2027-07-10T00:00:00Z', version: route.request().method() === 'PATCH' ? 2 : 1, smlReadiness: 'READY',
+      createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
+    }));
+  });
   await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({
     isConfigured: true, endpointHost: 'sml-shop.example.com:8092', databaseName: 'DEMO_DATA',
     configFileName: 'SMLConfigDemo.xml', readinessStatus: 'READY', version: 1
@@ -191,5 +196,16 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   await page.getByRole('button', { name: 'ดึงข้อมูลและส่งจริง' }).click();
   await expect(page.getByText('รับคำขอทดสอบส่งแล้ว')).toBeVisible();
   expect(testSendRequests).toBe(1);
+
+  await page.getByRole('tab', { name: 'ข้อมูลร้าน' }).click();
+  await page.getByLabel('สถานะ').click();
+  await page.getByRole('option', { name: 'DISABLED' }).click();
+  await page.getByRole('button', { name: 'บันทึกข้อมูลร้าน' }).click();
+  await expect(page.getByText('ยืนยันการเปลี่ยนสิทธิ์ร้าน')).toBeVisible();
+  await expect(page.getByText('หยุดการเปิด Dashboard')).toBeVisible();
+  expect(tenantPatchRequests).toBe(0);
+  await page.getByRole('button', { name: 'ยืนยันและบันทึก' }).click();
+  await expect(page.getByText('บันทึกร้านค้าแล้ว')).toBeVisible();
+  expect(tenantPatchRequests).toBe(1);
   expect(consoleErrors).toEqual([]);
 });
