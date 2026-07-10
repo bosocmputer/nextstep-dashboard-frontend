@@ -1,0 +1,51 @@
+import { createRouter, createWebHistory } from 'vue-router';
+import { useAdminSession } from '@/stores/session';
+
+const router = createRouter({
+  history: createWebHistory(),
+  scrollBehavior: () => ({ top: 0 }),
+  routes: [
+    { path: '/', redirect: '/app' },
+    { path: '/admin/login', name: 'admin-login', component: () => import('@/views/admin/AdminLogin.vue'), meta: { guestOnly: true } },
+    {
+      path: '/admin',
+      component: () => import('@/layout/AppLayout.vue'),
+      meta: { requiresAdmin: true },
+      children: [
+        { path: '', name: 'admin-dashboard', component: () => import('@/views/admin/AdminDashboard.vue') },
+        { path: 'password', name: 'admin-password', component: () => import('@/views/admin/AdminPassword.vue') },
+        { path: 'tenants', name: 'admin-tenants', component: () => import('@/views/admin/TenantList.vue') },
+        { path: 'tenants/:tenantId', name: 'admin-tenant-detail', component: () => import('@/views/admin/TenantDetail.vue') },
+        { path: 'report-runs', name: 'admin-report-runs', component: () => import('@/views/admin/ReportRuns.vue') },
+        { path: 'deliveries', name: 'admin-deliveries', component: () => import('@/views/admin/Deliveries.vue') },
+        { path: 'audit', name: 'admin-audit', component: () => import('@/views/admin/AuditLogs.vue') }
+      ]
+    },
+    {
+      path: '/app',
+      component: () => import('@/views/viewer/ViewerShell.vue'),
+      children: [
+        { path: '', name: 'viewer-home', component: () => import('@/views/viewer/ViewerHome.vue') },
+        { path: 'invite', name: 'viewer-invite', component: () => import('@/views/viewer/ViewerHome.vue') },
+        { path: 'tenant/:tenantId/report/:reportKey', name: 'viewer-report', component: () => import('@/views/viewer/ViewerReport.vue') }
+      ]
+    },
+    { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/NotFound.vue') }
+  ]
+});
+
+router.beforeEach(async (to) => {
+  const { state, ensureAdminSession } = useAdminSession();
+  if (to.meta.requiresAdmin) {
+    const authenticated = await ensureAdminSession();
+    if (!authenticated) return { name: 'admin-login', query: { redirect: to.fullPath } };
+    if (state.session?.mustRotateBootstrapPassword && to.name !== 'admin-password') return { name: 'admin-password' };
+  }
+  if (to.meta.guestOnly) {
+    const authenticated = await ensureAdminSession();
+    if (authenticated) return { name: state.session?.mustRotateBootstrapPassword ? 'admin-password' : 'admin-dashboard' };
+  }
+  return true;
+});
+
+export default router;

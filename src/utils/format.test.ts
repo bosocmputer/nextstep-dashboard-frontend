@@ -1,0 +1,19 @@
+import { describe, expect, it } from 'vitest';
+import { formatDateOnly, formatMetric, metricLabel } from './format';
+
+describe('format utilities', () => {
+  it('preserves the local calendar date instead of converting through UTC', () => {
+    const selected = new Date(2026, 6, 10, 0, 0, 0);
+    expect(formatDateOnly(selected)).toBe('2026-07-10');
+  });
+
+  it('formats numeric metrics and safe empty values', () => {
+    expect(formatMetric('1234.50')).toContain('1,234.5');
+    expect(formatMetric(null)).toBe('—');
+  });
+
+  it('uses Thai KPI labels with a readable fallback', () => {
+    expect(metricLabel('gross_profit_amount')).toBe('กำไรขั้นต้น');
+    expect(metricLabel('custom_metric')).toBe('custom metric');
+  });
+});

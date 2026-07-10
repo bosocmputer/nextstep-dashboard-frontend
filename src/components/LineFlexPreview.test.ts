@@ -1,0 +1,38 @@
+import { mount } from '@vue/test-utils';
+import { describe, expect, it } from 'vitest';
+import LineFlexPreview from './LineFlexPreview.vue';
+import type { FlexPreview } from '@/api';
+
+const preview: FlexPreview = {
+  altText: 'รายงาน ร้านตัวอย่าง — ข้อมูลวันที่ 2026-07-10',
+  tenantName: 'ร้านตัวอย่าง',
+  period: { preset: 'YESTERDAY', dateFrom: '2026-07-10', dateTo: '2026-07-10' },
+  periodLabel: 'ข้อมูลวันที่ 2026-07-10',
+  generatedAt: '2026-07-11T01:30:00+07:00',
+  actionUrl: 'https://dashboard.nextstep-soft.com/app',
+  payloadBytes: 2048,
+  message: {},
+  reports: [
+    {
+      key: 'sales_goods_services',
+      label: 'รายงานขายสินค้าและบริการ',
+      metrics: [{ label: 'เอกสาร', value: '128' }, { label: 'ยอดขาย', value: '1,234,567.89' }]
+    }
+  ]
+};
+
+describe('LineFlexPreview', () => {
+  it('labels numeric samples and renders the backend preview values', () => {
+    const wrapper = mount(LineFlexPreview, {
+      props: { preview },
+      global: { stubs: { Tag: { template: '<span><slot />{{ value }}</span>', props: ['value'] } } }
+    });
+
+    expect(wrapper.text()).toContain('ตัวเลขสมมติเท่านั้น');
+    expect(wrapper.text()).toContain('ไม่ดึงข้อมูลจาก SML');
+    expect(wrapper.text()).toContain('รายงานขายสินค้าและบริการ');
+    expect(wrapper.text()).toContain('1,234,567.89');
+    expect(wrapper.text()).toContain('2.0 KB');
+    expect(wrapper.find('[role="button"]').attributes('aria-disabled')).toBe('true');
+  });
+});
