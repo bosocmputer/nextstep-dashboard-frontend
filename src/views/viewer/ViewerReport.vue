@@ -7,7 +7,8 @@ import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, 
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { formatDashboardValue, periodLabel } from '@/utils/dashboard';
-import { errorMessage, formatDateOnly, formatDateTime, formatMetric, metricLabel } from '@/utils/format';
+import { errorMessage, formatDateOnly, formatDateTime, formatMetric } from '@/utils/format';
+import { presentationFor, visibleReportColumns, type ReportColumnDefinition } from '@/utils/reportPresentation';
 
 const route = useRoute();
 const router = useRouter();
@@ -26,6 +27,8 @@ const nextCursor = ref<string>();
 const hasMore = ref(false);
 const rowsLoaded = ref(false);
 const activeTab = ref('overview');
+const selectedColumnKeys = ref<string[]>([]);
+const expandedMobileRows = ref(new Set<string>());
 const loading = ref(false);
 const loadingRows = ref(false);
 const error = ref('');
@@ -45,6 +48,9 @@ const statusLabel = computed(() => {
   return run.value ? labels[run.value.status] ?? run.value.status : '';
 });
 const statusSeverity = computed(() => run.value?.status === 'SUCCEEDED' ? 'success' : run.value?.status === 'FAILED' ? 'danger' : active.value ? 'info' : 'secondary');
+const columnOptions = computed(() => presentationFor(reportKey.value, columns.value));
+const displayedColumns = computed(() => visibleReportColumns(reportKey.value, columns.value, selectedColumnKeys.value));
+const mobileSummaryColumns = computed(() => displayedColumns.value.filter((column) => column.mobilePriority >= 4).slice(0, 6));
 const periodOptions = [
   { label: 'เมื่อวาน', value: 'YESTERDAY' },
   { label: 'วันนี้ถึงปัจจุบัน', value: 'TODAY_TO_NOW' },
@@ -67,7 +73,7 @@ async function startRun() {
   const selectedReportKey = reportKey.value;
   stopPolling(); rowsController?.abort('new-run'); rowsController = undefined;
   loading.value = true; error.value = ''; dashboard.value = undefined; run.value = undefined; activeTab.value = 'overview';
-  rows.value = []; columns.value = []; nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; pollCount = 0;
+  rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set(); nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; pollCount = 0;
   const payload: CreateReportRunInput = { periodPreset: input.periodPreset };
   if (input.periodPreset === 'CUSTOM') { payload.dateFrom = formatDateOnly(input.dateFrom!); payload.dateTo = formatDateOnly(input.dateTo!); }
   runActionKey ||= newIdempotencyKey('viewer-run');
@@ -128,6 +134,7 @@ async function loadRows(reset = false) {
     const keyedRows = page.data.map((row, index) => ({ ...row, __rowKey: `${selectedRunId}:${requestedCursor ?? 'first'}:${index}` }));
     rows.value = reset ? keyedRows : [...rows.value, ...keyedRows];
     columns.value = [...new Set([...columns.value, ...page.columns])];
+    if (reset) selectedColumnKeys.value = visibleReportColumns(selectedReportKey, columns.value).map((column) => column.key);
     nextCursor.value = page.page.nextCursor ?? undefined; hasMore.value = page.page.hasMore; rowsLoaded.value = true;
   } catch (cause) { if (!isCancelled(cause) && context === generation) error.value = errorMessage(cause); }
   finally { if (context === generation) loadingRows.value = false; }
@@ -148,6 +155,14 @@ function handleVisibilityChange() {
     if (pollTimer) window.clearTimeout(pollTimer);
     pollTimer = undefined; void poll(generation);
   }
+}
+function mobileColumns(row: Record<string, unknown>): ReportColumnDefinition[] {
+  return expandedMobileRows.value.has(String(row.__rowKey)) ? displayedColumns.value : mobileSummaryColumns.value;
+}
+function toggleMobileRow(row: Record<string, unknown>) {
+  const key = String(row.__rowKey); const next = new Set(expandedMobileRows.value);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  expandedMobileRows.value = next;
 }
 async function initialize() {
   stopLifecycle();
@@ -181,7 +196,7 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
     <Tag v-if="run" :severity="statusSeverity" :value="statusLabel" />
   </div>
 
-  <section class="surface-card report-filter p-4 mb-4" aria-label="ตัวกรองรายงาน">
+  <section class="card report-filter" aria-label="ตัวกรองรายงาน">
     <div class="grid grid-cols-1 md:grid-cols-[14rem_1fr_1fr_auto] gap-3 items-end">
       <div class="grid gap-2"><label for="report-period">ช่วงข้อมูล</label><Select input-id="report-period" v-model="input.periodPreset" :options="periodOptions" option-label="label" option-value="value" fluid /></div>
       <div v-if="input.periodPreset === 'CUSTOM'" class="grid gap-2"><label for="report-date-from">จากวันที่</label><DatePicker input-id="report-date-from" v-model="input.dateFrom" date-format="dd/mm/yy" show-icon fluid /></div>
@@ -191,7 +206,7 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
   </section>
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
-  <section v-if="loading" class="surface-card report-panel p-6 mb-4" aria-live="polite"><div class="flex items-center gap-4"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ statusLabel || 'กำลังส่งคำขอ' }}</h2><p class="text-muted-color mt-1 mb-0">กำลังดึงข้อมูลจาก SML ของ {{ tenant?.name }}<span v-if="run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-5" /></section>
+  <section v-if="loading" class="card report-panel" aria-live="polite"><div class="flex items-center gap-4"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ statusLabel || 'กำลังส่งคำขอ' }}</h2><p class="text-muted-color mt-1 mb-0">กำลังดึงข้อมูลจาก SML ของ {{ tenant?.name }}<span v-if="run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-5" /></section>
 
   <Tabs v-if="dashboard && run?.status === 'SUCCEEDED'" v-model:value="activeTab" class="report-tabs">
     <TabList><Tab value="overview"><i class="pi pi-chart-bar mr-2" />ภาพรวมและกราฟ</Tab><Tab value="detail"><i class="pi pi-table mr-2" />ข้อมูลรายละเอียด</Tab></TabList>
@@ -200,14 +215,14 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
         <Message v-if="dashboard.quality.status === 'WARNING'" severity="warn" :closable="false" class="mb-4">ข้อมูลหลักพร้อมใช้งาน แต่ไม่มีช่วงเปรียบเทียบบางส่วน</Message>
         <div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div><strong>{{ periodLabel(dashboard.period.preset) }}</strong><span class="text-sm text-muted-color ml-2">{{ dashboard.period.dateFrom }} ถึง {{ dashboard.period.dateTo }}</span></div><span class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />สร้าง {{ formatDateTime(dashboard.generatedAt) }}</span></div>
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-          <article v-for="metric in dashboard.kpis" :key="metric.key" class="surface-card report-kpi"><span class="text-sm text-muted-color">{{ metric.label }}</span><strong>{{ formatDashboardValue(metric.value, metric.unit) }}</strong><span v-if="metric.comparison.availability === 'AVAILABLE'" class="text-xs text-muted-color"><i :class="metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(metric.comparison.delta, metric.unit) }} จากช่วงก่อน</span><span v-else class="text-xs text-muted-color">ไม่มีข้อมูลช่วงก่อนสำหรับเปรียบเทียบ</span></article>
+          <article v-for="metric in dashboard.kpis" :key="metric.key" class="card dashboard-card report-kpi"><span class="text-sm text-muted-color">{{ metric.label }}</span><strong>{{ formatDashboardValue(metric.value, metric.unit) }}</strong><span v-if="metric.comparison.availability === 'AVAILABLE'" class="text-xs text-muted-color"><i :class="metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(metric.comparison.delta, metric.unit) }} จากช่วงก่อน</span><span v-else class="text-xs text-muted-color">ไม่มีข้อมูลช่วงก่อนสำหรับเปรียบเทียบ</span></article>
         </div>
-        <div class="grid grid-cols-1 2xl:grid-cols-2 gap-5"><article v-for="visualization in dashboard.visualizations" :key="visualization.key" class="surface-card report-panel p-5"><h2 class="chart-title">{{ visualization.title }}</h2><ExecutiveChart :visualization="visualization" /></article></div>
-        <div v-if="!dashboard.visualizations.length" class="surface-card report-panel p-8 text-center text-muted-color"><i class="pi pi-chart-bar text-3xl" /><p class="mb-0">ช่วงนี้ไม่มีข้อมูลเพียงพอสำหรับสร้างกราฟ</p></div>
+        <div class="grid grid-cols-1 2xl:grid-cols-2 gap-5"><article v-for="visualization in dashboard.visualizations" :key="visualization.key" class="card dashboard-card report-panel"><h2 class="chart-title">{{ visualization.title }}</h2><ExecutiveChart :visualization="visualization" /></article></div>
+        <div v-if="!dashboard.visualizations.length" class="card report-panel text-center text-muted-color"><i class="pi pi-chart-bar text-3xl" /><p class="mb-0">ช่วงนี้ไม่มีข้อมูลเพียงพอสำหรับสร้างกราฟ</p></div>
       </TabPanel>
       <TabPanel value="detail">
-        <div class="flex flex-wrap items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">ข้อมูลจาก SQL</h2><p class="text-sm text-muted-color mt-1 mb-0">{{ run.rowCount.toLocaleString('th-TH') }} แถว · เก็บข้อมูลรายละเอียดชั่วคราว 24 ชั่วโมง</p></div><Tag v-if="run.isTruncated" severity="warn" value="ผลลัพธ์ถูกจำกัดตามจำนวนแถวสูงสุด" /></div>
-        <div class="surface-card report-panel overflow-hidden"><div class="hidden md:block"><DataTable :value="rows" :loading="loadingRows" data-key="__rowKey" scrollable striped-rows><Column v-for="column in columns" :key="column" :field="column" :header="metricLabel(column)"><template #body="{ data }"><span class="safe-wrap metric-value">{{ formatMetric(data[column]) }}</span></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก' }}</div></template></DataTable></div><div class="md:hidden p-3 grid gap-3" aria-label="รายละเอียดรายงานแบบมือถือ"><article v-for="row in rows" :key="String(row.__rowKey)" class="mobile-row"><div v-for="column in columns" :key="column" class="flex items-start justify-between gap-4"><span class="text-xs text-muted-color safe-wrap">{{ metricLabel(column) }}</span><strong class="text-sm text-right metric-value safe-wrap">{{ formatMetric(row[column]) }}</strong></div></article><div v-if="!loadingRows && !rows.length" class="py-8 text-center text-muted-color">รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก</div></div><div v-if="hasMore" class="p-4 text-center border-t border-surface"><Button label="โหลดอีก 25 แถว" icon="pi pi-angle-down" outlined :loading="loadingRows" @click="loadRows(false)" /></div></div>
+        <div class="flex flex-wrap items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">ข้อมูลจาก SQL</h2><p class="text-sm text-muted-color mt-1 mb-0">{{ run.rowCount.toLocaleString('th-TH') }} แถว · เก็บข้อมูลรายละเอียดชั่วคราว 24 ชั่วโมง</p></div><div class="flex flex-wrap gap-2"><MultiSelect v-model="selectedColumnKeys" :options="columnOptions" option-label="label" option-value="key" display="chip" filter aria-label="เลือกคอลัมน์ที่ต้องการแสดง" placeholder="เลือกคอลัมน์" class="w-full sm:w-80"><template #option="{ option }"><div class="flex items-center justify-between gap-3 w-full"><span>{{ option.label }}</span><Tag v-if="option.technical" severity="secondary" value="เทคนิค" /></div></template></MultiSelect><Tag v-if="run.isTruncated" severity="warn" value="ผลลัพธ์ถูกจำกัดตามจำนวนแถวสูงสุด" /></div></div>
+        <div class="card table-card report-panel"><div class="hidden md:block"><DataTable :value="rows" :loading="loadingRows" data-key="__rowKey" scrollable striped-rows><Column v-for="column in displayedColumns" :key="column.key" :field="column.key" :header="column.label" :frozen="column.frozen" align-frozen="left"><template #body="{ data }"><span class="safe-wrap metric-value">{{ formatMetric(data[column.key]) }}</span></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก' }}</div></template></DataTable></div><div class="md:hidden grid gap-3" aria-label="รายละเอียดรายงานแบบมือถือ"><article v-for="row in rows" :key="String(row.__rowKey)" class="mobile-row"><div v-for="column in mobileColumns(row)" :key="column.key" class="flex items-start justify-between gap-4"><span class="text-xs text-muted-color safe-wrap">{{ column.label }}</span><strong class="text-sm text-right metric-value safe-wrap">{{ formatMetric(row[column.key]) }}</strong></div><Button v-if="displayedColumns.length > mobileSummaryColumns.length" :label="expandedMobileRows.has(String(row.__rowKey)) ? 'แสดงน้อยลง' : 'ดูรายละเอียดเพิ่ม'" :icon="expandedMobileRows.has(String(row.__rowKey)) ? 'pi pi-angle-up' : 'pi pi-angle-down'" text size="small" class="justify-self-start" @click="toggleMobileRow(row)" /></article><div v-if="!loadingRows && !rows.length" class="py-8 text-center text-muted-color">รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก</div></div><div v-if="hasMore" class="table-footer text-center"><Button label="โหลดอีก 25 แถว" icon="pi pi-angle-down" outlined :loading="loadingRows" @click="loadRows(false)" /></div></div>
       </TabPanel>
     </TabPanels>
   </Tabs>
@@ -216,6 +231,7 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 <style scoped>
 .report-eyebrow { margin: 0 0 .35rem; color: var(--primary-color); font-size: .75rem; font-weight: 700; letter-spacing: .1em; }
 .report-filter, .report-panel { border-radius: var(--content-border-radius); }
+.dashboard-card { margin-bottom: 0; }
 .report-tabs :deep(.p-tabpanels) { padding: 1.25rem 0 0; background: transparent; }
 .report-kpi { display: grid; gap: .55rem; min-height: 7.5rem; padding: 1.15rem; border-radius: var(--content-border-radius); }
 .report-kpi strong { font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

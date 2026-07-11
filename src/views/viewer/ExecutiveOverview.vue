@@ -130,30 +130,31 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
   </div>
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="loadOverview" /></Message>
-  <div v-if="refreshing" class="surface-card executive-panel p-4 mb-4" aria-live="polite"><div class="flex justify-between gap-4 mb-2"><span class="font-medium">กำลังอัปเดต {{ refresh?.completed ?? 0 }} จาก {{ refresh?.total ?? reports.length }} รายงาน</span><span class="metric-value">{{ refreshPercent }}%</span></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-2">ระบบรันทีละรายงานเพื่อลดภาระฐานข้อมูลของร้าน คุณออกจากหน้านี้ได้โดยไม่ยกเลิกงาน</p></div>
+  <div v-if="refreshing" class="card executive-panel" aria-live="polite"><div class="flex justify-between gap-4 mb-2"><span class="font-medium">กำลังอัปเดต {{ refresh?.completed ?? 0 }} จาก {{ refresh?.total ?? reports.length }} รายงาน</span><span class="metric-value">{{ refreshPercent }}%</span></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-2">ระบบรันทีละรายงานเพื่อลดภาระฐานข้อมูลของร้าน คุณออกจากหน้านี้ได้โดยไม่ยกเลิกงาน</p></div>
   <Message v-if="!loading && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มีข้อมูลล่าสุด {{ missingReportCount }} รายงาน — กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึงจาก SQL ของร้าน</Message>
 
   <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5"><Skeleton v-for="index in 4" :key="index" height="9rem" /></div>
   <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-    <button v-for="item in kpis" :key="item.key" type="button" class="executive-kpi surface-card" @click="openReport(item.reportKey)"><span class="kpi-icon"><i :class="item.icon" /></span><span class="kpi-copy"><span class="kpi-label">{{ item.label }}</span><strong class="kpi-value">{{ formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB') }}</strong><span v-if="item.metric?.comparison.availability === 'AVAILABLE'" class="kpi-comparison"><i :class="item.metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : item.metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(item.metric.comparison.delta, item.metric.unit) }} จากช่วงก่อน</span><span v-else class="kpi-comparison">{{ item.metric ? 'ไม่มีช่วงเปรียบเทียบ' : 'รอการอัปเดตข้อมูล' }}</span></span><i class="pi pi-chevron-right kpi-link" /></button>
+    <button v-for="item in kpis" :key="item.key" type="button" class="card executive-kpi" :title="formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB')" @click="openReport(item.reportKey)"><span class="kpi-icon"><i :class="item.icon" /></span><span class="kpi-copy"><span class="kpi-label">{{ item.label }}</span><strong class="kpi-value">{{ formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB') }}</strong><span v-if="item.metric?.comparison.availability === 'AVAILABLE'" class="kpi-comparison"><i :class="item.metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : item.metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(item.metric.comparison.delta, item.metric.unit) }} จากช่วงก่อน</span><span v-else class="kpi-comparison">{{ item.metric ? 'ไม่มีช่วงเปรียบเทียบ' : 'รอการอัปเดตข้อมูล' }}</span></span><i class="pi pi-chevron-right kpi-link" /></button>
   </div>
 
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
-    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="surface-card executive-panel p-5"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>{{ periodLabel(item.snapshot.dashboard.period.preset) }} · {{ formatDateTime(item.snapshot.dashboard.generatedAt) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
+    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>{{ periodLabel(item.snapshot.dashboard.period.preset) }} · {{ formatDateTime(item.snapshot.dashboard.generatedAt) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
   </div>
-  <div v-else-if="!loading" class="surface-card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึง SQL ล่าสุดและสร้างกราฟตามสิทธิ์ของคุณ</p><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :disabled="!reports.length" @click="startRefresh" /></div>
+  <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึง SQL ล่าสุดและสร้างกราฟตามสิทธิ์ของคุณ</p><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :disabled="!reports.length" @click="startRefresh" /></div>
 </template>
 
 <style scoped>
 .eyebrow { margin: 0 0 .35rem; color: var(--primary-color); font-size: .75rem; font-weight: 700; letter-spacing: .1em; }
 .executive-heading { align-items: center; }
 .executive-panel { border-radius: var(--content-border-radius); }
-.executive-kpi { position: relative; display: flex; align-items: flex-start; gap: 1rem; min-height: 9rem; padding: 1.25rem; color: inherit; background: var(--surface-card); border-radius: var(--content-border-radius); text-align: left; cursor: pointer; transition: border-color .2s, transform .2s; }
-.executive-kpi:hover { border-color: var(--primary-color); transform: translateY(-1px); }
+.dashboard-card { margin-bottom: 0; }
+.executive-kpi { position: relative; display: flex; align-items: flex-start; gap: 1rem; min-height: 9rem; margin-bottom: 0; color: inherit; border: 0; text-align: left; cursor: pointer; transition: transform .2s; }
+.executive-kpi:hover { transform: translateY(-1px); }
 .kpi-icon { display: grid; place-items: center; flex: 0 0 2.75rem; height: 2.75rem; border-radius: var(--content-border-radius); background: var(--p-primary-50); color: var(--primary-color); font-size: 1.1rem; }
 .kpi-copy { display: grid; gap: .45rem; min-width: 0; }
 .kpi-label { color: var(--text-color-secondary); font-size: .8rem; font-weight: 600; }
-.kpi-value { font-size: clamp(1.35rem, 2.2vw, 1.75rem); line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.kpi-value { font-size: clamp(1.05rem, 1.75vw, 1.65rem); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: -.02em; }
 .kpi-comparison { color: var(--text-color-secondary); font-size: .75rem; }
 .kpi-link { position: absolute; top: 1.2rem; right: 1rem; color: var(--text-color-secondary); font-size: .75rem; }
 .chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }

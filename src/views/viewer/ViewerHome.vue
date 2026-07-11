@@ -11,5 +11,5 @@ watchEffect(() => {
 </script>
 
 <template>
-  <div class="surface-card surface-card-panel p-8 text-center"><i class="pi pi-lock text-4xl text-muted-color" /><h1 class="text-xl">ยังไม่มีร้านค้าที่เข้าถึงได้</h1><p class="text-muted-color mb-0">ติดต่อผู้ดูแลเพื่อเชื่อม LINE บัญชีนี้กับร้านค้า</p></div>
+  <div class="card text-center"><i class="pi pi-lock text-4xl text-muted-color" /><h1 class="text-xl">ยังไม่มีร้านค้าที่เข้าถึงได้</h1><p class="text-muted-color mb-0">ติดต่อผู้ดูแลเพื่อเชื่อม LINE บัญชีนี้กับร้านค้า</p></div>
 </template>
