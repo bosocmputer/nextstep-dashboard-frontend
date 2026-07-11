@@ -42,6 +42,7 @@ const testSendingScheduleId = ref('');
 const changingScheduleId = ref('');
 const tenantBaseline = ref('');
 const smlBaseline = ref('');
+const smlLoaded = ref(false);
 let inviteActionKey = '';
 let createScheduleActionKey = '';
 const testSendActionKeys = new Map<string, string>();
@@ -54,7 +55,7 @@ const activeRecipients = computed(() => recipients.value.filter((item) => item.s
 const tenantFingerprint = computed(() => JSON.stringify({ name: tenantForm.name.trim(), status: tenantForm.status, accessEndsAt: tenantForm.accessEndsAt.getTime() }));
 const smlFingerprint = computed(() => JSON.stringify({ endpointUrl: smlForm.endpointUrl.trim(), configFileName: smlForm.configFileName.trim(), databaseName: smlForm.databaseName.trim() }));
 const tenantDirty = computed(() => !!tenant.value && tenantFingerprint.value !== tenantBaseline.value);
-const smlDirty = computed(() => !!sml.value && smlFingerprint.value !== smlBaseline.value);
+const smlDirty = computed(() => smlLoaded.value && smlFingerprint.value !== smlBaseline.value);
 const hasUnsavedChanges = computed(() => tenantDirty.value || smlDirty.value);
 const scheduleFormValid = computed(() =>
   scheduleForm.name.trim().length > 0 &&
@@ -86,7 +87,10 @@ async function load() {
       sml.value = smlResult.value;
       Object.assign(smlForm, { endpointUrl: '', configFileName: sml.value.configFileName ?? 'config.xml', databaseName: sml.value.databaseName ?? '', version: sml.value.version });
       smlBaseline.value = smlFingerprint.value;
-    } else if (!(smlResult.reason instanceof ApiError && smlResult.reason.status === 404)) throw smlResult.reason;
+      smlLoaded.value = true;
+    } else if (smlResult.reason instanceof ApiError && smlResult.reason.status === 404) {
+      smlBaseline.value = smlFingerprint.value; smlLoaded.value = true;
+    } else throw smlResult.reason;
     recipients.value = recipientResult.status === 'fulfilled' ? recipientResult.value.data : [];
     schedules.value = scheduleResult.status === 'fulfilled' ? scheduleResult.value.data : [];
   } catch (cause) { error.value = errorMessage(cause); }
@@ -306,7 +310,7 @@ function blockerLabel(code: string) {
 watch(() => [scheduleForm.periodPreset, ...scheduleForm.reportKeys], () => { flexPreview.value = undefined; });
 watch(inviteLabel, () => { if (!inviting.value) inviteActionKey = ''; });
 watch(scheduleForm, () => { if (!savingSchedule.value) createScheduleActionKey = ''; }, { deep: true });
-function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsavedChanges.value) event.preventDefault(); }
+function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsavedChanges.value) { event.preventDefault(); event.returnValue = ''; } }
 onBeforeRouteLeave(() => !hasUnsavedChanges.value || window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่'));
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void load(); });
 onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));

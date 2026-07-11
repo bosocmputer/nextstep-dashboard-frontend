@@ -11,11 +11,12 @@ function unauthorized() {
   return json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required.', requestId: 'e2e', retryable: false } }, 401);
 }
 
-function captureUnexpectedConsoleErrors(page: Page) {
+function captureUnexpectedConsoleErrors(page: Page, allowedStatusCodes: number[] = []) {
   const errors: string[] = [];
   page.on('console', (message) => {
     const text = message.text();
-    if (message.type() === 'error' && !text.includes('status of 401 (Unauthorized)')) errors.push(text);
+    const allowedStatus = allowedStatusCodes.some((status) => text.includes(`status of ${status}`));
+    if (message.type() === 'error' && !text.includes('status of 401 (Unauthorized)') && !allowedStatus) errors.push(text);
   });
   return errors;
 }
@@ -209,7 +210,7 @@ test('mobile report details use stacked rows without horizontal overflow', async
 });
 
 test('admin previews the exact single Flex card with numeric samples', async ({ page }) => {
-  const consoleErrors = captureUnexpectedConsoleErrors(page);
+  const consoleErrors = captureUnexpectedConsoleErrors(page, [404]);
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
   const recipientId = '33333333-3333-4333-8333-333333333333';
   let previewRequests = 0;
@@ -226,10 +227,7 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
       createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
     }));
   });
-  await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({
-    isConfigured: true, endpointHost: 'sml-shop.example.com:8092', databaseName: 'DEMO_DATA',
-    configFileName: 'SMLConfigDemo.xml', readinessStatus: 'READY', version: 1
-  })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({ error: { code: 'SML_NOT_CONFIGURED', message: 'Not configured', requestId: 'e2e', retryable: false } }, 404)));
   await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json({
     data: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services'], createdAt: '2026-07-01T00:00:00Z' }],
     page: { hasMore: false }
@@ -273,6 +271,7 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   await page.goto(`/admin/tenants/${tenantId}`);
   await page.getByRole('tab', { name: 'การเชื่อมต่อ SML' }).click();
   await page.getByLabel('ชื่อฐานข้อมูล SML').fill('CHANGED_DATA');
+  await expect(page.getByRole('button', { name: 'บันทึกการเชื่อมต่อ' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'ทดสอบการเชื่อมต่อ' })).toBeDisabled();
   await expect(page.getByText('บันทึกค่าก่อนทดสอบการเชื่อมต่อ')).toBeVisible();
   await page.getByRole('tab', { name: 'ตารางส่งรายงาน' }).click();

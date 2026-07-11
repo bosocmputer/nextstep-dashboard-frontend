@@ -15,6 +15,12 @@ const app = createApp(App);
 app.use(router);
 app.use(PrimeVue, {
   ripple: true,
+  locale: {
+    passwordPrompt: 'กรุณากรอกรหัสผ่าน',
+    weak: 'รหัสผ่านยังไม่ปลอดภัย',
+    medium: 'รหัสผ่านปลอดภัยปานกลาง',
+    strong: 'รหัสผ่านปลอดภัยมาก'
+  },
   theme: {
     preset: Aura,
     options: { darkModeSelector: '.app-dark', cssLayer: false }
