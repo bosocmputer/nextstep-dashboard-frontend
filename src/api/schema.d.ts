@@ -282,7 +282,8 @@ export interface paths {
         get: operations["getSchedule"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** @description Soft-deletes a draft or paused schedule. Future sends stop while delivery and audit history remain retained. */
+        delete: operations["archiveSchedule"];
         options?: never;
         head?: never;
         patch: operations["updateSchedule"];
@@ -314,6 +315,23 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["pauseSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/tenants/{tenantId}/schedules/{scheduleId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Restores an archived schedule as a draft; it remains inactive until explicitly activated. */
+        post: operations["restoreSchedule"];
         delete?: never;
         options?: never;
         head?: never;
@@ -797,7 +815,7 @@ export interface components {
         /** @enum {string} */
         PeriodPreset: "YESTERDAY" | "TODAY_TO_NOW" | "MONTH_TO_DATE" | "AS_OF_RUN";
         /** @enum {string} */
-        ScheduleStatus: "DRAFT" | "ACTIVE" | "PAUSED" | "EXPIRED";
+        ScheduleStatus: "DRAFT" | "ACTIVE" | "PAUSED" | "EXPIRED" | "ARCHIVED";
         ScheduleInput: {
             name: string;
             daysOfWeek: number[];
@@ -832,6 +850,8 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /** Format: date-time */
+            archivedAt?: string | null;
         };
         SchedulePage: {
             data: components["schemas"]["Schedule"][];
@@ -1279,6 +1299,7 @@ export interface components {
         ReportKey: components["schemas"]["ReportKey"];
         Cursor: string;
         PageSize: number;
+        ScheduleVersion: number;
         IdempotencyKey: string;
         CSRFToken: string;
     };
@@ -1748,6 +1769,8 @@ export interface operations {
             query?: {
                 cursor?: components["parameters"]["Cursor"];
                 pageSize?: components["parameters"]["PageSize"];
+                /** @description Include soft-deleted schedules retained for audit history. */
+                includeArchived?: boolean;
             };
             header?: never;
             path: {
@@ -1853,6 +1876,35 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    archiveSchedule: {
+        parameters: {
+            query: {
+                version: components["parameters"]["ScheduleVersion"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                scheduleId: components["parameters"]["ScheduleID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Schedule archived. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     updateSchedule: {
         parameters: {
             query?: never;
@@ -1935,6 +1987,35 @@ export interface operations {
                 };
             };
             409: components["responses"]["Conflict"];
+        };
+    };
+    restoreSchedule: {
+        parameters: {
+            query: {
+                version: components["parameters"]["ScheduleVersion"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                scheduleId: components["parameters"]["ScheduleID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Schedule restored as draft. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     testSendSchedule: {

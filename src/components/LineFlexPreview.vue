@@ -82,13 +82,13 @@ function supportingFor(report: PreviewReport) { return report.supporting ?? repo
   display: grid;
   gap: 0.2rem;
   padding: 1rem;
-  background: #0f766e;
+  background: #1d4ed8;
   color: #fff;
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
-.flex-preview-header span { color: #ccfbf1; font-size: 0.72rem; }
+.flex-preview-header span { color: #dbeafe; font-size: 0.72rem; }
 
 .flex-preview-body { padding: 1.125rem; }
 .flex-preview-body h3 { margin: 0; font-size: 1.25rem; }
@@ -103,7 +103,7 @@ function supportingFor(report: PreviewReport) { return report.supporting ?? repo
 }
 
 .flex-preview-category { display: block; margin-bottom: 0.45rem; color: #64748b; font-size: 0.68rem; font-weight: 700; }
-.flex-preview-report h4 { display: flex; justify-content: space-between; gap: 0.5rem; margin: 0 0 0.55rem; color: #0f766e; font-size: 0.9rem; }
+.flex-preview-report h4 { display: flex; justify-content: space-between; gap: 0.5rem; margin: 0 0 0.55rem; color: #1d4ed8; font-size: 0.9rem; }
 .flex-preview-metric { display: flex; justify-content: space-between; gap: 1rem; margin-top: 0.35rem; font-size: 0.875rem; }
 .flex-preview-metric span { color: #475569; }
 .flex-preview-metric strong { text-align: right; font-variant-numeric: tabular-nums; }
@@ -114,7 +114,7 @@ function supportingFor(report: PreviewReport) { return report.supporting ?? repo
 .flex-preview-attention[data-severity="DANGER"] { background: #fee2e2; color: #b91c1c; }
 .flex-preview-generated { margin: 1rem 0 0; color: #94a3b8; font-size: 0.72rem; }
 .flex-preview-footer { padding: 0 1rem 1rem; }
-.flex-preview-footer span { display: block; padding: 0.65rem; border-radius: 0.45rem; background: #0f766e; color: #fff; text-align: center; font-size: 0.875rem; font-weight: 600; }
+.flex-preview-footer span { display: block; padding: 0.65rem; border-radius: 0.45rem; background: #1d4ed8; color: #fff; text-align: center; font-size: 0.875rem; font-weight: 600; }
 
 @media (max-width: 480px) {
   .flex-preview-shell { padding: 0.75rem; }

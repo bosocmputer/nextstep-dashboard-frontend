@@ -1,7 +1,7 @@
 const labels: Record<string, string> = {
   QUEUED: 'รอคิว', CLAIMED: 'กำลังเตรียม', RUNNING: 'กำลังทำงาน', SUCCEEDED: 'สำเร็จ', FAILED: 'ไม่สำเร็จ', CANCELLED: 'ยกเลิกแล้ว', EXPIRED: 'หมดอายุ',
   PENDING: 'รอดำเนินการ', SENDING: 'กำลังส่ง', ACCEPTED: 'LINE รับแล้ว', RETRY_WAIT: 'รอส่งซ้ำ', UNCERTAIN: 'รอตรวจสอบ', FAILED_PERMANENT: 'ส่งไม่สำเร็จ',
-  ACTIVE: 'ใช้งาน', DISABLED: 'ปิดใช้งาน', PAUSED: 'พักไว้', DRAFT: 'ฉบับร่าง', REVOKED: 'ยกเลิกสิทธิ์',
+  ACTIVE: 'ใช้งาน', DISABLED: 'ปิดใช้งาน', PAUSED: 'พักไว้', DRAFT: 'ฉบับร่าง', ARCHIVED: 'ลบแล้ว', REVOKED: 'ยกเลิกสิทธิ์',
   READY: 'พร้อม', UNTESTED: 'ยังไม่ได้ทดสอบ', UNCONFIGURED: 'ยังไม่ได้ตั้งค่า',
   SUCCESS: 'สำเร็จ', DENIED: 'ถูกปฏิเสธ',
   ADMIN: 'ผู้ดูแล', VIEWER: 'ผู้ดูรายงาน', WORKER: 'ระบบประมวลผล', SYSTEM: 'ระบบ'
@@ -24,6 +24,8 @@ const auditActions: Record<string, string> = {
   SCHEDULE_UPDATED: 'แก้ไขตารางส่งรายงาน',
   SCHEDULE_ACTIVATED: 'เปิดตารางส่งรายงาน',
   SCHEDULE_PAUSED: 'พักตารางส่งรายงาน',
+  SCHEDULE_ARCHIVED: 'ลบตารางส่งรายงาน',
+  SCHEDULE_RESTORED: 'กู้คืนตารางส่งรายงาน',
   SCHEDULE_TEST_SEND_ENQUEUED: 'เริ่มทดสอบส่งรายงานจริง'
 };
 

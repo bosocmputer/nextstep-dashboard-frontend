@@ -378,6 +378,8 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   let previewRequests = 0;
   let testSendRequests = 0;
   let tenantPatchRequests = 0;
+  let archiveRequests = 0;
+  let restoreRequests = 0;
 
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
   await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json(adminReportCatalog)));
@@ -402,6 +404,8 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
     readinessBlockers: [], nextOccurrences: ['2026-07-13T02:00:00Z'],
     createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
   };
+  let scheduleStatus = 'DRAFT';
+  let scheduleVersion = 1;
   await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, async (route) => {
     if (route.request().url().endsWith('/preview')) {
       previewRequests++;
@@ -426,12 +430,29 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
       }, 202));
       return;
     }
-    if (route.request().method() === 'GET' && route.request().url().endsWith(`/schedules/${schedule.id}`)) {
-      await route.fulfill(json(schedule));
+    if (route.request().method() === 'DELETE') {
+      archiveRequests++;
+      expect(route.request().url()).toContain('version=1');
+      scheduleStatus = 'ARCHIVED';
+      scheduleVersion = 2;
+      await route.fulfill(json({ ...schedule, status: scheduleStatus, version: scheduleVersion, archivedAt: '2026-07-11T12:00:00Z', nextOccurrences: [], readinessBlockers: [] }));
       return;
     }
+    if (route.request().method() === 'POST' && route.request().url().includes('/restore')) {
+      restoreRequests++;
+      expect(route.request().url()).toContain('version=2');
+      scheduleStatus = 'DRAFT';
+      scheduleVersion = 3;
+      await route.fulfill(json({ ...schedule, status: scheduleStatus, version: scheduleVersion }));
+      return;
+    }
+    if (route.request().method() === 'GET' && route.request().url().endsWith(`/schedules/${schedule.id}`)) {
+      await route.fulfill(json({ ...schedule, status: scheduleStatus, version: scheduleVersion }));
+      return;
+    }
+    const includeArchived = new URL(route.request().url()).searchParams.get('includeArchived') === 'true';
     await route.fulfill(json({
-      data: [schedule],
+      data: scheduleStatus === 'ARCHIVED' && !includeArchived ? [] : [{ ...schedule, status: scheduleStatus, version: scheduleVersion, ...(scheduleStatus === 'ARCHIVED' ? { archivedAt: '2026-07-11T12:00:00Z', nextOccurrences: [], readinessBlockers: [] } : {}) }],
       page: { hasMore: false }
     }));
   });
@@ -473,6 +494,20 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   await page.getByRole('button', { name: 'ดึงข้อมูลและส่งจริง' }).click();
   await expect(page.getByText('รับคำขอทดสอบส่งแล้ว')).toBeVisible();
   expect(testSendRequests).toBe(1);
+
+  await page.getByRole('button', { name: 'ลบตารางส่งรายงาน' }).click();
+  await expect(page.getByText('ยืนยันลบตารางส่งรายงาน')).toBeVisible();
+  await expect(page.getByText('ประวัติการส่งเดิมยังเก็บไว้ 365 วัน')).toBeVisible();
+  await page.getByRole('button', { name: 'ลบตารางส่งรายงาน', exact: true }).last().click();
+  await expect(page.getByText('ลบตารางส่งรายงานแล้ว')).toBeVisible();
+  expect(archiveRequests).toBe(1);
+  await page.getByText('แสดงรายการที่ลบแล้ว').click();
+  await expect(page.getByText('ลบแล้ว', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'กู้คืนเป็นฉบับร่าง' }).click();
+  await expect(page.getByText('กู้คืนตารางส่งรายงาน')).toBeVisible();
+  await page.getByRole('button', { name: 'กู้คืนเป็นฉบับร่าง', exact: true }).last().click();
+  await expect(page.getByText('กู้คืนเป็นฉบับร่างแล้ว')).toBeVisible();
+  expect(restoreRequests).toBe(1);
 
   await page.getByRole('tab', { name: 'ข้อมูลร้าน' }).click();
   await page.getByLabel('สถานะ').click();

@@ -17,8 +17,8 @@ const preview: FlexPreview = {
       key: 'sales_goods_services',
       label: 'รายงานขายสินค้าและบริการ',
       categoryLabel: 'ขาย',
-      primary: { label: 'ยอดขาย', value: '฿1,234,567.89' },
-      supporting: [{ label: 'จำนวนเอกสาร', value: '128' }, { label: 'ยอดเฉลี่ยต่อเอกสาร', value: '฿9,645.06' }],
+      primary: { label: 'ยอดขาย', value: '1,234,567.89' },
+      supporting: [{ label: 'จำนวนเอกสาร', value: '128' }, { label: 'ยอดเฉลี่ยต่อเอกสาร', value: '9,645.06' }],
       comparison: { text: '↓ 7.82% จากช่วงก่อน', direction: 'DOWN' },
       attention: { severity: 'WARNING', text: 'ตัวอย่างสถานะที่ต้องตรวจสอบ' },
       actionUrl: 'https://dashboard.nextstep-soft.com/app/tenant/t/report/sales_goods_services',
@@ -37,7 +37,8 @@ describe('LineFlexPreview', () => {
     expect(wrapper.text()).toContain('ตัวเลขสมมติเท่านั้น');
     expect(wrapper.text()).toContain('ไม่ดึงข้อมูลจาก SML');
     expect(wrapper.text()).toContain('รายงานขายสินค้าและบริการ');
-    expect(wrapper.text()).toContain('฿1,234,567.89');
+    expect(wrapper.text()).toContain('1,234,567.89');
+    expect(wrapper.text()).not.toContain('฿');
     expect(wrapper.text()).toContain('↓ 7.82% จากช่วงก่อน');
     expect(wrapper.text()).toContain('ตัวอย่างสถานะที่ต้องตรวจสอบ');
     expect(wrapper.text()).toContain('เปิดภาพรวมร้าน');
