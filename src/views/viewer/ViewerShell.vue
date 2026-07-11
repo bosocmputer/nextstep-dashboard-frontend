@@ -9,6 +9,7 @@ import type { NavigationItem } from '@/layout/menu';
 import { useViewerSession } from '@/stores/viewer';
 import { reportIcon } from '@/utils/dashboard';
 import { errorMessage } from '@/utils/format';
+import { cleanViewerQuery } from '@/utils/viewerSnapshot';
 
 const route = useRoute(); const router = useRouter();
 const toast = useToast();
@@ -45,8 +46,14 @@ async function prepareTenantContext() {
 
 async function initialize() {
   stage.value = 'loading'; message.value = '';
+  const invitationReference = route.path.endsWith('/invite') && typeof route.query.ref === 'string' ? route.query.ref : undefined;
+  const deliveryReference = typeof route.query.deliveryRef === 'string' ? route.query.deliveryRef : undefined;
   try {
-    try { await loadViewer(); await prepareTenantContext(); stage.value = 'ready'; return; }
+    try {
+      await loadViewer(); await prepareTenantContext();
+      if (deliveryReference) await removeDeliveryReference();
+      stage.value = 'ready'; return;
+    }
     catch (cause) { if (!(cause instanceof ApiError && cause.status === 401)) throw cause; }
     const liffId = import.meta.env.VITE_LINE_LIFF_ID;
     if (!liffId || liffId.startsWith('replace-')) throw new Error('ยังไม่ได้ตั้งค่า LINE LIFF ID สำหรับ environment นี้');
@@ -54,11 +61,10 @@ async function initialize() {
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: window.location.href }); return; }
     const idToken = liff.getIDToken();
     if (!idToken) throw new Error('LINE ไม่ส่ง ID token กรุณาเปิดผ่าน LINE อีกครั้ง');
-    const invitationReference = route.path.endsWith('/invite') && typeof route.query.ref === 'string' ? route.query.ref : undefined;
-    const deliveryReference = typeof route.query.deliveryRef === 'string' ? route.query.deliveryRef : undefined;
     const me = await viewerApi.exchange(idToken, invitationReference, deliveryReference);
     setViewer(me); setTenants((await viewerApi.tenants()).data); await prepareTenantContext();
-    if (invitationReference || deliveryReference) await router.replace({ path: '/app' });
+    if (invitationReference) await router.replace({ path: '/app' });
+    else if (deliveryReference) await removeDeliveryReference();
     stage.value = 'ready';
   } catch (cause) {
     stage.value = 'error';
@@ -66,6 +72,10 @@ async function initialize() {
     else if (cause instanceof ApiError && cause.code === 'LINE_IDENTITY_FORBIDDEN') message.value = 'LINE บัญชีนี้ยังไม่ได้รับเชิญหรือถูกยกเลิกสิทธิ์';
     else message.value = errorMessage(cause);
   }
+}
+
+async function removeDeliveryReference() {
+  await router.replace({ path: route.path, query: cleanViewerQuery(route.query), hash: route.hash });
 }
 
 async function switchTenant(tenantId: string) {

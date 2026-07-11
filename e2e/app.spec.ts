@@ -333,6 +333,44 @@ test('mobile report details use stacked rows without horizontal overflow', async
   expect(consoleErrors).toEqual([]);
 });
 
+test('LINE deep link opens the exact snapshot without creating a new SQL run', async ({ page }) => {
+  const consoleErrors = captureUnexpectedConsoleErrors(page);
+  const runId = '77777777-7777-4777-8777-777777777777';
+  let createRunRequests = 0;
+  await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({
+    recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-11T00:00:00Z'
+  })));
+  await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({
+    data: [{ id: tenantId, name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', reportKeys: ['sales_goods_services'] }], page: { hasMore: false }
+  })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({
+    data: [{ reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false }], page: { hasMore: false }
+  })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports/sales_goods_services/runs**`, (route) => {
+    if (route.request().method() === 'POST') {
+      createRunRequests++;
+      return route.fulfill(json({}, 500));
+    }
+    if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(salesDashboard()));
+    return route.fulfill(json({
+      id: runId, tenantId, reportKey: 'sales_goods_services', status: 'EXPIRED', periodPreset: 'YESTERDAY',
+      dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 741, isTruncated: false,
+      summary: {}, queuedAt: '2026-07-10T00:00:00Z', finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z'
+    }));
+  });
+
+  await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services?snapshotRunId=${runId}&deliveryRef=secret-reference`);
+
+  await expect(page).toHaveURL(new RegExp(`snapshotRunId=${runId}$`));
+  await expect(page.getByText('ข้อมูลจาก LINE')).toBeVisible();
+  await expect(page.getByText('Snapshot พร้อมใช้งาน')).toBeVisible();
+  await expect(page.getByText('฿1,250')).toBeVisible();
+  expect(createRunRequests).toBe(0);
+  await page.getByRole('tab', { name: 'ข้อมูลรายละเอียด' }).click();
+  await expect(page.getByText('ข้อมูลแถวรายละเอียดเป็นข้อมูลชั่วคราว')).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
 test('admin edits a schedule on a full page and previews the exact single Flex card', async ({ page }) => {
   const consoleErrors = captureUnexpectedConsoleErrors(page, [404]);
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };

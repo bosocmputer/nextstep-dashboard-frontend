@@ -846,10 +846,27 @@ export interface components {
             /** @description Numeric sample value; never customer data. */
             value: string;
         };
+        FlexPreviewComparison: {
+            text: string;
+            /** @enum {string} */
+            direction: "UP" | "DOWN" | "SAME";
+        };
+        FlexPreviewAttention: {
+            /** @enum {string} */
+            severity: "INFO" | "WARNING" | "DANGER";
+            text: string;
+        };
         FlexPreviewReport: {
             key: components["schemas"]["ReportKey"];
             label: string;
+            categoryLabel?: string;
             metrics: components["schemas"]["FlexPreviewMetric"][];
+            primary?: components["schemas"]["FlexPreviewMetric"];
+            supporting?: components["schemas"]["FlexPreviewMetric"][];
+            comparison?: components["schemas"]["FlexPreviewComparison"];
+            attention?: components["schemas"]["FlexPreviewAttention"];
+            /** Format: uri */
+            actionUrl?: string;
         };
         FlexPreview: {
             altText: string;

@@ -9,6 +9,7 @@ import { useViewerSession } from '@/stores/viewer';
 import { formatDashboardValue, periodLabel } from '@/utils/dashboard';
 import { errorMessage, formatDateOnly, formatDateTime, formatMetric } from '@/utils/format';
 import { presentationFor, visibleReportColumns, type ReportColumnDefinition } from '@/utils/reportPresentation';
+import { cleanViewerQuery, snapshotReplayInput, validSnapshotRunId } from '@/utils/viewerSnapshot';
 
 const route = useRoute();
 const router = useRouter();
@@ -26,9 +27,12 @@ const columns = ref<string[]>([]);
 const nextCursor = ref<string>();
 const hasMore = ref(false);
 const rowsLoaded = ref(false);
+const rowsUnavailable = ref(false);
 const activeTab = ref('overview');
 const selectedColumnKeys = ref<string[]>([]);
 const expandedMobileRows = ref(new Set<string>());
+const snapshotMode = ref(false);
+const snapshotMissing = ref(false);
 const loading = ref(false);
 const loadingRows = ref(false);
 const error = ref('');
@@ -43,11 +47,14 @@ let rowsController: AbortController | undefined;
 let runActionKey = '';
 
 const active = computed(() => !!run.value && ['QUEUED', 'CLAIMED', 'RUNNING'].includes(run.value.status));
+const snapshotRunId = computed(() => validSnapshotRunId(route.query.snapshotRunId));
 const statusLabel = computed(() => {
+  if (snapshotMode.value && dashboard.value) return 'Snapshot พร้อมใช้งาน';
   const labels: Record<string, string> = { QUEUED: 'รอคิว', CLAIMED: 'กำลังเตรียม', RUNNING: 'กำลังดึงข้อมูล', SUCCEEDED: 'พร้อมใช้งาน', FAILED: 'ไม่สำเร็จ', CANCELLED: 'ยกเลิกแล้ว', EXPIRED: 'หมดอายุ' };
   return run.value ? labels[run.value.status] ?? run.value.status : '';
 });
-const statusSeverity = computed(() => run.value?.status === 'SUCCEEDED' ? 'success' : run.value?.status === 'FAILED' ? 'danger' : active.value ? 'info' : 'secondary');
+const statusSeverity = computed(() => snapshotMode.value && dashboard.value ? 'success' : run.value?.status === 'SUCCEEDED' ? 'success' : run.value?.status === 'FAILED' ? 'danger' : active.value ? 'info' : 'secondary');
+const snapshotRowsUnavailable = computed(() => snapshotMode.value && (rowsUnavailable.value || run.value?.status === 'EXPIRED'));
 const columnOptions = computed(() => presentationFor(reportKey.value, columns.value));
 const displayedColumns = computed(() => visibleReportColumns(reportKey.value, columns.value, selectedColumnKeys.value));
 const mobileSummaryColumns = computed(() => displayedColumns.value.filter((column) => column.mobilePriority >= 4).slice(0, 6));
@@ -68,12 +75,13 @@ async function startRun() {
   if (!definition.value) { error.value = 'ไม่พบรายงานหรือคุณไม่มีสิทธิ์เปิดรายงานนี้'; return; }
   if (input.periodPreset === 'CUSTOM' && (!input.dateFrom || !input.dateTo)) { error.value = 'กรุณาเลือกวันที่เริ่มต้นและสิ้นสุด'; return; }
   if (input.periodPreset === 'CUSTOM' && formatDateOnly(input.dateTo!) < formatDateOnly(input.dateFrom!)) { error.value = 'วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น'; return; }
+  if (snapshotMode.value || route.query.snapshotRunId !== undefined) await leaveSnapshotMode();
   const context = ++generation;
   const selectedTenantId = tenantId.value;
   const selectedReportKey = reportKey.value;
   stopPolling(); rowsController?.abort('new-run'); rowsController = undefined;
   loading.value = true; error.value = ''; dashboard.value = undefined; run.value = undefined; activeTab.value = 'overview';
-  rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set(); nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; pollCount = 0;
+  rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set(); nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; rowsUnavailable.value = false; pollCount = 0;
   const payload: CreateReportRunInput = { periodPreset: input.periodPreset };
   if (input.periodPreset === 'CUSTOM') { payload.dateFrom = formatDateOnly(input.dateFrom!); payload.dateTo = formatDateOnly(input.dateTo!); }
   runActionKey ||= newIdempotencyKey('viewer-run');
@@ -86,6 +94,47 @@ async function startRun() {
     if (!(cause instanceof ApiError) || !cause.retryable) runActionKey = '';
     error.value = errorMessage(cause); loading.value = false;
   }
+}
+
+async function leaveSnapshotMode() {
+  snapshotMode.value = false; snapshotMissing.value = false;
+  if (route.query.snapshotRunId !== undefined) {
+    const query = cleanViewerQuery(route.query);
+    delete query.snapshotRunId;
+    await router.replace({ path: route.path, query, hash: route.hash });
+  }
+}
+
+function applyRunPeriod(item: ReportRun) {
+  input.periodPreset = item.periodPreset as CreateReportRunInput['periodPreset'];
+  input.dateFrom = item.dateFrom ? new Date(`${item.dateFrom}T00:00:00`) : null;
+  input.dateTo = item.dateTo ? new Date(`${item.dateTo}T00:00:00`) : null;
+}
+
+async function loadSnapshot(context: number, selectedTenantId: string, selectedReportKey: ReportKey, selectedRunId: string) {
+  snapshotMode.value = true; snapshotMissing.value = false; loading.value = true;
+  dashboard.value = undefined; run.value = undefined; activeTab.value = 'overview'; error.value = '';
+  rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set(); nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; rowsUnavailable.value = false;
+  const [runResult, dashboardResult] = await Promise.allSettled([
+    viewerApi.run(selectedTenantId, selectedReportKey, selectedRunId, initializeController?.signal),
+    viewerApi.dashboard(selectedTenantId, selectedReportKey, selectedRunId, initializeController?.signal)
+  ]);
+  if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
+  if (runResult.status === 'rejected') throw runResult.reason;
+  run.value = runResult.value; applyRunPeriod(runResult.value);
+  if (dashboardResult.status === 'fulfilled') dashboard.value = dashboardResult.value;
+  else if (dashboardResult.reason instanceof ApiError && dashboardResult.reason.status === 404) snapshotMissing.value = true;
+  else throw dashboardResult.reason;
+  loading.value = false;
+}
+
+async function replaySnapshot() {
+  if (!run.value) return;
+  const payload = snapshotReplayInput(reportKey.value, run.value);
+  input.periodPreset = payload.periodPreset;
+  input.dateFrom = payload.dateFrom ? new Date(`${payload.dateFrom}T00:00:00`) : null;
+  input.dateTo = payload.dateTo ? new Date(`${payload.dateTo}T00:00:00`) : null;
+  await startRun();
 }
 
 function schedulePoll(context: number) {
@@ -119,7 +168,12 @@ async function loadDashboard() {
   try {
     const result = await viewerApi.dashboard(selectedTenantId, selectedReportKey, selectedRunId, pollController?.signal);
     if (isCurrent(context, selectedTenantId, selectedReportKey) && run.value?.id === selectedRunId) dashboard.value = result;
-  } catch (cause) { if (!isCancelled(cause) && context === generation) error.value = errorMessage(cause); }
+  } catch (cause) {
+    if (!isCancelled(cause) && context === generation) {
+      if (snapshotMode.value && cause instanceof ApiError && cause.code === 'REPORT_ROWS_EXPIRED') rowsUnavailable.value = true;
+      else error.value = errorMessage(cause);
+    }
+  }
 }
 
 async function loadRows(reset = false) {
@@ -179,11 +233,15 @@ async function initialize() {
       error.value = 'คุณไม่มีสิทธิ์เปิดรายงานนี้ กรุณาเลือกจากเมนูรายงาน';
       return;
     }
-    setDefaultPeriod(); await startRun();
+    if (route.query.snapshotRunId !== undefined && !snapshotRunId.value) {
+      error.value = 'ลิงก์ Snapshot ไม่ถูกต้อง กรุณาเปิดจากข้อความ LINE อีกครั้ง'; loading.value = false; return;
+    }
+    if (snapshotRunId.value) await loadSnapshot(context, selectedTenantId, selectedReportKey, snapshotRunId.value);
+    else { snapshotMode.value = false; snapshotMissing.value = false; setDefaultPeriod(); await startRun(); }
   } catch (cause) { if (!isCancelled(cause) && context === generation) { error.value = errorMessage(cause); loading.value = false; } }
 }
 
-watch(activeTab, (value) => { if (value === 'detail' && run.value?.status === 'SUCCEEDED' && !rowsLoaded.value) void loadRows(true); });
+watch(activeTab, (value) => { if (value === 'detail' && run.value?.status === 'SUCCEEDED' && !rowsLoaded.value && !rowsUnavailable.value) void loadRows(true); });
 watch([tenantId, reportKey], () => void initialize());
 onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void initialize(); });
 onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleVisibilityChange); stopLifecycle(); });
@@ -193,7 +251,7 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
   <Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="-ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" />
   <div class="page-header">
     <div><p class="report-eyebrow">EXECUTIVE REPORT</p><h1 class="page-title">{{ definition?.label ?? reportKey }}</h1><p class="page-subtitle">{{ tenant?.name }} · แสดงเวลาไทย (Asia/Bangkok) · ดึง SQL ใหม่เมื่อกดอัปเดต</p></div>
-    <Tag v-if="run" :severity="statusSeverity" :value="statusLabel" />
+    <div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div>
   </div>
 
   <section class="card report-filter" aria-label="ตัวกรองรายงาน">
@@ -206,9 +264,10 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
   </section>
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
-  <section v-if="loading" class="card report-panel" aria-live="polite"><div class="flex flex-col items-center text-center gap-3 py-3"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ statusLabel || 'กำลังส่งคำขอ' }}</h2><p class="text-muted-color mt-1 mb-0">กำลังดึงข้อมูลจาก SML ของ {{ tenant?.name }}<span v-if="run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-4" /></section>
+  <Message v-if="snapshotMissing && run" severity="warn" :closable="false" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลสรุปชุดนี้หมดอายุแล้ว กรุณาดึงข้อมูลใหม่จากฐานร้าน</span><Button :label="reportKey === 'stock_reorder' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงเดิมใหม่'" icon="pi pi-refresh" size="small" @click="replaySnapshot" /></div></Message>
+  <section v-if="loading" class="card report-panel" aria-live="polite"><div class="flex flex-col items-center text-center gap-3 py-3"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ snapshotMode ? 'กำลังเปิดข้อมูลจาก LINE' : statusLabel || 'กำลังส่งคำขอ' }}</h2><p class="text-muted-color mt-1 mb-0">{{ snapshotMode ? 'กำลังโหลด Snapshot ที่ใช้สร้างข้อความ โดยไม่ดึง SQL ใหม่' : `กำลังดึงข้อมูลจาก SML ของ ${tenant?.name ?? ''}` }}<span v-if="!snapshotMode && run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-4" /></section>
 
-  <Tabs v-if="dashboard && run?.status === 'SUCCEEDED'" v-model:value="activeTab" class="report-tabs">
+  <Tabs v-if="dashboard && run" v-model:value="activeTab" class="report-tabs">
     <TabList><Tab value="overview"><i class="pi pi-chart-bar mr-2" />ภาพรวมและกราฟ</Tab><Tab value="detail"><i class="pi pi-table mr-2" />ข้อมูลรายละเอียด</Tab></TabList>
     <TabPanels>
       <TabPanel value="overview">
@@ -221,8 +280,9 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
         <div v-if="!dashboard.visualizations.length" class="card report-panel text-center text-muted-color"><i class="pi pi-chart-bar text-3xl" /><p class="mb-0">ช่วงนี้ไม่มีข้อมูลเพียงพอสำหรับสร้างกราฟ</p></div>
       </TabPanel>
       <TabPanel value="detail">
-        <div class="flex flex-wrap items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">ข้อมูลจาก SQL</h2><p class="text-sm text-muted-color mt-1 mb-0">{{ run.rowCount.toLocaleString('th-TH') }} แถว · เก็บข้อมูลรายละเอียดชั่วคราว 24 ชั่วโมง</p></div><div class="flex flex-wrap gap-2"><MultiSelect v-model="selectedColumnKeys" :options="columnOptions" option-label="label" option-value="key" display="chip" filter aria-label="เลือกคอลัมน์ที่ต้องการแสดง" placeholder="เลือกคอลัมน์" class="w-full sm:w-80"><template #option="{ option }"><div class="flex items-center justify-between gap-3 w-full"><span>{{ option.label }}</span><Tag v-if="option.technical" severity="secondary" value="เทคนิค" /></div></template></MultiSelect><Tag v-if="run.isTruncated" severity="warn" value="ผลลัพธ์ถูกจำกัดตามจำนวนแถวสูงสุด" /></div></div>
-        <div class="card table-card report-panel"><div class="hidden md:block"><DataTable :value="rows" :loading="loadingRows" data-key="__rowKey" scrollable striped-rows><Column v-for="column in displayedColumns" :key="column.key" :field="column.key" :header="column.label" :frozen="column.frozen" align-frozen="left"><template #body="{ data }"><span class="safe-wrap metric-value">{{ formatMetric(data[column.key]) }}</span></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก' }}</div></template></DataTable></div><div class="md:hidden grid gap-3" aria-label="รายละเอียดรายงานแบบมือถือ"><article v-for="row in rows" :key="String(row.__rowKey)" class="mobile-row"><div v-for="column in mobileColumns(row)" :key="column.key" class="flex items-start justify-between gap-4"><span class="text-xs text-muted-color safe-wrap">{{ column.label }}</span><strong class="text-sm text-right metric-value safe-wrap">{{ formatMetric(row[column.key]) }}</strong></div><Button v-if="displayedColumns.length > mobileSummaryColumns.length" :label="expandedMobileRows.has(String(row.__rowKey)) ? 'แสดงน้อยลง' : 'ดูรายละเอียดเพิ่ม'" :icon="expandedMobileRows.has(String(row.__rowKey)) ? 'pi pi-angle-up' : 'pi pi-angle-down'" text size="small" class="justify-self-start" @click="toggleMobileRow(row)" /></article><div v-if="!loadingRows && !rows.length" class="py-8 text-center text-muted-color">รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก</div></div><div v-if="hasMore" class="table-footer text-center"><Button label="โหลดอีก 25 แถว" icon="pi pi-angle-down" outlined :loading="loadingRows" @click="loadRows(false)" /></div></div>
+        <Message v-if="snapshotRowsUnavailable" severity="info" :closable="false"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลแถวรายละเอียดเป็นข้อมูลชั่วคราวและหมดอายุแล้ว แต่ Snapshot ภาพรวมจาก LINE ยังเปิดดูได้ กรุณาดึง SQL ใหม่เมื่อต้องการตรวจรายการ</span><Button :label="reportKey === 'stock_reorder' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงเดิมใหม่'" icon="pi pi-refresh" size="small" @click="replaySnapshot" /></div></Message>
+        <template v-else><div class="flex flex-wrap items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">{{ snapshotMode ? 'ข้อมูล Snapshot จาก SQL' : 'ข้อมูลจาก SQL' }}</h2><p class="text-sm text-muted-color mt-1 mb-0">{{ run.rowCount.toLocaleString('th-TH') }} แถว · เก็บข้อมูลรายละเอียดชั่วคราว 24 ชั่วโมง</p></div><div class="flex flex-wrap gap-2"><MultiSelect v-model="selectedColumnKeys" :options="columnOptions" option-label="label" option-value="key" display="chip" filter aria-label="เลือกคอลัมน์ที่ต้องการแสดง" placeholder="เลือกคอลัมน์" class="w-full sm:w-80"><template #option="{ option }"><div class="flex items-center justify-between gap-3 w-full"><span>{{ option.label }}</span><Tag v-if="option.technical" severity="secondary" value="เทคนิค" /></div></template></MultiSelect><Tag v-if="run.isTruncated" severity="warn" value="ผลลัพธ์ถูกจำกัดตามจำนวนแถวสูงสุด" /></div></div>
+        <div class="card table-card report-panel"><div class="hidden md:block"><DataTable :value="rows" :loading="loadingRows" data-key="__rowKey" scrollable striped-rows><Column v-for="column in displayedColumns" :key="column.key" :field="column.key" :header="column.label" :frozen="column.frozen" align-frozen="left"><template #body="{ data }"><span class="safe-wrap metric-value">{{ formatMetric(data[column.key]) }}</span></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก' }}</div></template></DataTable></div><div class="md:hidden grid gap-3" aria-label="รายละเอียดรายงานแบบมือถือ"><article v-for="row in rows" :key="String(row.__rowKey)" class="mobile-row"><div v-for="column in mobileColumns(row)" :key="column.key" class="flex items-start justify-between gap-4"><span class="text-xs text-muted-color safe-wrap">{{ column.label }}</span><strong class="text-sm text-right metric-value safe-wrap">{{ formatMetric(row[column.key]) }}</strong></div><Button v-if="displayedColumns.length > mobileSummaryColumns.length" :label="expandedMobileRows.has(String(row.__rowKey)) ? 'แสดงน้อยลง' : 'ดูรายละเอียดเพิ่ม'" :icon="expandedMobileRows.has(String(row.__rowKey)) ? 'pi pi-angle-up' : 'pi pi-angle-down'" text size="small" class="justify-self-start" @click="toggleMobileRow(row)" /></article><div v-if="!loadingRows && !rows.length" class="py-8 text-center text-muted-color">รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก</div></div><div v-if="hasMore" class="table-footer text-center"><Button label="โหลดอีก 25 แถว" icon="pi pi-angle-down" outlined :loading="loadingRows" @click="loadRows(false)" /></div></div></template>
       </TabPanel>
     </TabPanels>
   </Tabs>
