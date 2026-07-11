@@ -8,8 +8,9 @@ export class ApiError extends Error {
   readonly requestId: string;
   readonly retryable: boolean;
   readonly fieldErrors: ProblemEnvelope['error']['fieldErrors'];
+  readonly retryAfterMs?: number;
 
-  constructor(status: number, problem: ProblemEnvelope['error']) {
+  constructor(status: number, problem: ProblemEnvelope['error'], retryAfterMs?: number) {
     super(problem.message);
     this.name = 'ApiError';
     this.status = status;
@@ -17,24 +18,49 @@ export class ApiError extends Error {
     this.requestId = problem.requestId;
     this.retryable = problem.retryable;
     this.fieldErrors = problem.fieldErrors;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   scope?: AuthScope;
   idempotencyKey?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  retryAttempts?: number;
+  retryBaseDelayMs?: number;
 }
 
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? 'GET';
+  const retryAttempts = unsafeMethods.has(method) ? 0 : Math.max(0, options.retryAttempts ?? 1);
+  let attempt = 0;
+
+  while (true) {
+    try {
+      return await requestOnce<T>(path, method, options);
+    } catch (error) {
+      const apiError = normalizeError(error);
+      if (apiError.code === 'CANCELLED' || attempt >= retryAttempts || !apiError.retryable) throw apiError;
+      const delay = apiError.retryAfterMs ?? Math.max(0, options.retryBaseDelayMs ?? 250) * (2 ** attempt) + Math.floor(Math.random() * 100);
+      attempt++;
+      await waitForRetry(delay, options.signal);
+    }
+  }
+}
+
+async function requestOnce<T>(path: string, method: NonNullable<RequestOptions['method']> | 'GET', options: RequestOptions): Promise<T> {
+  if (options.signal?.aborted) throw cancelledError();
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort('timeout'), options.timeoutMs ?? 20_000);
+  let timedOut = false;
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort('timeout');
+  }, options.timeoutMs ?? 20_000);
   const abort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', abort, { once: true });
   const headers = new Headers({ Accept: 'application/json' });
@@ -56,25 +82,66 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     if (response.status === 204) return undefined as T;
     const payload = await parseJSON(response);
     if (!response.ok) {
-      if (isProblem(payload)) throw new ApiError(response.status, payload.error);
-      throw new ApiError(response.status, {
-        code: 'HTTP_ERROR',
-        message: 'ระบบตอบกลับไม่สมบูรณ์ กรุณาลองใหม่',
-        requestId: response.headers.get('X-Request-ID') ?? '',
-        retryable: response.status >= 500
-      });
+      const retryAfterMs = parseRetryAfter(response.headers.get('Retry-After'));
+      const error = isProblem(payload)
+        ? new ApiError(response.status, payload.error, retryAfterMs)
+        : new ApiError(response.status, {
+          code: response.status === 401 ? 'UNAUTHORIZED' : 'HTTP_ERROR',
+          message: response.status === 401 ? 'Session หมดอายุ กรุณาเข้าสู่ระบบใหม่' : 'ระบบตอบกลับไม่สมบูรณ์ กรุณาลองใหม่',
+          requestId: response.headers.get('X-Request-ID') ?? '',
+          retryable: response.status === 429 || response.status >= 500
+        }, retryAfterMs);
+      if (response.status === 401 && options.scope) announceUnauthorized(options.scope);
+      throw error;
     }
     return payload as T;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    if (controller.signal.aborted) {
-      throw new ApiError(0, { code: 'NETWORK_TIMEOUT', message: 'การเชื่อมต่อใช้เวลานานเกินไป กรุณาลองใหม่', requestId: '', retryable: true });
-    }
-    throw new ApiError(0, { code: 'NETWORK_ERROR', message: 'ไม่สามารถเชื่อมต่อระบบได้', requestId: '', retryable: true });
+    if (options.signal?.aborted) throw cancelledError();
+    if (timedOut) throw new ApiError(0, { code: 'TIMEOUT', message: 'การเชื่อมต่อใช้เวลานานเกินไป กรุณาลองใหม่', requestId: '', retryable: true });
+    throw new ApiError(0, { code: 'NETWORK_ERROR', message: 'ไม่สามารถเชื่อมต่อระบบได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่', requestId: '', retryable: true });
   } finally {
     window.clearTimeout(timeout);
     options.signal?.removeEventListener('abort', abort);
   }
+}
+
+function normalizeError(error: unknown): ApiError {
+  return error instanceof ApiError
+    ? error
+    : new ApiError(0, { code: 'NETWORK_ERROR', message: 'ไม่สามารถเชื่อมต่อระบบได้', requestId: '', retryable: true });
+}
+
+function cancelledError(): ApiError {
+  return new ApiError(0, { code: 'CANCELLED', message: 'ยกเลิกคำขอแล้ว', requestId: '', retryable: false });
+}
+
+function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(cancelledError());
+  if (delayMs <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, delayMs);
+    const abort = () => {
+      window.clearTimeout(timeout);
+      reject(cancelledError());
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+function announceUnauthorized(scope: AuthScope): void {
+  window.dispatchEvent(new CustomEvent('nextstep:unauthorized', { detail: { scope } }));
 }
 
 export function newIdempotencyKey(prefix: string): string {

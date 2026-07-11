@@ -27,9 +27,9 @@ function selectTenant(tenantId: string): void {
   if (state.tenants.some((tenant) => tenant.id === tenantId)) state.selectedTenantId = tenantId;
 }
 function setReports(tenantId: string, reports: ReportDefinition[]): void { state.reportsByTenant[tenantId] = reports; }
-async function ensureReports(tenantId: string, force = false): Promise<ReportDefinition[]> {
+async function ensureReports(tenantId: string, force = false, signal?: AbortSignal): Promise<ReportDefinition[]> {
   if (!force && state.reportsByTenant[tenantId]) return state.reportsByTenant[tenantId];
-  const reports = (await viewerApi.reports(tenantId)).data;
+  const reports = (await viewerApi.reports(tenantId, signal)).data;
   setReports(tenantId, reports);
   return reports;
 }

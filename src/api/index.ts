@@ -13,7 +13,7 @@ export const adminApi = {
   session: () => apiRequest<AdminSession>(`${api}/auth/admin/session`),
   logout: () => apiRequest<void>(`${api}/auth/admin/logout`, { method: 'POST', scope: 'admin' }),
   rotatePassword: (currentPassword: string, newPassword: string) => apiRequest<AdminSession>(`${api}/auth/admin/password`, { method: 'PUT', scope: 'admin', body: { currentPassword, newPassword } }),
-  listTenants: (filters: { cursor?: string; pageSize?: number; status?: string; search?: string } = {}) => apiRequest<TenantPage>(`${api}/admin/tenants${queryString(filters)}`),
+  listTenants: (filters: { cursor?: string; pageSize?: number; status?: string; search?: string } = {}, signal?: AbortSignal) => apiRequest<TenantPage>(`${api}/admin/tenants${queryString(filters)}`, { signal }),
   createTenant: (input: TenantInput) => apiRequest<Tenant>(`${api}/admin/tenants`, { method: 'POST', scope: 'admin', idempotencyKey: newIdempotencyKey('tenant'), body: input }),
   getTenant: (tenantId: string) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`),
   updateTenant: (tenantId: string, input: TenantPatch) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`, { method: 'PATCH', scope: 'admin', body: input }),
@@ -31,9 +31,9 @@ export const adminApi = {
   pauseSchedule: (tenantId: string, scheduleId: string) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/pause`, { method: 'POST', scope: 'admin' }),
   testSendSchedule: (tenantId: string, scheduleId: string) => apiRequest<NotificationExecution>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/test-send`, { method: 'POST', scope: 'admin', idempotencyKey: newIdempotencyKey('schedule-test-send') }),
   lineQuota: () => apiRequest<LineQuotaStatus>(`${api}/admin/line-quota`),
-  reportRuns: (filters: { cursor?: string; tenantId?: string; status?: string } = {}) => apiRequest<ReportRunPage>(`${api}/admin/report-runs${queryString({ ...filters, pageSize: 50 })}`),
-  deliveries: (filters: { cursor?: string; tenantId?: string } = {}) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: 50 })}`),
-  audit: (filters: { cursor?: string; tenantId?: string } = {}) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: 50 })}`)
+  reportRuns: (filters: { cursor?: string; tenantId?: string; status?: string } = {}, signal?: AbortSignal) => apiRequest<ReportRunPage>(`${api}/admin/report-runs${queryString({ ...filters, pageSize: 50 })}`, { signal }),
+  deliveries: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: 50 })}`, { signal }),
+  audit: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: 50 })}`, { signal })
 };
 
 export const viewerApi = {
@@ -41,14 +41,14 @@ export const viewerApi = {
   me: () => apiRequest<ViewerMe>(`${api}/viewer/me`),
   logout: () => apiRequest<void>(`${api}/viewer/logout`, { method: 'POST', scope: 'viewer' }),
   tenants: () => apiRequest<DataPage<ViewerTenant>>(`${api}/viewer/tenants`),
-  reports: (tenantId: string) => apiRequest<DataPage<ReportDefinition>>(`${api}/viewer/tenants/${tenantId}/reports`),
-  overview: (tenantId: string) => apiRequest<ExecutiveOverview>(`${api}/viewer/tenants/${tenantId}/executive-overview`),
-  createDashboardRefresh: (tenantId: string) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes`, { method: 'POST', scope: 'viewer', idempotencyKey: newIdempotencyKey('dashboard-refresh') }),
-  dashboardRefresh: (tenantId: string, refreshId: string) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes/${refreshId}`),
-  createRun: (tenantId: string, reportKey: ReportKey, input: CreateReportRunInput) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs`, { method: 'POST', scope: 'viewer', idempotencyKey: newIdempotencyKey('viewer-run'), body: input }),
-  run: (tenantId: string, reportKey: ReportKey, runId: string) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}`),
-  dashboard: (tenantId: string, reportKey: ReportKey, runId: string) => apiRequest<ReportDashboard>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/dashboard`),
-  rows: (tenantId: string, reportKey: ReportKey, runId: string, cursor?: string) => apiRequest<ReportRowPage>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/rows${queryString({ cursor, pageSize: 100 })}`),
+  reports: (tenantId: string, signal?: AbortSignal) => apiRequest<DataPage<ReportDefinition>>(`${api}/viewer/tenants/${tenantId}/reports`, { signal }),
+  overview: (tenantId: string, signal?: AbortSignal) => apiRequest<ExecutiveOverview>(`${api}/viewer/tenants/${tenantId}/executive-overview`, { signal }),
+  createDashboardRefresh: (tenantId: string, idempotencyKey = newIdempotencyKey('dashboard-refresh')) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes`, { method: 'POST', scope: 'viewer', idempotencyKey }),
+  dashboardRefresh: (tenantId: string, refreshId: string, signal?: AbortSignal) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes/${refreshId}`, { signal }),
+  createRun: (tenantId: string, reportKey: ReportKey, input: CreateReportRunInput, idempotencyKey = newIdempotencyKey('viewer-run')) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs`, { method: 'POST', scope: 'viewer', idempotencyKey, body: input }),
+  run: (tenantId: string, reportKey: ReportKey, runId: string, signal?: AbortSignal) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}`, { signal }),
+  dashboard: (tenantId: string, reportKey: ReportKey, runId: string, signal?: AbortSignal) => apiRequest<ReportDashboard>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/dashboard`, { signal }),
+  rows: (tenantId: string, reportKey: ReportKey, runId: string, cursor?: string, pageSize = 25, signal?: AbortSignal) => apiRequest<ReportRowPage>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/rows${queryString({ cursor, pageSize })}`, { signal }),
   cancelRun: (tenantId: string, reportKey: ReportKey, runId: string) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/cancel`, { method: 'POST', scope: 'viewer' })
 };
 

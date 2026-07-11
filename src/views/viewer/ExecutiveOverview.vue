@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
-import { viewerApi, type DashboardRefresh, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
+import { ApiError, viewerApi, type DashboardRefresh, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
+import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { buildExecutiveKpis, formatDashboardValue, periodLabel, snapshotForReport } from '@/utils/dashboard';
 import { errorMessage, formatDateTime } from '@/utils/format';
@@ -17,6 +18,12 @@ const refreshing = ref(false);
 const error = ref('');
 let pollTimer: number | undefined;
 let pollCount = 0;
+let generation = 0;
+let pollDeadline = 0;
+let pollInFlight = false;
+let pageController: AbortController | undefined;
+let pollController: AbortController | undefined;
+let refreshActionKey = '';
 
 const tenantId = computed(() => String(route.params.tenantId));
 const tenant = computed(() => state.tenants.find((item) => item.id === tenantId.value));
@@ -50,47 +57,70 @@ const featuredCharts = computed(() => {
 const refreshPercent = computed(() => refresh.value?.total ? Math.round(((refresh.value.completed + refresh.value.failed) / refresh.value.total) * 100) : 0);
 
 async function loadOverview() {
+  const context = ++generation;
+  const selectedTenantId = tenantId.value;
+  pageController?.abort('new-overview'); pageController = new AbortController(); stopPolling();
   loading.value = true; error.value = '';
   try {
-    selectTenant(tenantId.value);
-    await ensureReports(tenantId.value, true);
-    overview.value = await viewerApi.overview(tenantId.value);
-  } catch (cause) { error.value = errorMessage(cause); }
-  finally { loading.value = false; }
+    selectTenant(selectedTenantId);
+    await ensureReports(selectedTenantId, true, pageController.signal);
+    const result = await viewerApi.overview(selectedTenantId, pageController.signal);
+    if (context === generation && selectedTenantId === tenantId.value) overview.value = result;
+  } catch (cause) { if (!isCancelled(cause) && context === generation) error.value = errorMessage(cause); }
+  finally { if (context === generation) loading.value = false; }
 }
 
 async function startRefresh() {
-  stopPolling(); refreshing.value = true; error.value = ''; pollCount = 0;
+  if (refreshing.value) return;
+  const context = generation;
+  const selectedTenantId = tenantId.value;
+  stopPolling(); refreshing.value = true; error.value = ''; pollCount = 0; refreshActionKey ||= newIdempotencyKey('dashboard-refresh');
   try {
-    refresh.value = await viewerApi.createDashboardRefresh(tenantId.value);
-    schedulePoll();
-  } catch (cause) { refreshing.value = false; error.value = errorMessage(cause); }
+    const created = await viewerApi.createDashboardRefresh(selectedTenantId, refreshActionKey);
+    if (context !== generation || selectedTenantId !== tenantId.value) return;
+    refresh.value = created; refreshActionKey = ''; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
+  } catch (cause) {
+    if (!isCancelled(cause) && context === generation) { refreshing.value = false; error.value = errorMessage(cause); }
+    if (!(cause instanceof ApiError) || !cause.retryable) refreshActionKey = '';
+  }
 }
 
-function schedulePoll() {
+function schedulePoll(context: number) {
   stopPolling();
   const delay = document.visibilityState === 'hidden' ? 5000 : Math.min(1500 + pollCount * 150, 3500);
-  pollTimer = window.setTimeout(pollRefresh, delay);
+  pollTimer = window.setTimeout(() => void pollRefresh(context), delay);
 }
 
-async function pollRefresh() {
-  if (!refresh.value) return;
+async function pollRefresh(context: number) {
+  if (!refresh.value || pollInFlight || context !== generation) return;
+  if (Date.now() >= pollDeadline) { refreshing.value = false; error.value = 'การอัปเดตใช้เวลานานกว่าปกติ กรุณากลับมาตรวจสอบอีกครั้ง'; return; }
+  const selectedTenantId = tenantId.value; const refreshId = refresh.value.id;
+  pollInFlight = true; pollController = new AbortController();
   try {
-    refresh.value = await viewerApi.dashboardRefresh(tenantId.value, refresh.value.id); pollCount++;
+    const latest = await viewerApi.dashboardRefresh(selectedTenantId, refreshId, pollController.signal);
+    if (context !== generation || selectedTenantId !== tenantId.value || refresh.value?.id !== refreshId) return;
+    refresh.value = latest; pollCount++;
     if (['SUCCEEDED', 'PARTIAL', 'FAILED'].includes(refresh.value.status)) {
       refreshing.value = false; await loadOverview(); return;
     }
-    if (pollCount >= 240) { refreshing.value = false; error.value = 'การอัปเดตใช้เวลานานกว่าปกติ กรุณากลับมาตรวจสอบอีกครั้ง'; return; }
-    schedulePoll();
-  } catch (cause) { refreshing.value = false; error.value = errorMessage(cause); }
+    schedulePoll(context);
+  } catch (cause) { if (!isCancelled(cause) && context === generation) { refreshing.value = false; error.value = errorMessage(cause); } }
+  finally { pollInFlight = false; pollController = undefined; }
 }
 
 function openReport(reportKey: ReportKey) { void router.push(`/app/tenant/${tenantId.value}/report/${reportKey}`); }
-function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; }
+function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; pollController?.abort('poll-stopped'); pollController = undefined; }
+function isCancelled(cause: unknown) { return cause instanceof ApiError && cause.code === 'CANCELLED'; }
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible' && refreshing.value && refresh.value && !pollInFlight) {
+    if (pollTimer) window.clearTimeout(pollTimer);
+    pollTimer = undefined; void pollRefresh(generation);
+  }
+}
 
-onMounted(loadOverview);
-onBeforeUnmount(stopPolling);
-watch(tenantId, () => { stopPolling(); refresh.value = undefined; void loadOverview(); });
+onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void loadOverview(); });
+onBeforeUnmount(() => { generation++; document.removeEventListener('visibilitychange', handleVisibilityChange); pageController?.abort('unmounted'); stopPolling(); });
+watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; void loadOverview(); });
 </script>
 
 <template>

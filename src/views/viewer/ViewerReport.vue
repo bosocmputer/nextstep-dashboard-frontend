@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
-import { reportDefinitionByKey, viewerApi, type CreateReportRunInput, type ReportDashboard, type ReportKey, type ReportRun } from '@/api';
+import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, type ReportDashboard, type ReportKey, type ReportRun } from '@/api';
+import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { formatDashboardValue, periodLabel } from '@/utils/dashboard';
 import { errorMessage, formatDateOnly, formatDateTime, formatMetric, metricLabel } from '@/utils/format';
@@ -30,6 +31,13 @@ const loadingRows = ref(false);
 const error = ref('');
 let pollTimer: number | undefined;
 let pollCount = 0;
+let generation = 0;
+let pollDeadline = 0;
+let pollInFlight = false;
+let initializeController: AbortController | undefined;
+let pollController: AbortController | undefined;
+let rowsController: AbortController | undefined;
+let runActionKey = '';
 
 const active = computed(() => !!run.value && ['QUEUED', 'CLAIMED', 'RUNNING'].includes(run.value.status));
 const statusLabel = computed(() => {
@@ -50,51 +58,79 @@ function setDefaultPeriod() {
 }
 
 async function startRun() {
+  if (loading.value) return;
   if (!definition.value) { error.value = 'ไม่พบรายงานหรือคุณไม่มีสิทธิ์เปิดรายงานนี้'; return; }
   if (input.periodPreset === 'CUSTOM' && (!input.dateFrom || !input.dateTo)) { error.value = 'กรุณาเลือกวันที่เริ่มต้นและสิ้นสุด'; return; }
   if (input.periodPreset === 'CUSTOM' && formatDateOnly(input.dateTo!) < formatDateOnly(input.dateFrom!)) { error.value = 'วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น'; return; }
-  stopPolling();
+  const context = ++generation;
+  const selectedTenantId = tenantId.value;
+  const selectedReportKey = reportKey.value;
+  stopPolling(); rowsController?.abort('new-run'); rowsController = undefined;
   loading.value = true; error.value = ''; dashboard.value = undefined; run.value = undefined; activeTab.value = 'overview';
   rows.value = []; columns.value = []; nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; pollCount = 0;
   const payload: CreateReportRunInput = { periodPreset: input.periodPreset };
   if (input.periodPreset === 'CUSTOM') { payload.dateFrom = formatDateOnly(input.dateFrom!); payload.dateTo = formatDateOnly(input.dateTo!); }
-  try { run.value = await viewerApi.createRun(tenantId.value, reportKey.value, payload); schedulePoll(); }
-  catch (cause) { error.value = errorMessage(cause); loading.value = false; }
+  runActionKey ||= newIdempotencyKey('viewer-run');
+  try {
+    const created = await viewerApi.createRun(selectedTenantId, selectedReportKey, payload, runActionKey);
+    if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
+    run.value = created; runActionKey = ''; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
+  } catch (cause) {
+    if (!isCurrent(context, selectedTenantId, selectedReportKey) || isCancelled(cause)) return;
+    if (!(cause instanceof ApiError) || !cause.retryable) runActionKey = '';
+    error.value = errorMessage(cause); loading.value = false;
+  }
 }
 
-function schedulePoll() {
+function schedulePoll(context: number) {
   stopPolling();
   const delay = document.visibilityState === 'hidden' ? 5000 : Math.min(1200 + pollCount * 100, 3000);
-  pollTimer = window.setTimeout(poll, delay);
+  pollTimer = window.setTimeout(() => void poll(context), delay);
 }
 
-async function poll() {
-  if (!run.value) return;
+async function poll(context: number) {
+  if (!run.value || pollInFlight || context !== generation) return;
+  if (Date.now() >= pollDeadline) { loading.value = false; error.value = 'รายงานใช้เวลานานกว่าปกติ คุณสามารถออกจากหน้านี้แล้วกลับมาตรวจสอบอีกครั้ง'; return; }
+  const selectedTenantId = tenantId.value;
+  const selectedReportKey = reportKey.value;
+  const selectedRunId = run.value.id;
+  pollInFlight = true; pollController = new AbortController();
   try {
-    run.value = await viewerApi.run(tenantId.value, reportKey.value, run.value.id); pollCount++;
+    const latest = await viewerApi.run(selectedTenantId, selectedReportKey, selectedRunId, pollController.signal);
+    if (!isCurrent(context, selectedTenantId, selectedReportKey) || run.value?.id !== selectedRunId) return;
+    run.value = latest; pollCount++;
     if (run.value.status === 'SUCCEEDED') { await loadDashboard(); loading.value = false; return; }
     if (['FAILED', 'CANCELLED', 'EXPIRED'].includes(run.value.status)) { loading.value = false; error.value = run.value.safeErrorMessage || 'สร้างรายงานไม่สำเร็จ กรุณาลองใหม่'; return; }
-    if (pollCount > 240) { loading.value = false; error.value = 'รายงานใช้เวลานานกว่าปกติ คุณสามารถออกจากหน้านี้แล้วกลับมารันใหม่ได้'; return; }
-    schedulePoll();
-  } catch (cause) { loading.value = false; error.value = errorMessage(cause); }
+    schedulePoll(context);
+  } catch (cause) {
+    if (!isCancelled(cause) && isCurrent(context, selectedTenantId, selectedReportKey)) { loading.value = false; error.value = errorMessage(cause); }
+  } finally { pollInFlight = false; pollController = undefined; }
 }
 
 async function loadDashboard() {
   if (!run.value) return;
-  try { dashboard.value = await viewerApi.dashboard(tenantId.value, reportKey.value, run.value.id); }
-  catch (cause) { error.value = errorMessage(cause); }
+  const context = generation; const selectedTenantId = tenantId.value; const selectedReportKey = reportKey.value; const selectedRunId = run.value.id;
+  try {
+    const result = await viewerApi.dashboard(selectedTenantId, selectedReportKey, selectedRunId, pollController?.signal);
+    if (isCurrent(context, selectedTenantId, selectedReportKey) && run.value?.id === selectedRunId) dashboard.value = result;
+  } catch (cause) { if (!isCancelled(cause) && context === generation) error.value = errorMessage(cause); }
 }
 
 async function loadRows(reset = false) {
   if (!run.value || loadingRows.value) return;
+  rowsController?.abort('new-page'); rowsController = new AbortController();
+  const context = generation; const selectedTenantId = tenantId.value; const selectedReportKey = reportKey.value; const selectedRunId = run.value.id;
+  const requestedCursor = reset ? undefined : nextCursor.value;
   loadingRows.value = true;
   try {
-    const page = await viewerApi.rows(tenantId.value, reportKey.value, run.value.id, reset ? undefined : nextCursor.value);
-    rows.value = reset ? page.data : [...rows.value, ...page.data];
+    const page = await viewerApi.rows(selectedTenantId, selectedReportKey, selectedRunId, requestedCursor, 25, rowsController.signal);
+    if (!isCurrent(context, selectedTenantId, selectedReportKey) || run.value?.id !== selectedRunId) return;
+    const keyedRows = page.data.map((row, index) => ({ ...row, __rowKey: `${selectedRunId}:${requestedCursor ?? 'first'}:${index}` }));
+    rows.value = reset ? keyedRows : [...rows.value, ...keyedRows];
     columns.value = [...new Set([...columns.value, ...page.columns])];
     nextCursor.value = page.page.nextCursor ?? undefined; hasMore.value = page.page.hasMore; rowsLoaded.value = true;
-  } catch (cause) { error.value = errorMessage(cause); }
-  finally { loadingRows.value = false; }
+  } catch (cause) { if (!isCancelled(cause) && context === generation) error.value = errorMessage(cause); }
+  finally { if (context === generation) loadingRows.value = false; }
 }
 
 async function cancel() {
@@ -103,24 +139,39 @@ async function cancel() {
   catch (cause) { error.value = errorMessage(cause); }
 }
 
-function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; }
+function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; pollController?.abort('poll-stopped'); pollController = undefined; }
+function stopLifecycle() { generation++; stopPolling(); initializeController?.abort('route-changed'); rowsController?.abort('route-changed'); initializeController = undefined; rowsController = undefined; pollInFlight = false; }
+function isCancelled(cause: unknown) { return cause instanceof ApiError && cause.code === 'CANCELLED'; }
+function isCurrent(context: number, selectedTenantId: string, selectedReportKey: ReportKey) { return context === generation && tenantId.value === selectedTenantId && reportKey.value === selectedReportKey; }
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible' && loading.value && active.value && !pollInFlight) {
+    if (pollTimer) window.clearTimeout(pollTimer);
+    pollTimer = undefined; void poll(generation);
+  }
+}
 async function initialize() {
+  stopLifecycle();
+  const context = generation;
+  const selectedTenantId = tenantId.value;
+  const selectedReportKey = reportKey.value;
+  initializeController = new AbortController();
   error.value = '';
   try {
-    selectTenant(tenantId.value);
-    const permittedReports = await ensureReports(tenantId.value);
-    if (!permittedReports.some((item) => item.reportKey === reportKey.value)) {
+    selectTenant(selectedTenantId);
+    const permittedReports = await ensureReports(selectedTenantId, false, initializeController.signal);
+    if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
+    if (!permittedReports.some((item) => item.reportKey === selectedReportKey)) {
       error.value = 'คุณไม่มีสิทธิ์เปิดรายงานนี้ กรุณาเลือกจากเมนูรายงาน';
       return;
     }
     setDefaultPeriod(); await startRun();
-  } catch (cause) { error.value = errorMessage(cause); loading.value = false; }
+  } catch (cause) { if (!isCancelled(cause) && context === generation) { error.value = errorMessage(cause); loading.value = false; } }
 }
 
 watch(activeTab, (value) => { if (value === 'detail' && run.value?.status === 'SUCCEEDED' && !rowsLoaded.value) void loadRows(true); });
-watch([tenantId, reportKey], () => { stopPolling(); void initialize(); });
-onMounted(initialize);
-onBeforeUnmount(stopPolling);
+watch([tenantId, reportKey], () => void initialize());
+onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void initialize(); });
+onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleVisibilityChange); stopLifecycle(); });
 </script>
 
 <template>
@@ -135,7 +186,7 @@ onBeforeUnmount(stopPolling);
       <div class="grid gap-2"><label for="report-period">ช่วงข้อมูล</label><Select input-id="report-period" v-model="input.periodPreset" :options="periodOptions" option-label="label" option-value="value" fluid /></div>
       <div v-if="input.periodPreset === 'CUSTOM'" class="grid gap-2"><label for="report-date-from">จากวันที่</label><DatePicker input-id="report-date-from" v-model="input.dateFrom" date-format="dd/mm/yy" show-icon fluid /></div>
       <div v-if="input.periodPreset === 'CUSTOM'" class="grid gap-2"><label for="report-date-to">ถึงวันที่</label><DatePicker input-id="report-date-to" v-model="input.dateTo" date-format="dd/mm/yy" show-icon fluid /></div>
-      <div class="flex gap-2"><Button label="อัปเดตข้อมูล" icon="pi pi-refresh" :loading="loading" @click="startRun" /><Button v-if="active" icon="pi pi-stop" severity="danger" outlined aria-label="ยกเลิกการสร้างรายงาน" @click="cancel" /></div>
+      <div class="flex gap-2"><Button label="อัปเดตข้อมูล" icon="pi pi-refresh" :loading="loading" :disabled="loading" @click="startRun" /><Button v-if="active" icon="pi pi-stop" severity="danger" outlined aria-label="ยกเลิกการสร้างรายงาน" @click="cancel" /></div>
     </div>
   </section>
 
@@ -156,7 +207,7 @@ onBeforeUnmount(stopPolling);
       </TabPanel>
       <TabPanel value="detail">
         <div class="flex flex-wrap items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">ข้อมูลจาก SQL</h2><p class="text-sm text-muted-color mt-1 mb-0">{{ run.rowCount.toLocaleString('th-TH') }} แถว · เก็บข้อมูลรายละเอียดชั่วคราว 24 ชั่วโมง</p></div><Tag v-if="run.isTruncated" severity="warn" value="ผลลัพธ์ถูกจำกัดตามจำนวนแถวสูงสุด" /></div>
-        <div class="surface-card report-panel overflow-hidden"><div class="hidden md:block"><DataTable :value="rows" :loading="loadingRows" scrollable striped-rows><Column v-for="column in columns" :key="column" :field="column" :header="metricLabel(column)"><template #body="{ data }"><span class="safe-wrap metric-value">{{ formatMetric(data[column]) }}</span></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก' }}</div></template></DataTable></div><div class="md:hidden p-3 grid gap-3" aria-label="รายละเอียดรายงานแบบมือถือ"><article v-for="(row, rowIndex) in rows" :key="rowIndex" class="mobile-row"><div v-for="column in columns" :key="column" class="flex items-start justify-between gap-4"><span class="text-xs text-muted-color safe-wrap">{{ metricLabel(column) }}</span><strong class="text-sm text-right metric-value safe-wrap">{{ formatMetric(row[column]) }}</strong></div></article><div v-if="!loadingRows && !rows.length" class="py-8 text-center text-muted-color">รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก</div></div><div v-if="hasMore" class="p-4 text-center border-t border-surface"><Button label="โหลดอีก 100 แถว" icon="pi pi-angle-down" outlined :loading="loadingRows" @click="loadRows(false)" /></div></div>
+        <div class="surface-card report-panel overflow-hidden"><div class="hidden md:block"><DataTable :value="rows" :loading="loadingRows" data-key="__rowKey" scrollable striped-rows><Column v-for="column in columns" :key="column" :field="column" :header="metricLabel(column)"><template #body="{ data }"><span class="safe-wrap metric-value">{{ formatMetric(data[column]) }}</span></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก' }}</div></template></DataTable></div><div class="md:hidden p-3 grid gap-3" aria-label="รายละเอียดรายงานแบบมือถือ"><article v-for="row in rows" :key="String(row.__rowKey)" class="mobile-row"><div v-for="column in columns" :key="column" class="flex items-start justify-between gap-4"><span class="text-xs text-muted-color safe-wrap">{{ metricLabel(column) }}</span><strong class="text-sm text-right metric-value safe-wrap">{{ formatMetric(row[column]) }}</strong></div></article><div v-if="!loadingRows && !rows.length" class="py-8 text-center text-muted-color">รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก</div></div><div v-if="hasMore" class="p-4 text-center border-t border-surface"><Button label="โหลดอีก 25 แถว" icon="pi pi-angle-down" outlined :loading="loadingRows" @click="loadRows(false)" /></div></div>
       </TabPanel>
     </TabPanels>
   </Tabs>
