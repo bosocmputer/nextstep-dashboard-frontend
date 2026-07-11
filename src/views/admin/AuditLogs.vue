@@ -19,7 +19,8 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
     <Toolbar class="mb-6 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template><template #end><form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()"><TenantFilterSelect v-model="tenantId" /><Button type="submit" label="กรอง" icon="pi pi-filter" /></form></template></Toolbar>
     <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
     <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
-      <Column field="createdAt" header="เวลา" frozen><template #body="{ data }">{{ formatDateTime(data.createdAt) }}</template></Column>
+      <Column field="tenantName" header="ร้านค้า" frozen><template #body="{ data }"><span class="font-semibold">{{ data.tenantName || 'ระบบส่วนกลาง' }}</span></template></Column>
+      <Column field="createdAt" header="เวลา"><template #body="{ data }">{{ formatDateTime(data.createdAt) }}</template></Column>
       <Column field="actorType" header="ผู้ดำเนินการ"><template #body="{ data }"><Tag severity="secondary" :value="statusLabel(data.actorType)" /></template></Column>
       <Column field="action" header="การทำงาน"><template #body="{ data }"><span class="font-medium">{{ auditActionLabel(data.action) }}</span></template></Column>
       <Column field="result" header="ผลลัพธ์"><template #body="{ data }"><Tag :severity="data.result === 'SUCCESS' ? 'success' : data.result === 'DENIED' ? 'warn' : 'danger'" :value="statusLabel(data.result)" /></template></Column>

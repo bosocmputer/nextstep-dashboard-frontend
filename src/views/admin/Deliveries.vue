@@ -20,7 +20,9 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
     <Toolbar class="mb-6 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template><template #end><form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()"><TenantFilterSelect v-model="tenantId" /><Button type="submit" label="กรอง" icon="pi pi-filter" /></form></template></Toolbar>
     <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
     <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
-      <Column field="status" header="สถานะ" frozen><template #body="{ data }"><Tag :severity="severity(data.status)" :value="statusLabel(data.status)" /></template></Column>
+      <Column field="tenantName" header="ร้านค้า" frozen><template #body="{ data }"><span class="font-semibold">{{ data.tenantName }}</span></template></Column>
+      <Column field="recipientDisplayName" header="ผู้รับ"><template #body="{ data }"><span class="font-medium">{{ data.recipientDisplayName }}</span></template></Column>
+      <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="severity(data.status)" :value="statusLabel(data.status)" /></template></Column>
       <Column field="attempt" header="ครั้งที่ส่ง" />
       <Column field="createdAt" header="เริ่มส่งเมื่อ"><template #body="{ data }">{{ formatDateTime(data.createdAt) }}</template></Column>
       <Column field="acceptedAt" header="LINE รับเมื่อ"><template #body="{ data }">{{ formatDateTime(data.acceptedAt) }}</template></Column>

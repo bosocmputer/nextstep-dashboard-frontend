@@ -96,7 +96,7 @@ watch(() => route.params.tenantId, (tenantId) => {
 
 <template>
   <div v-if="stage !== 'ready'" class="viewer-gate min-h-screen grid place-items-center px-4 bg-surface-50 dark:bg-surface-950">
-    <div v-if="stage === 'loading'" class="w-full max-w-2xl card"><div class="flex items-center gap-4 mb-5"><ProgressSpinner style="width: 2rem; height: 2rem" stroke-width="6" /><div><h1 class="text-xl font-semibold m-0">กำลังยืนยัน LINE</h1><p class="text-muted-color mt-1 mb-0">ตรวจสอบตัวตนและสิทธิ์ล่าสุด</p></div></div><Skeleton height="10rem" /></div>
+    <div v-if="stage === 'loading'" class="w-full max-w-2xl card"><div class="flex flex-col items-center text-center gap-3 mb-5 py-2"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h1 class="text-xl font-semibold m-0">กำลังยืนยัน LINE</h1><p class="text-muted-color mt-1 mb-0">ตรวจสอบตัวตนและสิทธิ์ล่าสุด</p></div></div><Skeleton height="10rem" /></div>
     <section v-else class="w-full max-w-xl card text-center"><i class="pi pi-shield text-5xl text-red-500" /><h1 class="text-2xl font-bold mb-2">ไม่สามารถเปิด Dashboard</h1><p class="text-muted-color safe-wrap">{{ message }}</p><Button label="ลองใหม่" icon="pi pi-refresh" class="mt-4" @click="initialize" /></section>
   </div>
   <AppShell v-else :menu-model="menuModel" :home-to="selectedTenant ? `/app/tenant/${selectedTenant.id}` : '/app'" :account-label="state.me?.displayName" @sign-out="logout">

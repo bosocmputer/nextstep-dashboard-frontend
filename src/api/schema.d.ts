@@ -842,6 +842,8 @@ export interface components {
             id: string;
             /** Format: uuid */
             tenantId: string;
+            /** @description Present on Admin report history responses. */
+            tenantName?: string;
             reportKey: components["schemas"]["ReportKey"];
             status: components["schemas"]["ReportRunStatus"];
             periodPreset: string;
@@ -1001,6 +1003,9 @@ export interface components {
             id: string;
             /** Format: uuid */
             tenantId: string;
+            tenantName: string;
+            /** @description Decrypted recipient label for authenticated Admin display only. */
+            recipientDisplayName: string;
             /** @enum {string} */
             status: "PENDING" | "SENDING" | "ACCEPTED" | "RETRY_WAIT" | "UNCERTAIN" | "FAILED_PERMANENT";
             attempt: number;
@@ -1034,6 +1039,7 @@ export interface components {
             id: string;
             /** Format: uuid */
             tenantId?: string | null;
+            tenantName?: string | null;
             /** @enum {string} */
             actorType: "ADMIN" | "VIEWER" | "WORKER" | "SYSTEM";
             action: string;

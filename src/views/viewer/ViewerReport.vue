@@ -206,7 +206,7 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
   </section>
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
-  <section v-if="loading" class="card report-panel" aria-live="polite"><div class="flex items-center gap-4"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ statusLabel || 'กำลังส่งคำขอ' }}</h2><p class="text-muted-color mt-1 mb-0">กำลังดึงข้อมูลจาก SML ของ {{ tenant?.name }}<span v-if="run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-5" /></section>
+  <section v-if="loading" class="card report-panel" aria-live="polite"><div class="flex flex-col items-center text-center gap-3 py-3"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ statusLabel || 'กำลังส่งคำขอ' }}</h2><p class="text-muted-color mt-1 mb-0">กำลังดึงข้อมูลจาก SML ของ {{ tenant?.name }}<span v-if="run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-4" /></section>
 
   <Tabs v-if="dashboard && run?.status === 'SUCCEEDED'" v-model:value="activeTab" class="report-tabs">
     <TabList><Tab value="overview"><i class="pi pi-chart-bar mr-2" />ภาพรวมและกราฟ</Tab><Tab value="detail"><i class="pi pi-table mr-2" />ข้อมูลรายละเอียด</Tab></TabList>

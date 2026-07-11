@@ -84,7 +84,60 @@ test('admin can sign in and sees API readiness', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'ภาพรวมระบบ' })).toBeVisible();
   await expect(page.getByText('ระบบพร้อมใช้งาน')).toBeVisible();
   await expect(page.getByText('ใช้แล้ว 4,200 / 5,000')).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'การเข้าถึง' })).toHaveCount(0);
+  await expect(page.getByText('ข้อมูลอ่อนไหว')).toHaveCount(0);
+  await expect(page.getByText('ข้อมูลทั่วไป')).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
+});
+
+test('admin operation tables identify the tenant and LINE recipient', async ({ page }) => {
+  const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
+  const pageInfo = { hasMore: false };
+  await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
+  await page.route(`**${api}/admin/tenants**`, (route) => route.fulfill(json({
+    data: [{ id: tenantId, slug: 'sample-shop', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' }],
+    page: pageInfo
+  })));
+  await page.route(`**${api}/admin/report-runs**`, (route) => route.fulfill(json({
+    data: [{ id: '77777777-7777-4777-8777-777777777777', tenantId, tenantName: 'ร้านตัวอย่าง', reportKey: 'sales_goods_services', status: 'SUCCEEDED', periodPreset: 'YESTERDAY', dateFrom: '2026-07-10', dateTo: '2026-07-10', rowCount: 741, isTruncated: false, queuedAt: '2026-07-10T15:00:00Z', finishedAt: '2026-07-10T15:01:00Z', expiresAt: '2026-07-11T15:01:00Z' }],
+    page: pageInfo
+  })));
+  await page.route(`**${api}/admin/line-deliveries**`, (route) => route.fulfill(json({
+    data: [{ id: '88888888-8888-4888-8888-888888888888', tenantId, tenantName: 'ร้านตัวอย่าง', recipientDisplayName: 'เจ้าของร้าน', status: 'ACCEPTED', attempt: 1, acceptedAt: '2026-07-10T15:02:00Z', createdAt: '2026-07-10T15:01:00Z', expiresAt: '2027-07-10T15:01:00Z' }],
+    page: pageInfo
+  })));
+  await page.route(`**${api}/admin/audit-logs**`, (route) => route.fulfill(json({
+    data: [{ id: '99999999-9999-4999-8999-999999999999', tenantId, tenantName: 'ร้านตัวอย่าง', actorType: 'ADMIN', action: 'SCHEDULE_TEST_SEND_ENQUEUED', resourceType: 'SCHEDULE', result: 'SUCCESS', createdAt: '2026-07-10T15:01:00Z' }],
+    page: pageInfo
+  })));
+
+  await page.goto('/admin/report-runs');
+  await expect(page.getByRole('columnheader', { name: 'ร้านค้า' })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'ร้านตัวอย่าง' })).toBeVisible();
+
+  await page.goto('/admin/deliveries');
+  await expect(page.getByRole('columnheader', { name: 'ร้านค้า' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'ผู้รับ' })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'ร้านตัวอย่าง' }).filter({ hasText: 'เจ้าของร้าน' })).toBeVisible();
+
+  await page.goto('/admin/audit');
+  await expect(page.getByRole('columnheader', { name: 'ร้านค้า' })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'ร้านตัวอย่าง' })).toBeVisible();
+});
+
+test('viewer loading messages are centered', async ({ page }) => {
+  let releaseViewer: (() => void) | undefined;
+  const viewerRequested = new Promise<void>((resolve) => { releaseViewer = resolve; });
+  await page.route(`**${api}/viewer/me`, async (route) => {
+    await viewerRequested;
+    await route.fulfill(unauthorized());
+  });
+
+  await page.goto('/app');
+  const loadingHeading = page.getByRole('heading', { name: 'กำลังยืนยัน LINE' });
+  await expect(loadingHeading).toBeVisible();
+  await expect(loadingHeading).toHaveCSS('text-align', 'center');
+  releaseViewer?.();
 });
 
 test('admin login ignores an external redirect target', async ({ page }) => {

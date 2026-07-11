@@ -40,7 +40,8 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
     <Toolbar class="mb-6 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template><template #end><form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()"><TenantFilterSelect v-model="tenantId" /><Select v-model="status" aria-label="กรองสถานะการสร้างรายงาน" :options="statuses" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" class="md:w-48" /><Button type="submit" label="กรอง" icon="pi pi-filter" /></form></template></Toolbar>
     <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
     <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
-      <Column field="reportKey" header="รายงาน" frozen><template #body="{ data }"><div class="font-medium">{{ reportDefinitionByKey.get(data.reportKey)?.label ?? data.reportKey }}</div></template></Column>
+      <Column field="tenantName" header="ร้านค้า" frozen><template #body="{ data }"><span class="font-semibold">{{ data.tenantName || '—' }}</span></template></Column>
+      <Column field="reportKey" header="รายงาน"><template #body="{ data }"><div class="font-medium">{{ reportDefinitionByKey.get(data.reportKey)?.label ?? data.reportKey }}</div></template></Column>
       <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="severity(data.status)" :value="statusLabel(data.status)" /></template></Column>
       <Column header="ช่วงข้อมูล"><template #body="{ data }">{{ data.dateFrom || '—' }}<span v-if="data.dateTo && data.dateTo !== data.dateFrom"> → {{ data.dateTo }}</span></template></Column>
       <Column field="rowCount" header="จำนวนแถว"><template #body="{ data }"><span class="metric-value">{{ data.rowCount.toLocaleString('th-TH') }}</span></template></Column>

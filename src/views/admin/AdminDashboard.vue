@@ -64,7 +64,6 @@ const shortcuts = [
     <DataTable :value="reportDefinitions" data-key="reportKey" striped-rows responsive-layout="scroll">
       <Column field="label" header="ชื่อรายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span></template></Column>
       <Column field="category" header="หมวด"><template #body="{ data }"><Tag severity="secondary" :value="data.category" /></template></Column>
-      <Column field="isSensitive" header="การเข้าถึง"><template #body="{ data }"><span v-if="data.isSensitive"><i class="pi pi-lock mr-2 text-orange-500" />ข้อมูลอ่อนไหว</span><span v-else class="text-muted-color">ข้อมูลทั่วไป</span></template></Column>
       <template #empty>ยังไม่มีนิยามรายงาน</template>
     </DataTable>
   </div>

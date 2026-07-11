@@ -130,7 +130,7 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
   </div>
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="loadOverview" /></Message>
-  <div v-if="refreshing" class="card executive-panel" aria-live="polite"><div class="flex justify-between gap-4 mb-2"><span class="font-medium">กำลังอัปเดต {{ refresh?.completed ?? 0 }} จาก {{ refresh?.total ?? reports.length }} รายงาน</span><span class="metric-value">{{ refreshPercent }}%</span></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-2">ระบบรันทีละรายงานเพื่อลดภาระฐานข้อมูลของร้าน คุณออกจากหน้านี้ได้โดยไม่ยกเลิกงาน</p></div>
+  <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refresh?.completed ?? 0 }} จาก {{ refresh?.total ?? reports.length }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ระบบรันทีละรายงานเพื่อลดภาระฐานข้อมูลของร้าน คุณออกจากหน้านี้ได้โดยไม่ยกเลิกงาน</p></div>
   <Message v-if="!loading && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มีข้อมูลล่าสุด {{ missingReportCount }} รายงาน — กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึงจาก SQL ของร้าน</Message>
 
   <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5"><Skeleton v-for="index in 4" :key="index" height="9rem" /></div>
