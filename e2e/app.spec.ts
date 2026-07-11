@@ -410,6 +410,13 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   await expect(page).toHaveURL(`/admin/tenants/${tenantId}/schedules/${schedule.id}/edit`);
   await expect(page.getByRole('heading', { name: 'แก้ไขตารางส่งรายงาน' })).toBeVisible();
   await expect(page.getByText('1 LINE Card · 1/10 รายงาน')).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  for (const name of ['เลื่อน รายงานขายสินค้าและบริการ ขึ้น', 'ยกเลิก', 'ดูตัวอย่าง LINE Card', 'บันทึกตารางส่ง']) {
+    const box = await page.getByRole('button', { name }).boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+    expect(box?.width).toBeGreaterThanOrEqual(44);
+  }
   await page.getByRole('button', { name: 'ดูตัวอย่าง LINE Card' }).click();
 
   await expect(page.getByLabel('ตัวอย่าง LINE Flex Message')).toBeVisible();
@@ -419,6 +426,7 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   expect(previewRequests).toBe(1);
   await page.getByRole('button', { name: 'ตารางส่งรายงาน' }).click();
   await expect(page).toHaveURL(new RegExp(`/admin/tenants/${tenantId}\\?tab=schedules`));
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   await page.getByRole('button', { name: 'ทดสอบส่ง LINE' }).click();
   await expect(page.getByText('ยืนยันส่ง LINE จริง')).toBeVisible();

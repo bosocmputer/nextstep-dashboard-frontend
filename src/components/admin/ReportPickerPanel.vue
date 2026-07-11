@@ -90,7 +90,7 @@ function move(index: number, direction: -1 | 1) {
           <div class="flex items-center gap-2"><Checkbox v-model="selectedOnly" input-id="selected-only" binary :disabled="disabled" /><label for="selected-only">เฉพาะที่เลือก</label></div>
         </div>
       </template>
-      <template #end><div class="flex gap-2"><Button label="เลือกผลที่กรอง" icon="pi pi-check-square" outlined :disabled="disabled" @click="selectFiltered" /><Button label="ล้างที่เลือก" icon="pi pi-times" text severity="secondary" :disabled="disabled || !modelValue.length" @click="setSelection([])" /></div></template>
+      <template #end><div class="flex flex-wrap gap-2"><Button label="เลือกผลที่กรอง" icon="pi pi-check-square" outlined class="touch-action" :disabled="disabled" @click="selectFiltered" /><Button label="ล้างที่เลือก" icon="pi pi-times" text severity="secondary" class="touch-action" :disabled="disabled || !modelValue.length" @click="setSelection([])" /></div></template>
     </Toolbar>
 
     <Message v-if="limitMessage" severity="warn" :closable="false">{{ limitMessage }}</Message>
@@ -109,8 +109,8 @@ function move(index: number, direction: -1 | 1) {
         <div v-if="selectedDefinitions.length" class="flex flex-col gap-2">
           <div v-for="(item, index) in selectedDefinitions" :key="item.reportKey" class="flex items-center gap-2 p-2 border-bottom-1 surface-border">
             <span class="font-medium flex-1">{{ index + 1 }}. {{ item.label }}</span>
-            <Button icon="pi pi-angle-up" text rounded size="small" :disabled="disabled || index === 0" :aria-label="`เลื่อน ${item.label} ขึ้น`" @click="move(index, -1)" />
-            <Button icon="pi pi-angle-down" text rounded size="small" :disabled="disabled || index === selectedDefinitions.length - 1" :aria-label="`เลื่อน ${item.label} ลง`" @click="move(index, 1)" />
+            <Button icon="pi pi-angle-up" text rounded size="small" class="touch-action" :disabled="disabled || index === 0" :aria-label="`เลื่อน ${item.label} ขึ้น`" @click="move(index, -1)" />
+            <Button icon="pi pi-angle-down" text rounded size="small" class="touch-action" :disabled="disabled || index === selectedDefinitions.length - 1" :aria-label="`เลื่อน ${item.label} ลง`" @click="move(index, 1)" />
           </div>
         </div>
         <p v-else class="text-muted-color m-0">เลือกรายงานจากตาราง</p>
