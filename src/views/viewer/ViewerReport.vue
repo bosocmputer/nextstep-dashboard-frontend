@@ -6,7 +6,7 @@ import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
 import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, type ReportDashboard, type ReportKey, type ReportRun } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
-import { formatDashboardValue, periodLabel } from '@/utils/dashboard';
+import { comparisonPeriodText, formatDashboardValue, formatPeriodRange, periodLabel, visualizationHasActivity } from '@/utils/dashboard';
 import { errorMessage, formatDateOnly, formatDateTime, formatMetric } from '@/utils/format';
 import { presentationFor, visibleReportColumns, type ReportColumnDefinition } from '@/utils/reportPresentation';
 import { cleanViewerQuery, snapshotReplayInput, validSnapshotRunId } from '@/utils/viewerSnapshot';
@@ -36,6 +36,7 @@ const snapshotMissing = ref(false);
 const loading = ref(false);
 const loadingRows = ref(false);
 const error = ref('');
+const showFilters = ref(false);
 let pollTimer: number | undefined;
 let pollCount = 0;
 let generation = 0;
@@ -76,6 +77,7 @@ async function startRun() {
   if (input.periodPreset === 'CUSTOM' && (!input.dateFrom || !input.dateTo)) { error.value = 'กรุณาเลือกวันที่เริ่มต้นและสิ้นสุด'; return; }
   if (input.periodPreset === 'CUSTOM' && formatDateOnly(input.dateTo!) < formatDateOnly(input.dateFrom!)) { error.value = 'วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น'; return; }
   if (snapshotMode.value || route.query.snapshotRunId !== undefined) await leaveSnapshotMode();
+  showFilters.value = false;
   const context = ++generation;
   const selectedTenantId = tenantId.value;
   const selectedReportKey = reportKey.value;
@@ -220,6 +222,7 @@ function toggleMobileRow(row: Record<string, unknown>) {
 }
 async function initialize() {
   stopLifecycle();
+  showFilters.value = false;
   const context = generation;
   const selectedTenantId = tenantId.value;
   const selectedReportKey = reportKey.value;
@@ -249,17 +252,18 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 
 <template>
   <Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="-ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" />
-  <div class="page-header">
-    <div><p class="report-eyebrow">EXECUTIVE REPORT</p><h1 class="page-title">{{ definition?.label ?? reportKey }}</h1><p class="page-subtitle">{{ tenant?.name }} · แสดงเวลาไทย (Asia/Bangkok) · ดึง SQL ใหม่เมื่อกดอัปเดต</p></div>
-    <div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div>
+  <div class="page-header report-heading">
+    <div><h1 class="page-title">{{ definition?.label ?? reportKey }}</h1><p class="page-subtitle">{{ tenant?.name }} · เวลาไทย (Asia/Bangkok)</p></div>
+    <div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div><Button label="เปลี่ยนช่วงข้อมูล" icon="pi pi-filter" severity="secondary" outlined :aria-expanded="showFilters" @click="showFilters = !showFilters" /></div>
   </div>
 
-  <section class="card report-filter" aria-label="ตัวกรองรายงาน">
+  <section v-if="showFilters" class="card report-filter" aria-label="ตัวกรองรายงาน">
+    <div class="filter-heading"><div><h2>เลือกช่วงข้อมูลใหม่</h2><p>ระบบจะดึง SQL จากฐานร้านเมื่อกด “ดึงข้อมูลช่วงนี้”</p></div><Button icon="pi pi-times" text rounded aria-label="ปิดตัวกรอง" @click="showFilters = false" /></div>
     <div class="grid grid-cols-1 md:grid-cols-[14rem_1fr_1fr_auto] gap-3 items-end">
       <div class="grid gap-2"><label for="report-period">ช่วงข้อมูล</label><Select input-id="report-period" v-model="input.periodPreset" :options="periodOptions" option-label="label" option-value="value" fluid /></div>
       <div v-if="input.periodPreset === 'CUSTOM'" class="grid gap-2"><label for="report-date-from">จากวันที่</label><DatePicker input-id="report-date-from" v-model="input.dateFrom" date-format="dd/mm/yy" show-icon fluid /></div>
       <div v-if="input.periodPreset === 'CUSTOM'" class="grid gap-2"><label for="report-date-to">ถึงวันที่</label><DatePicker input-id="report-date-to" v-model="input.dateTo" date-format="dd/mm/yy" show-icon fluid /></div>
-      <div class="flex gap-2"><Button label="อัปเดตข้อมูล" icon="pi pi-refresh" :loading="loading" :disabled="loading" @click="startRun" /><Button v-if="active" icon="pi pi-stop" severity="danger" outlined aria-label="ยกเลิกการสร้างรายงาน" @click="cancel" /></div>
+      <div class="flex gap-2"><Button label="ดึงข้อมูลช่วงนี้" icon="pi pi-refresh" :loading="loading" :disabled="loading" @click="startRun" /><Button v-if="active" icon="pi pi-stop" severity="danger" outlined aria-label="ยกเลิกการสร้างรายงาน" @click="cancel" /></div>
     </div>
   </section>
 
@@ -272,11 +276,11 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
     <TabPanels>
       <TabPanel value="overview">
         <Message v-if="dashboard.quality.status === 'WARNING'" severity="warn" :closable="false" class="mb-4">ข้อมูลหลักพร้อมใช้งาน แต่ไม่มีช่วงเปรียบเทียบบางส่วน</Message>
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div><strong>{{ periodLabel(dashboard.period.preset) }}</strong><span class="text-sm text-muted-color ml-2">{{ dashboard.period.dateFrom }} ถึง {{ dashboard.period.dateTo }}</span></div><span class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />สร้าง {{ formatDateTime(dashboard.generatedAt) }}</span></div>
+        <section class="report-summary-bar" aria-label="ช่วงข้อมูลที่กำลังแสดง"><div><span>ข้อมูลที่กำลังแสดง</span><strong>{{ periodLabel(dashboard.period.preset) }} · {{ formatPeriodRange(dashboard.period) }}</strong></div><span><i class="pi pi-clock mr-2" />สร้าง {{ formatDateTime(dashboard.generatedAt) }}</span></section>
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-          <article v-for="metric in dashboard.kpis" :key="metric.key" class="card dashboard-card report-kpi"><span class="text-sm text-muted-color">{{ metric.label }}</span><strong>{{ formatDashboardValue(metric.value, metric.unit) }}</strong><span v-if="metric.comparison.availability === 'AVAILABLE'" class="text-xs text-muted-color"><i :class="metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(metric.comparison.delta, metric.unit) }} จากช่วงก่อน</span><span v-else class="text-xs text-muted-color">ไม่มีข้อมูลช่วงก่อนสำหรับเปรียบเทียบ</span></article>
+          <article v-for="metric in dashboard.kpis" :key="metric.key" class="card dashboard-card report-kpi"><span class="text-sm text-muted-color">{{ metric.label }}</span><strong>{{ formatDashboardValue(metric.value, metric.unit) }}</strong><span v-if="metric.comparison.availability === 'AVAILABLE'" class="metric-comparison"><span><i :class="metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(metric.comparison.delta, metric.unit) }}</span><span>{{ comparisonPeriodText(dashboard.comparisonPeriod) }}</span></span><span v-else class="metric-comparison"><span>ไม่มีข้อมูลเปรียบเทียบที่เทียบช่วงเวลาเดียวกันได้</span></span></article>
         </div>
-        <div class="grid grid-cols-1 2xl:grid-cols-2 gap-5"><article v-for="visualization in dashboard.visualizations" :key="visualization.key" class="card dashboard-card report-panel"><h2 class="chart-title">{{ visualization.title }}</h2><ExecutiveChart :visualization="visualization" /></article></div>
+        <div class="grid grid-cols-1 2xl:grid-cols-2 gap-5"><article v-for="visualization in dashboard.visualizations" :key="visualization.key" class="card dashboard-card report-panel"><h2 class="chart-title">{{ visualization.title }}</h2><ExecutiveChart v-if="visualizationHasActivity(visualization)" :visualization="visualization" /><div v-else class="chart-empty" role="status"><i class="pi pi-minus-circle" /><strong>ไม่มีความเคลื่อนไหวในช่วงนี้</strong><span>ค่าที่ได้รับเป็นศูนย์ทั้งหมด จึงไม่แสดงกราฟเปล่า</span></div></article></div>
         <div v-if="!dashboard.visualizations.length" class="card report-panel text-center text-muted-color"><i class="pi pi-chart-bar text-3xl" /><p class="mb-0">ช่วงนี้ไม่มีข้อมูลเพียงพอสำหรับสร้างกราฟ</p></div>
       </TabPanel>
       <TabPanel value="detail">
@@ -289,12 +293,29 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 </template>
 
 <style scoped>
-.report-eyebrow { margin: 0 0 .35rem; color: var(--primary-color); font-size: .75rem; font-weight: 700; letter-spacing: .1em; }
 .report-filter, .report-panel { border-radius: var(--content-border-radius); }
+.report-heading { align-items: center; margin-bottom: 1rem; }
+.report-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; }
+.report-filter { padding: 1rem; margin-bottom: 1rem; }
+.filter-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
+.filter-heading h2 { margin: 0; font-size: 1rem; }
+.filter-heading p { margin: .2rem 0 0; color: var(--text-color-secondary); font-size: .8rem; }
 .dashboard-card { margin-bottom: 0; }
 .report-tabs :deep(.p-tabpanels) { padding: 1.25rem 0 0; background: transparent; }
+.report-summary-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding-bottom: .9rem; border-bottom: 1px solid var(--surface-border); }
+.report-summary-bar > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: .4rem .7rem; }
+.report-summary-bar > div > span, .report-summary-bar > span { color: var(--text-color-secondary); font-size: .8rem; }
 .report-kpi { display: grid; gap: .55rem; min-height: 7.5rem; padding: 1.15rem; border-radius: var(--content-border-radius); }
 .report-kpi strong { font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.metric-comparison { display: grid; gap: .2rem; color: var(--text-color-secondary); font-size: .75rem; }
 .chart-title { margin: 0 0 .75rem; font-size: 1.05rem; }
+.chart-empty { display: grid; justify-items: center; gap: .4rem; min-height: 10rem; place-content: center; color: var(--text-color-secondary); text-align: center; }
+.chart-empty i { color: var(--primary-color); font-size: 1.5rem; }
+.chart-empty strong { color: var(--text-color); }
 .mobile-row { padding: 1rem; display: grid; gap: .65rem; border: 1px solid var(--surface-border); border-radius: var(--content-border-radius); }
+@media (max-width: 767px) {
+  .report-heading-actions { width: 100%; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+  .report-heading-actions .p-button { width: auto; }
+  .report-summary-bar { align-items: flex-start; flex-direction: column; gap: .45rem; }
+}
 </style>

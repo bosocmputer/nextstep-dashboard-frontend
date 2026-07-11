@@ -3,10 +3,13 @@ import type { DashboardMetric, DashboardSnapshot, DashboardVisualization } from 
 import {
   buildExecutiveKpis,
   chartTypeFor,
+  comparisonPeriodText,
   dashboardMetricValue,
   formatDashboardValue,
+  formatPeriodRange,
   numberForChart,
   snapshotForReport,
+  visualizationHasActivity,
   visualizationCategoryLabels
 } from './dashboard';
 
@@ -65,11 +68,25 @@ describe('dashboard helpers', () => {
     expect(visualizationCategoryLabels({ ...trend, series: [] })).toEqual(['1', '2']);
   });
 
+  it('describes report and comparison periods with exact Thai dates', () => {
+    expect(formatPeriodRange({ preset: 'YESTERDAY', dateFrom: '2026-07-09', dateTo: '2026-07-09' })).toBe('9 ก.ค. 2569');
+    expect(formatPeriodRange({ preset: 'CUSTOM', dateFrom: '2026-06-28', dateTo: '2026-07-02' })).toBe('28 มิ.ย. 2569 – 2 ก.ค. 2569');
+    expect(comparisonPeriodText({ preset: 'CUSTOM', dateFrom: '2026-07-08', dateTo: '2026-07-08' })).toBe('เทียบกับ 8 ก.ค. 2569');
+  });
+
+  it('treats an all-zero visualization as no business activity instead of a useful chart', () => {
+    const base: DashboardVisualization = { key: 'trend', title: 'trend', intent: 'TREND', unit: 'THB', categories: ['2026-07-09'], series: [{ key: 'current', label: 'ปัจจุบัน', values: ['0.00'] }] };
+    expect(visualizationHasActivity(base)).toBe(false);
+    expect(visualizationHasActivity({ ...base, series: [{ ...base.series[0]!, values: ['12.50'] }] })).toBe(true);
+  });
+
   it('builds the four owner KPIs without substituting missing reports with zero', () => {
     const sales = snapshot('sales_goods_services', '2026-07-10T10:00:00Z', [metric('total_amount', '604058.00')]);
     const profit = snapshot('gross_profit_by_product', '2026-07-10T10:00:00Z', [metric('gross_profit_amount', '46308.80')]);
     const result = buildExecutiveKpis([sales, profit]);
     expect(dashboardMetricValue(result[0]?.metric)).toBe('604058.00');
+    expect(formatPeriodRange(result[0]?.period)).toBe('9 ก.ค. 2569');
+    expect(comparisonPeriodText(result[0]?.comparisonPeriod)).toBe('เทียบกับ 8 ก.ค. 2569');
     expect(dashboardMetricValue(result[1]?.metric)).toBe('46308.80');
     expect(result[2]?.metric).toBeUndefined();
     expect(result[3]?.metric).toBeUndefined();

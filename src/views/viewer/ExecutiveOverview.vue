@@ -5,7 +5,7 @@ import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
 import { ApiError, viewerApi, type DashboardRefresh, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
-import { buildExecutiveKpis, formatDashboardValue, periodLabel, snapshotForReport } from '@/utils/dashboard';
+import { buildExecutiveKpis, comparisonPeriodText, formatDashboardValue, formatPeriodRange, snapshotForReport, visualizationHasActivity } from '@/utils/dashboard';
 import { errorMessage, formatDateTime } from '@/utils/format';
 
 const route = useRoute();
@@ -125,7 +125,7 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 
 <template>
   <div class="page-header executive-heading">
-    <div><p class="eyebrow">EXECUTIVE OVERVIEW</p><h1 class="page-title">ภาพรวม {{ tenant?.name }}</h1><p class="page-subtitle">ตัวเลขสำคัญและแนวโน้มจากข้อมูล SML ของร้าน</p></div>
+    <div><h1 class="page-title">ภาพรวม {{ tenant?.name }}</h1><p class="page-subtitle">ตัวเลขสำคัญ 4 ด้าน · เวลาไทย (Asia/Bangkok)</p></div>
     <div class="flex flex-wrap items-center gap-3"><span v-if="newestGeneratedAt" class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />อัปเดตล่าสุด {{ formatDateTime(newestGeneratedAt) }}</span><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :loading="refreshing" :disabled="loading || !reports.length" @click="startRefresh" /></div>
   </div>
 
@@ -135,31 +135,33 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 
   <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5"><Skeleton v-for="index in 4" :key="index" height="9rem" /></div>
   <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-    <button v-for="item in kpis" :key="item.key" type="button" class="card executive-kpi" :title="formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB')" @click="openReport(item.reportKey)"><span class="kpi-icon"><i :class="item.icon" /></span><span class="kpi-copy"><span class="kpi-label">{{ item.label }}</span><strong class="kpi-value">{{ formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB') }}</strong><span v-if="item.metric?.comparison.availability === 'AVAILABLE'" class="kpi-comparison"><i :class="item.metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : item.metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(item.metric.comparison.delta, item.metric.unit) }} จากช่วงก่อน</span><span v-else class="kpi-comparison">{{ item.metric ? 'ไม่มีช่วงเปรียบเทียบ' : 'รอการอัปเดตข้อมูล' }}</span></span><i class="pi pi-chevron-right kpi-link" /></button>
+    <button v-for="item in kpis" :key="item.key" type="button" class="card executive-kpi" :title="formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB')" @click="openReport(item.reportKey)"><span class="kpi-icon"><i :class="item.icon" /></span><span class="kpi-copy"><span class="kpi-label">{{ item.label }}</span><span v-if="item.period" class="kpi-period">ข้อมูล {{ formatPeriodRange(item.period) }}</span><strong class="kpi-value">{{ formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB') }}</strong><span v-if="item.metric?.comparison.availability === 'AVAILABLE'" class="kpi-comparison"><span><i :class="item.metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : item.metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(item.metric.comparison.delta, item.metric.unit) }}</span><span>{{ comparisonPeriodText(item.comparisonPeriod) }}</span></span><span v-else class="kpi-comparison">{{ item.metric ? 'ไม่มีข้อมูลเทียบช่วงเวลาเดียวกัน' : 'รอการอัปเดตข้อมูล' }}</span></span><i class="pi pi-chevron-right kpi-link" /></button>
   </div>
 
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
-    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>{{ periodLabel(item.snapshot.dashboard.period.preset) }} · {{ formatDateTime(item.snapshot.dashboard.generatedAt) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
+    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart v-if="visualizationHasActivity(item.visualization)" :visualization="item.visualization" compact /><div v-else class="chart-empty" role="status"><i class="pi pi-minus-circle" /><strong>ไม่มีความเคลื่อนไหวในช่วงนี้</strong></div></article>
   </div>
   <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึง SQL ล่าสุดและสร้างกราฟตามสิทธิ์ของคุณ</p><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :disabled="!reports.length" @click="startRefresh" /></div>
 </template>
 
 <style scoped>
-.eyebrow { margin: 0 0 .35rem; color: var(--primary-color); font-size: .75rem; font-weight: 700; letter-spacing: .1em; }
 .executive-heading { align-items: center; }
 .executive-panel { border-radius: var(--content-border-radius); }
 .dashboard-card { margin-bottom: 0; }
-.executive-kpi { position: relative; display: flex; align-items: flex-start; gap: 1rem; min-height: 9rem; margin-bottom: 0; color: inherit; border: 0; text-align: left; cursor: pointer; transition: transform .2s; }
+.executive-kpi { position: relative; display: flex; align-items: flex-start; gap: 1rem; min-height: 8.5rem; margin-bottom: 0; color: inherit; border: 0; text-align: left; cursor: pointer; transition: transform .2s; }
 .executive-kpi:hover { transform: translateY(-1px); }
 .kpi-icon { display: grid; place-items: center; flex: 0 0 2.75rem; height: 2.75rem; border-radius: var(--content-border-radius); background: var(--p-primary-50); color: var(--primary-color); font-size: 1.1rem; }
-.kpi-copy { display: grid; gap: .45rem; min-width: 0; }
+.kpi-copy { display: grid; gap: .3rem; min-width: 0; }
 .kpi-label { color: var(--text-color-secondary); font-size: .8rem; font-weight: 600; }
+.kpi-period { color: var(--text-color-secondary); font-size: .7rem; }
 .kpi-value { font-size: clamp(1.05rem, 1.75vw, 1.65rem); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: -.02em; }
-.kpi-comparison { color: var(--text-color-secondary); font-size: .75rem; }
+.kpi-comparison { display: grid; gap: .15rem; color: var(--text-color-secondary); font-size: .72rem; }
 .kpi-link { position: absolute; top: 1.2rem; right: 1rem; color: var(--text-color-secondary); font-size: .75rem; }
 .chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }
 .chart-heading h2 { margin: 0; font-size: 1.05rem; }
 .chart-heading p { margin: .35rem 0 0; color: var(--text-color-secondary); font-size: .75rem; }
+.chart-empty { display: grid; place-content: center; justify-items: center; gap: .45rem; min-height: 11rem; color: var(--text-color-secondary); text-align: center; }
+.chart-empty i { color: var(--primary-color); font-size: 1.5rem; }
 .empty-overview { display: grid; justify-items: center; padding: 3rem 1.5rem; text-align: center; }
 .empty-overview > i { color: var(--primary-color); font-size: 2.75rem; }
 .empty-overview h2 { margin: 1rem 0 .4rem; }

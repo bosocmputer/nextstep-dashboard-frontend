@@ -1,4 +1,6 @@
-import type { DashboardMetric, DashboardSnapshot, DashboardVisualization, ReportKey } from '@/api';
+import type { DashboardMetric, DashboardSnapshot, DashboardVisualization, ReportDashboard, ReportKey } from '@/api';
+
+type DashboardPeriod = ReportDashboard['period'];
 
 export type ExecutiveKpi = {
   key: string;
@@ -7,9 +9,11 @@ export type ExecutiveKpi = {
   reportKey: ReportKey;
   metricKey: string;
   metric?: DashboardMetric;
+  period?: DashboardPeriod;
+  comparisonPeriod?: DashboardPeriod;
 };
 
-const executiveKpiDefinitions: Omit<ExecutiveKpi, 'metric'>[] = [
+const executiveKpiDefinitions: Omit<ExecutiveKpi, 'metric' | 'period' | 'comparisonPeriod'>[] = [
   { key: 'sales', label: 'ยอดขาย', icon: 'pi pi-shopping-cart', reportKey: 'sales_goods_services', metricKey: 'total_amount' },
   { key: 'profit', label: 'กำไรขั้นต้น', icon: 'pi pi-chart-line', reportKey: 'gross_profit_by_product', metricKey: 'gross_profit_amount' },
   { key: 'inventory', label: 'มูลค่าสต็อก', icon: 'pi pi-box', reportKey: 'stock_balance', metricKey: 'balance_amount' },
@@ -31,6 +35,13 @@ export function visualizationCategoryLabels(visualization: DashboardVisualizatio
   return visualization.categories;
 }
 
+export function visualizationHasActivity(visualization: DashboardVisualization): boolean {
+  return visualization.series.some((series) => series.values.some((value) => {
+    const number = numberForChart(value);
+    return number !== null && number !== 0;
+  }));
+}
+
 export function snapshotForReport(items: DashboardSnapshot[], reportKey: ReportKey): DashboardSnapshot | undefined {
   return items
     .filter((item) => item.dashboard.reportKey === reportKey)
@@ -42,10 +53,15 @@ export function metricForReport(items: DashboardSnapshot[], reportKey: ReportKey
 }
 
 export function buildExecutiveKpis(items: DashboardSnapshot[]): ExecutiveKpi[] {
-  return executiveKpiDefinitions.map((definition) => ({
-    ...definition,
-    metric: metricForReport(items, definition.reportKey, definition.metricKey)
-  }));
+  return executiveKpiDefinitions.map((definition) => {
+    const snapshot = snapshotForReport(items, definition.reportKey);
+    return {
+      ...definition,
+      metric: snapshot?.dashboard.kpis.find((metric) => metric.key === definition.metricKey),
+      period: snapshot?.dashboard.period,
+      comparisonPeriod: snapshot?.dashboard.comparisonPeriod
+    };
+  });
 }
 
 export function dashboardMetricValue(metric?: DashboardMetric): string | undefined {
@@ -72,6 +88,33 @@ export function periodLabel(preset: string): string {
     CUSTOM: 'ช่วงวันที่ที่เลือก'
   };
   return labels[preset] ?? preset;
+}
+
+function formatIsoDateOnly(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return value;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month, day, 12));
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return value;
+  return new Intl.DateTimeFormat('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Bangkok'
+  }).format(date);
+}
+
+export function formatPeriodRange(period?: DashboardPeriod): string {
+  if (!period) return 'ยังไม่ระบุช่วงข้อมูล';
+  const from = formatIsoDateOnly(period.dateFrom);
+  const to = formatIsoDateOnly(period.dateTo);
+  return from === to ? from : `${from} – ${to}`;
+}
+
+export function comparisonPeriodText(period?: DashboardPeriod): string {
+  return period ? `เทียบกับ ${formatPeriodRange(period)}` : 'ไม่มีข้อมูลเปรียบเทียบที่เทียบช่วงเวลาเดียวกันได้';
 }
 
 export function reportIcon(reportKey: ReportKey): string {

@@ -70,7 +70,7 @@ function salesDashboard() {
     generatedAt: '2026-07-10T07:00:00+07:00',
     kpis: [{
       key: 'total_amount', label: 'ยอดขาย', value: '1250.00', unit: 'THB',
-      comparison: { availability: 'UNAVAILABLE' }
+      comparison: { availability: 'AVAILABLE', previousValue: '1000.00', delta: '250.00', deltaPercent: '25.00', direction: 'UP' }
     }],
     visualizations: [],
     quality: { status: 'OK', warnings: [] }
@@ -548,5 +548,8 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
     await page.goto(`/app/tenant/${tenantId}/report/${reportKey}`);
     await expect(page.getByRole('heading', { name: label })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
+    await expect(page.getByText('เทียบกับ 8 ก.ค. 2569')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'เปลี่ยนช่วงข้อมูล' })).toBeVisible();
+    await expect(page.getByLabel('ตัวกรองรายงาน')).toHaveCount(0);
   }
 });
