@@ -86,6 +86,14 @@ test('admin can sign in and sees API readiness', async ({ page }) => {
   expect(consoleErrors).toEqual([]);
 });
 
+test('admin login ignores an external redirect target', async ({ page }) => {
+  await mockAdminLogin(page);
+  await page.goto('/admin/login?redirect=https://example.com/phishing');
+  await page.getByLabel('รหัสผ่าน').fill('local-e2e-password');
+  await page.getByRole('button', { name: 'เข้าสู่ระบบ' }).click();
+  await expect(page).toHaveURL('/admin');
+});
+
 test('tenant form blocks an invalid slug before sending', async ({ page }) => {
   await mockAdminLogin(page);
   let createRequests = 0;
@@ -140,6 +148,11 @@ test('mobile viewer renders only reports returned by permission API', async ({ p
   await expect(page.getByText('รายงานซื้อสินค้าและตั้งหนี้')).toHaveCount(0);
   const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasHorizontalOverflow).toBe(false);
+  for (const label of ['เปิดหรือปิดเมนู', 'สลับโหมดสี', 'ออกจากระบบ']) {
+    const box = await page.getByRole('button', { name: label }).boundingBox();
+    expect(box?.width).toBeGreaterThanOrEqual(44);
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+  }
   expect(consoleErrors).toEqual([]);
 });
 
@@ -160,8 +173,9 @@ test('mobile report details use stacked rows without horizontal overflow', async
   })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports/sales_goods_services/runs**`, (route) => {
     if (route.request().url().includes('/rows')) {
+      expect(route.request().url()).toContain('pageSize=25');
       return route.fulfill(json({
-        runId, columns: ['doc_no', 'total_amount'], data: [{ doc_no: 'IV-001', total_amount: '1250.00' }],
+        runId, columns: ['doc_no', 'total_amount', 'last_status'], data: [{ doc_no: 'IV-001', total_amount: '1250.00', last_status: 'USER5' }],
         page: { hasMore: false }
       }));
     }
@@ -182,6 +196,13 @@ test('mobile report details use stacked rows without horizontal overflow', async
   await expect(mobileDetails).toBeVisible();
   await expect(mobileDetails.getByText('IV-001')).toBeVisible();
   await expect(mobileDetails.getByText('1,250')).toBeVisible();
+  await expect(mobileDetails.getByText('USER5')).toHaveCount(0);
+  await page.getByLabel('เลือกคอลัมน์ที่ต้องการแสดง').focus();
+  await page.keyboard.press('ArrowDown');
+  await page.getByRole('option').filter({ hasText: 'สถานะภายใน' }).click();
+  await page.keyboard.press('Escape');
+  await mobileDetails.getByRole('button', { name: 'ดูรายละเอียดเพิ่ม' }).click();
+  await expect(mobileDetails.getByText('USER5')).toBeVisible();
   const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasHorizontalOverflow).toBe(false);
   expect(consoleErrors).toEqual([]);
@@ -250,6 +271,10 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   });
 
   await page.goto(`/admin/tenants/${tenantId}`);
+  await page.getByRole('tab', { name: 'การเชื่อมต่อ SML' }).click();
+  await page.getByLabel('ชื่อฐานข้อมูล SML').fill('CHANGED_DATA');
+  await expect(page.getByRole('button', { name: 'ทดสอบการเชื่อมต่อ' })).toBeDisabled();
+  await expect(page.getByText('บันทึกค่าก่อนทดสอบการเชื่อมต่อ')).toBeVisible();
   await page.getByRole('tab', { name: 'ตารางส่งรายงาน' }).click();
   await page.getByRole('button', { name: 'แก้ไข' }).click();
   const dialog = page.getByRole('dialog', { name: 'แก้ไขตารางส่งรายงาน' });
@@ -280,4 +305,33 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   await expect(page.getByText('บันทึกร้านค้าแล้ว')).toBeVisible();
   expect(tenantPatchRequests).toBe(1);
   expect(consoleErrors).toEqual([]);
+});
+
+test('viewer opens all ten report routes with the shared executive layout', async ({ page }) => {
+  const reports = [
+    ['sales_goods_services', 'รายงานขายสินค้าและบริการ'],
+    ['purchase_goods_payables', 'รายงานซื้อสินค้าและตั้งหนี้'],
+    ['gross_profit_by_product', 'กำไรขั้นต้นตามสินค้า'],
+    ['gross_profit_by_ar_customer', 'กำไรขั้นต้นตามลูกหนี้'],
+    ['stock_balance', 'รายงานสต็อกคงเหลือ'],
+    ['stock_reorder', 'รายงานสินค้าถึงจุดสั่งซื้อ'],
+    ['ar_customer_movement', 'รายงานความเคลื่อนไหวลูกหนี้'],
+    ['ar_debt_receipt', 'รายงานรับชำระหนี้'],
+    ['cash_bank_receipts', 'รายงานรับเงิน'],
+    ['cash_bank_payments', 'รายงานจ่ายเงิน']
+  ] as const;
+  await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({ recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-11T00:00:00Z' })));
+  await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', reportKeys: reports.map(([key]) => key) }], page: { hasMore: false } })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports.map(([reportKey, label]) => ({ reportKey, label, version: '1.0.0', category: 'REPORT', isSensitive: false })), page: { hasMore: false } })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports/*/runs**`, (route) => {
+    const reportKey = route.request().url().split('/reports/')[1]!.split('/')[0]!;
+    if (route.request().url().endsWith('/dashboard')) return route.fulfill(json({ ...salesDashboard(), reportKey }));
+    return route.fulfill(json({ id: `${reportKey}-run`, tenantId, reportKey, status: 'SUCCEEDED', periodPreset: reportKey.startsWith('stock_') ? 'AS_OF_RUN' : 'YESTERDAY', dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 0, isTruncated: false, queuedAt: '2026-07-10T00:00:00Z', finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z' }, route.request().method() === 'POST' ? 201 : 200));
+  });
+
+  for (const [reportKey, label] of reports) {
+    await page.goto(`/app/tenant/${tenantId}/report/${reportKey}`);
+    await expect(page.getByRole('heading', { name: label })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
+  }
 });
