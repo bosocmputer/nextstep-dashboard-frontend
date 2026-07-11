@@ -2,6 +2,21 @@ import { expect, type Page, test } from '@playwright/test';
 
 const api = '/api/v1';
 const tenantId = '11111111-1111-4111-8111-111111111111';
+const adminReportCatalog = {
+  data: [
+    ['sales_goods_services', 'รายงานขายสินค้าและบริการ', 'SALES', 'ขาย'],
+    ['purchase_goods_payables', 'รายงานซื้อสินค้าและตั้งหนี้', 'PURCHASE', 'ซื้อ'],
+    ['gross_profit_by_product', 'กำไรขั้นต้นตามสินค้า', 'GROSS_PROFIT', 'กำไรขั้นต้น'],
+    ['gross_profit_by_ar_customer', 'กำไรขั้นต้นตามลูกหนี้', 'GROSS_PROFIT', 'กำไรขั้นต้น'],
+    ['stock_balance', 'รายงานสต็อกคงเหลือ', 'INVENTORY', 'สินค้าคงคลัง'],
+    ['stock_reorder', 'รายงานสินค้าถึงจุดสั่งซื้อ', 'INVENTORY', 'สินค้าคงคลัง'],
+    ['ar_customer_movement', 'รายงานความเคลื่อนไหวลูกหนี้', 'AR', 'ลูกหนี้'],
+    ['ar_debt_receipt', 'รายงานรับชำระหนี้', 'AR', 'ลูกหนี้'],
+    ['cash_bank_receipts', 'รายงานรับเงิน', 'CASH_BANK', 'เงินสดและธนาคาร'],
+    ['cash_bank_payments', 'รายงานจ่ายเงิน', 'CASH_BANK', 'เงินสดและธนาคาร']
+  ].map(([reportKey, label, category, categoryLabel]) => ({ reportKey, label, category, categoryLabel, version: '1.0.0', status: 'ACTIVE' })),
+  limits: { maxScheduleReports: 10, maxFlexPayloadBytes: 30720 }
+};
 
 function json(data: unknown, status = 200) {
   return { status, contentType: 'application/json', body: JSON.stringify(data) };
@@ -34,6 +49,7 @@ async function mockAdminLogin(page: Page) {
     state: 'READY', providerLimit: 5000, providerConsumed: 4200, locallyAccepted: 24,
     operationalReservePercent: 10, syncedAt: '2026-07-10T12:00:00Z'
   })));
+  await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json(adminReportCatalog)));
 }
 
 async function mockEmptyExecutiveOverview(page: Page) {
@@ -94,6 +110,7 @@ test('admin operation tables identify the tenant and LINE recipient', async ({ p
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
   const pageInfo = { hasMore: false };
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
+  await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json(adminReportCatalog)));
   await page.route(`**${api}/admin/tenants**`, (route) => route.fulfill(json({
     data: [{ id: tenantId, slug: 'sample-shop', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' }],
     page: pageInfo
@@ -148,13 +165,14 @@ test('admin login ignores an external redirect target', async ({ page }) => {
   await expect(page).toHaveURL('/admin');
 });
 
-test('tenant form blocks an invalid slug before sending', async ({ page }) => {
+test('tenant form creates an internal slug without asking the admin', async ({ page }) => {
   await mockAdminLogin(page);
   let createRequests = 0;
   await page.route(`**${api}/admin/tenants**`, async (route) => {
     if (route.request().method() === 'POST') {
       createRequests++;
-      await route.fulfill(json({ error: { code: 'SHOULD_NOT_SEND', message: 'Invalid request', requestId: 'e2e', retryable: false } }, 422));
+      expect(route.request().postDataJSON()).toEqual({ name: 'ร้านทดสอบ' });
+      await route.fulfill(json({ id: tenantId, slug: 'shop-k7m2p9x4abcd', name: 'ร้านทดสอบ', timezone: 'Asia/Bangkok', status: 'DISABLED', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'UNCONFIGURED', createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' }, 201));
       return;
     }
     await route.fulfill(json({ data: [], page: { hasMore: false } }));
@@ -166,12 +184,65 @@ test('tenant form blocks an invalid slug before sending', async ({ page }) => {
 
   await page.getByRole('button', { name: 'เพิ่มร้านค้า' }).click();
   await page.getByLabel('ชื่อร้าน').fill('ร้านทดสอบ');
-  await page.getByLabel('Slug', { exact: true }).fill('Invalid Slug');
+  await expect(page.getByLabel('Slug', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'สร้างร้านค้า' }).click();
-
-  await expect(page.getByRole('dialog', { name: 'เพิ่มร้านค้า' }).getByRole('alert').filter({ hasText: 'Slug ใช้ตัวพิมพ์เล็ก' })).toBeVisible();
-  expect(createRequests).toBe(0);
+  await expect.poll(() => createRequests).toBe(1);
 });
+
+test('admin manages recipient permissions on a full searchable page with optimistic versioning', async ({ page }) => {
+  const recipientId = '33333333-3333-4333-8333-333333333333';
+  const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
+  let permissionBody: unknown;
+  await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
+  await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json(adminReportCatalog)));
+  await page.route(`**${api}/admin/tenants/${tenantId}`, (route) => route.fulfill(json({ id: tenantId, slug: 'shop-sample', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/recipients/${recipientId}`, (route) => route.fulfill(json({ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services'], permissionsVersion: 3, verifiedAt: '2026-07-10T00:00:00Z', createdAt: '2026-07-01T00:00:00Z' })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/recipients/${recipientId}/permissions`, async (route) => {
+    permissionBody = route.request().postDataJSON();
+    await route.fulfill(json({ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services', 'stock_balance'], permissionsVersion: 4, verifiedAt: '2026-07-10T00:00:00Z', createdAt: '2026-07-01T00:00:00Z' }));
+  });
+
+  await page.goto(`/admin/tenants/${tenantId}/recipients/${recipientId}/permissions`);
+  await expect(page.getByRole('heading', { name: 'กำหนดสิทธิ์รายงาน' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByLabel('ค้นหารายงาน').fill('สต็อกคงเหลือ');
+  await page.getByLabel('เลือก รายงานสต็อกคงเหลือ').check();
+  await expect(page.getByText('เพิ่ม 1 · นำออก 0')).toBeVisible();
+  await page.getByRole('button', { name: 'บันทึกสิทธิ์' }).click();
+  await expect(page.getByText('บันทึกสิทธิ์แล้ว')).toBeVisible();
+  expect(permissionBody).toEqual({ reportKeys: ['sales_goods_services', 'stock_balance'], version: 3 });
+});
+
+for (const reportCount of [150, 500]) {
+  test(`report picker keeps filtered selections with a ${reportCount}-report catalog`, async ({ page }) => {
+    const recipientId = '33333333-3333-4333-8333-333333333333';
+    const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
+    const definitions = Array.from({ length: reportCount }, (_, index) => ({
+      reportKey: `catalog_report_${String(index).padStart(4, '0')}`,
+      label: `รายงานทดสอบ ${String(index).padStart(4, '0')}`,
+      category: `CATEGORY_${index % 10}`,
+      categoryLabel: `หมวด ${index % 10}`,
+      version: '1.0.0',
+      status: 'ACTIVE'
+    }));
+    await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
+    await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json({ data: definitions, limits: { maxScheduleReports: 10, maxFlexPayloadBytes: 30720 } })));
+    await page.route(`**${api}/admin/tenants/${tenantId}`, (route) => route.fulfill(json({ id: tenantId, slug: 'shop-sample', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' })));
+    await page.route(`**${api}/admin/tenants/${tenantId}/recipients/${recipientId}`, (route) => route.fulfill(json({ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: [], permissionsVersion: 1, verifiedAt: '2026-07-10T00:00:00Z', createdAt: '2026-07-01T00:00:00Z' })));
+
+    await page.goto(`/admin/tenants/${tenantId}/recipients/${recipientId}/permissions`);
+    await page.getByLabel('ค้นหารายงาน').fill('000');
+    await page.getByRole('button', { name: 'เลือกผลที่กรอง' }).click();
+    await expect(page.getByText(`เลือกแล้ว 10 จาก ${reportCount} รายงาน`)).toBeVisible();
+    await page.getByLabel('ค้นหารายงาน').fill('0010');
+    await page.getByLabel('เลือก รายงานทดสอบ 0010').check();
+    await expect(page.getByText(`เลือกแล้ว 11 จาก ${reportCount} รายงาน`)).toBeVisible();
+    await page.getByLabel('ค้นหารายงาน').fill('');
+    await page.getByLabel('เฉพาะที่เลือก').check();
+    await expect(page.getByText('รายงานทดสอบ 0000')).toBeVisible();
+    await expect(page.getByText('รายงานทดสอบ 0010')).toBeVisible();
+  });
+}
 
 test('mobile viewer renders only reports returned by permission API', async ({ page }) => {
   const consoleErrors = captureUnexpectedConsoleErrors(page);
@@ -262,7 +333,7 @@ test('mobile report details use stacked rows without horizontal overflow', async
   expect(consoleErrors).toEqual([]);
 });
 
-test('admin previews the exact single Flex card with numeric samples', async ({ page }) => {
+test('admin edits a schedule on a full page and previews the exact single Flex card', async ({ page }) => {
   const consoleErrors = captureUnexpectedConsoleErrors(page, [404]);
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
   const recipientId = '33333333-3333-4333-8333-333333333333';
@@ -271,6 +342,7 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   let tenantPatchRequests = 0;
 
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
+  await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json(adminReportCatalog)));
   await page.route(`**${api}/admin/tenants/${tenantId}`, (route) => {
     if (route.request().method() === 'PATCH') tenantPatchRequests++;
     return route.fulfill(json({
@@ -282,9 +354,16 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   });
   await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({ error: { code: 'SML_NOT_CONFIGURED', message: 'Not configured', requestId: 'e2e', retryable: false } }, 404)));
   await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json({
-    data: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services'], createdAt: '2026-07-01T00:00:00Z' }],
+    data: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services'], permissionsVersion: 1, createdAt: '2026-07-01T00:00:00Z' }],
     page: { hasMore: false }
   })));
+  const schedule = {
+    id: '44444444-4444-4444-8444-444444444444', tenantId, name: 'Morning', daysOfWeek: [1, 2, 3, 4, 5],
+    localTime: '09:00', timezone: 'Asia/Bangkok', periodPreset: 'YESTERDAY',
+    reportKeys: ['sales_goods_services'], recipientIds: [recipientId], status: 'DRAFT', version: 1,
+    readinessBlockers: [], nextOccurrences: ['2026-07-13T02:00:00Z'],
+    createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
+  };
   await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, async (route) => {
     if (route.request().url().endsWith('/preview')) {
       previewRequests++;
@@ -309,14 +388,12 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
       }, 202));
       return;
     }
+    if (route.request().method() === 'GET' && route.request().url().endsWith(`/schedules/${schedule.id}`)) {
+      await route.fulfill(json(schedule));
+      return;
+    }
     await route.fulfill(json({
-      data: [{
-        id: '44444444-4444-4444-8444-444444444444', tenantId, name: 'Morning', daysOfWeek: [1, 2, 3, 4, 5],
-        localTime: '09:00', timezone: 'Asia/Bangkok', periodPreset: 'YESTERDAY',
-        reportKeys: ['sales_goods_services'], recipientIds: [recipientId], status: 'DRAFT', version: 1,
-        readinessBlockers: [], nextOccurrences: ['2026-07-13T02:00:00Z'],
-        createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
-      }],
+      data: [schedule],
       page: { hasMore: false }
     }));
   });
@@ -328,15 +405,20 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   await expect(page.getByRole('button', { name: 'ทดสอบการเชื่อมต่อ' })).toBeDisabled();
   await expect(page.getByText('บันทึกค่าก่อนทดสอบการเชื่อมต่อ')).toBeVisible();
   await page.getByRole('tab', { name: 'ตารางส่งรายงาน' }).click();
+  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'แก้ไข' }).click();
-  const dialog = page.getByRole('dialog', { name: 'แก้ไขตารางส่งรายงาน' });
-  await dialog.getByRole('button', { name: 'ดูตัวอย่าง LINE Card' }).click();
+  await expect(page).toHaveURL(`/admin/tenants/${tenantId}/schedules/${schedule.id}/edit`);
+  await expect(page.getByRole('heading', { name: 'แก้ไขตารางส่งรายงาน' })).toBeVisible();
+  await expect(page.getByText('1 LINE Card · 1/10 รายงาน')).toBeVisible();
+  await page.getByRole('button', { name: 'ดูตัวอย่าง LINE Card' }).click();
 
-  await expect(dialog.getByLabel('ตัวอย่าง LINE Flex Message')).toBeVisible();
-  await expect(dialog.getByText('ตัวเลขสมมติเท่านั้น')).toBeVisible();
-  await expect(dialog.getByText('1,234,567.89')).toBeVisible();
+  await expect(page.getByLabel('ตัวอย่าง LINE Flex Message')).toBeVisible();
+  await expect(page.getByText('ตัวเลขสมมติเท่านั้น')).toBeVisible();
+  await expect(page.getByText('1,234,567.89')).toBeVisible();
+  await expect(page.getByText('1 LINE Card · 1/10 รายงาน · 2.0 KB / 30 KB')).toBeVisible();
   expect(previewRequests).toBe(1);
-  await dialog.getByRole('button', { name: 'ยกเลิก' }).click();
+  await page.getByRole('button', { name: 'ตารางส่งรายงาน' }).click();
+  await expect(page).toHaveURL(new RegExp(`/admin/tenants/${tenantId}\\?tab=schedules`));
 
   await page.getByRole('button', { name: 'ทดสอบส่ง LINE' }).click();
   await expect(page.getByText('ยืนยันส่ง LINE จริง')).toBeVisible();

@@ -1,6 +1,6 @@
 import { apiRequest, newIdempotencyKey, queryString } from './client';
 import type {
-  AdminSession, AuditPage, CreateReportRunInput, DataPage, DeliveryPage, Recipient, RecipientPage, ReportDefinition,
+  AdminReportCatalog, AdminSession, AuditPage, CreateReportRunInput, DataPage, DeliveryPage, Recipient, RecipientPage, ReportDefinition,
   FlexPreview, FlexPreviewInput, LineQuotaStatus, NotificationExecution, ReportKey, ReportRowPage, ReportRun, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
   SMLConnectionInput, SMLConnectionStatus, SMLConnectionTestResult, Tenant, TenantInput, TenantPage, TenantPatch,
   DashboardRefresh, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant
@@ -13,6 +13,7 @@ export const adminApi = {
   session: () => apiRequest<AdminSession>(`${api}/auth/admin/session`),
   logout: () => apiRequest<void>(`${api}/auth/admin/logout`, { method: 'POST', scope: 'admin' }),
   rotatePassword: (currentPassword: string, newPassword: string) => apiRequest<AdminSession>(`${api}/auth/admin/password`, { method: 'PUT', scope: 'admin', body: { currentPassword, newPassword } }),
+  reports: (signal?: AbortSignal) => apiRequest<AdminReportCatalog>(`${api}/admin/reports`, { signal }),
   listTenants: (filters: { cursor?: string; pageSize?: number; status?: string; search?: string } = {}, signal?: AbortSignal) => apiRequest<TenantPage>(`${api}/admin/tenants${queryString(filters)}`, { signal }),
   createTenant: (input: TenantInput, idempotencyKey = newIdempotencyKey('tenant')) => apiRequest<Tenant>(`${api}/admin/tenants`, { method: 'POST', scope: 'admin', idempotencyKey, body: input }),
   getTenant: (tenantId: string) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`),
@@ -21,9 +22,11 @@ export const adminApi = {
   replaceSML: (tenantId: string, input: SMLConnectionInput) => apiRequest<SMLConnectionStatus>(`${api}/admin/tenants/${tenantId}/sml-connection`, { method: 'PUT', scope: 'admin', body: input }),
   testSML: (tenantId: string) => apiRequest<SMLConnectionTestResult>(`${api}/admin/tenants/${tenantId}/sml-connection/test`, { method: 'POST', scope: 'admin', timeoutMs: 35_000 }),
   listRecipients: (tenantId: string, cursor?: string) => apiRequest<RecipientPage>(`${api}/admin/tenants/${tenantId}/recipients${queryString({ cursor, pageSize: 100 })}`),
+  getRecipient: (tenantId: string, recipientId: string, signal?: AbortSignal) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}`, { signal }),
   inviteRecipient: (tenantId: string, invitationLabel: string, idempotencyKey = newIdempotencyKey('recipient')) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients`, { method: 'POST', scope: 'admin', idempotencyKey, body: { invitationLabel } }),
-  replacePermissions: (tenantId: string, recipientId: string, reportKeys: ReportKey[]) => apiRequest(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/permissions`, { method: 'PUT', scope: 'admin', body: { reportKeys } }),
+  replacePermissions: (tenantId: string, recipientId: string, reportKeys: ReportKey[], version: number) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/permissions`, { method: 'PUT', scope: 'admin', body: { reportKeys, version } }),
   listSchedules: (tenantId: string, cursor?: string) => apiRequest<SchedulePage>(`${api}/admin/tenants/${tenantId}/schedules${queryString({ cursor, pageSize: 100 })}`),
+  getSchedule: (tenantId: string, scheduleId: string, signal?: AbortSignal) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}`, { signal }),
   createSchedule: (tenantId: string, input: ScheduleInput, idempotencyKey = newIdempotencyKey('schedule')) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules`, { method: 'POST', scope: 'admin', idempotencyKey, body: input }),
   previewSchedule: (tenantId: string, input: FlexPreviewInput) => apiRequest<FlexPreview>(`${api}/admin/tenants/${tenantId}/schedules/preview`, { method: 'POST', scope: 'admin', body: input }),
   updateSchedule: (tenantId: string, scheduleId: string, input: SchedulePatch) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}`, { method: 'PATCH', scope: 'admin', body: input }),

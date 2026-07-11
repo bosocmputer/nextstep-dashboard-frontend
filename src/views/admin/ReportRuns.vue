@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
-import { ApiError, adminApi, reportDefinitionByKey, type ReportRun } from '@/api';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { ApiError, adminApi, type AdminReportDefinition, type ReportRun } from '@/api';
 import TenantFilterSelect from '@/components/admin/TenantFilterSelect.vue';
+import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
 
@@ -14,6 +15,8 @@ const status = ref<string>();
 const tenantId = ref('');
 const statuses = ['QUEUED', 'CLAIMED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED'].map((value) => ({ value, label: statusLabel(value) }));
 const selected = ref<ReportRun>();
+const reportDefinitions = ref<AdminReportDefinition[]>([]);
+const reportDefinitionByKey = computed(() => new Map(reportDefinitions.value.map((item) => [item.reportKey, item])));
 let loadGeneration = 0;
 let controller: AbortController | undefined;
 
@@ -30,7 +33,10 @@ async function load(reset = true) {
   finally { if (context === loadGeneration) loading.value = false; }
 }
 function severity(value: string) { return value === 'SUCCEEDED' ? 'success' : value === 'FAILED' ? 'danger' : value === 'RUNNING' || value === 'CLAIMED' ? 'info' : value === 'QUEUED' ? 'warn' : 'secondary'; }
-onMounted(() => load());
+onMounted(() => {
+  void loadAdminReportCatalog().then((catalog) => { reportDefinitions.value = catalog.data; }).catch(() => undefined);
+  void load();
+});
 onBeforeUnmount(() => controller?.abort('unmounted'));
 </script>
 

@@ -116,6 +116,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/tenants/{tenantId}": {
         parameters: {
             query?: never;
@@ -195,6 +211,22 @@ export interface paths {
         };
         get?: never;
         put: operations["replaceRecipientPermissions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/tenants/{tenantId}/recipients/{recipientId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getTenantRecipient"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -644,12 +676,22 @@ export interface components {
             updatedAt: string;
         };
         TenantInput: {
-            slug: string;
+            /**
+             * @deprecated
+             * @description Compatibility field for older clients; omitted by the current admin UI.
+             */
+            slug?: string;
             name: string;
-            /** @enum {string} */
-            timezone: "Asia/Bangkok";
-            /** Format: date-time */
-            accessEndsAt: string;
+            /**
+             * @deprecated
+             * @enum {string}
+             */
+            timezone?: "Asia/Bangkok";
+            /**
+             * Format: date-time
+             * @deprecated
+             */
+            accessEndsAt?: string;
         };
         TenantPatch: {
             name?: string;
@@ -708,6 +750,7 @@ export interface components {
             status: "PENDING" | "ACTIVE" | "REVOKED";
             displayName: string;
             reportKeys: components["schemas"]["ReportKey"][];
+            permissionsVersion: number;
             /** Format: date-time */
             verifiedAt?: string | null;
             /** Format: date-time */
@@ -724,6 +767,7 @@ export interface components {
         };
         PermissionUpdate: {
             reportKeys: components["schemas"]["ReportKey"][];
+            version: number;
         };
         /** @enum {string} */
         ReportKey: "sales_goods_services" | "purchase_goods_payables" | "gross_profit_by_product" | "gross_profit_by_ar_customer" | "stock_balance" | "stock_reorder" | "ar_customer_movement" | "ar_debt_receipt" | "cash_bank_receipts" | "cash_bank_payments";
@@ -733,6 +777,22 @@ export interface components {
             label: string;
             category: string;
             isSensitive: boolean;
+        };
+        AdminReportDefinition: {
+            reportKey: components["schemas"]["ReportKey"];
+            version: string;
+            label: string;
+            category: string;
+            categoryLabel: string;
+            /** @enum {string} */
+            status: "ACTIVE" | "DEPRECATED";
+        };
+        AdminReportCatalog: {
+            data: components["schemas"]["AdminReportDefinition"][];
+            limits: {
+                maxScheduleReports: number;
+                maxFlexPayloadBytes: number;
+            };
         };
         /** @enum {string} */
         PeriodPreset: "YESTERDAY" | "TODAY_TO_NOW" | "MONTH_TO_DATE" | "AS_OF_RUN";
@@ -1403,6 +1463,27 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    listAdminReports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approved report catalog and current LINE presentation limits. SQL and query contracts are never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReportCatalog"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     getTenant: {
         parameters: {
             query?: never;
@@ -1613,11 +1694,36 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PermissionUpdate"];
+                    "application/json": components["schemas"]["Recipient"];
                 };
             };
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getTenantRecipient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                recipientId: components["parameters"]["RecipientID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recipient scoped to the requested tenant membership. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Recipient"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     listSchedules: {

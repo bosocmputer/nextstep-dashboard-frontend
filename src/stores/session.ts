@@ -1,6 +1,7 @@
 import { reactive, readonly } from 'vue';
 import { adminApi, type AdminSession } from '@/api';
 import { ApiError } from '@/api/client';
+import { clearAdminReportCatalog } from '@/stores/reportCatalog';
 
 type SessionStatus = 'unknown' | 'loading' | 'authenticated' | 'anonymous';
 
@@ -40,6 +41,7 @@ async function login(username: string, password: string): Promise<AdminSession> 
 
 async function logout(): Promise<void> {
   try { await adminApi.logout(); } finally {
+    clearAdminReportCatalog();
     state.session = null;
     state.status = 'anonymous';
   }
@@ -51,6 +53,7 @@ function updateSession(session: AdminSession): void {
 }
 
 function clearSession(): void {
+  clearAdminReportCatalog();
   state.session = null;
   state.status = 'anonymous';
   pending = null;

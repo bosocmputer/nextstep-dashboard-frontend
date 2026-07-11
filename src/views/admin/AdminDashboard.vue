@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { apiRequest } from '@/api/client';
-import { adminApi, reportDefinitions, type LineQuotaStatus } from '@/api';
+import { adminApi, type AdminReportDefinition, type LineQuotaStatus } from '@/api';
+import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 
 const ready = ref<'checking' | 'ready' | 'unavailable'>('checking');
 const lineQuota = ref<LineQuotaStatus>();
+const reportDefinitions = ref<AdminReportDefinition[]>([]);
 onMounted(async () => {
-  const [healthResult, quotaResult] = await Promise.allSettled([
-    apiRequest('/api/v1/health/ready', { timeoutMs: 3000 }), adminApi.lineQuota()
+  const [healthResult, quotaResult, reportResult] = await Promise.allSettled([
+    apiRequest('/api/v1/health/ready', { timeoutMs: 3000 }), adminApi.lineQuota(), loadAdminReportCatalog()
   ]);
   ready.value = healthResult.status === 'fulfilled' ? 'ready' : 'unavailable';
   if (quotaResult.status === 'fulfilled') lineQuota.value = quotaResult.value;
+  if (reportResult.status === 'fulfilled') reportDefinitions.value = reportResult.value.data;
 });
 
 const quotaPercent = computed(() => {
@@ -63,7 +66,7 @@ const shortcuts = [
     <div class="flex items-center justify-between gap-3 mb-4"><div><h2 class="text-xl font-semibold m-0">รายงานที่รองรับ</h2><p class="text-muted-color mt-1 mb-0">ใช้เฉพาะคำสั่ง SQL ที่ระบบตรวจสอบไว้ล่วงหน้า</p></div><Badge :value="reportDefinitions.length" /></div>
     <DataTable :value="reportDefinitions" data-key="reportKey" striped-rows responsive-layout="scroll">
       <Column field="label" header="ชื่อรายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span></template></Column>
-      <Column field="category" header="หมวด"><template #body="{ data }"><Tag severity="secondary" :value="data.category" /></template></Column>
+      <Column field="categoryLabel" header="หมวด"><template #body="{ data }"><Tag severity="secondary" :value="data.categoryLabel" /></template></Column>
       <template #empty>ยังไม่มีนิยามรายงาน</template>
     </DataTable>
   </div>
