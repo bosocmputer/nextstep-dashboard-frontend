@@ -35,6 +35,31 @@ async function mockAdminLogin(page: Page) {
   })));
 }
 
+async function mockEmptyExecutiveOverview(page: Page) {
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview`, (route) => route.fulfill(json({
+    tenantId,
+    timezone: 'Asia/Bangkok',
+    items: []
+  })));
+}
+
+function salesDashboard() {
+  return {
+    reportKey: 'sales_goods_services',
+    version: '1.0.0',
+    period: { preset: 'YESTERDAY', dateFrom: '2026-07-09', dateTo: '2026-07-09' },
+    comparisonPeriod: { preset: 'CUSTOM', dateFrom: '2026-07-08', dateTo: '2026-07-08' },
+    timezone: 'Asia/Bangkok',
+    generatedAt: '2026-07-10T07:00:00+07:00',
+    kpis: [{
+      key: 'total_amount', label: 'ยอดขาย', value: '1250.00', unit: 'THB',
+      comparison: { availability: 'UNAVAILABLE' }
+    }],
+    visualizations: [],
+    quality: { status: 'OK', warnings: [] }
+  };
+}
+
 test('admin guard redirects an anonymous user to sign in', async ({ page }) => {
   const consoleErrors = captureUnexpectedConsoleErrors(page);
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(unauthorized()));
@@ -56,7 +81,7 @@ test('admin can sign in and sees API readiness', async ({ page }) => {
 
   await expect(page).toHaveURL('/admin');
   await expect(page.getByRole('heading', { name: 'ภาพรวมระบบ' })).toBeVisible();
-  await expect(page.getByText('API พร้อมใช้งาน')).toBeVisible();
+  await expect(page.getByText('ระบบพร้อมใช้งาน')).toBeVisible();
   await expect(page.getByText('ใช้แล้ว 4,200 / 5,000')).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
@@ -82,7 +107,7 @@ test('tenant form blocks an invalid slug before sending', async ({ page }) => {
   await page.getByLabel('Slug', { exact: true }).fill('Invalid Slug');
   await page.getByRole('button', { name: 'สร้างร้านค้า' }).click();
 
-  await expect(page.getByRole('dialog', { name: 'เพิ่มร้านค้า' }).getByRole('alert')).toContainText('Slug ใช้ตัวพิมพ์เล็ก');
+  await expect(page.getByRole('dialog', { name: 'เพิ่มร้านค้า' }).getByRole('alert').filter({ hasText: 'Slug ใช้ตัวพิมพ์เล็ก' })).toBeVisible();
   expect(createRequests).toBe(0);
 });
 
@@ -103,12 +128,15 @@ test('mobile viewer renders only reports returned by permission API', async ({ p
     ],
     page: { hasMore: false }
   })));
+  await mockEmptyExecutiveOverview(page);
 
   await page.goto('/app');
 
-  await expect(page.getByRole('heading', { name: 'รายงานของฉัน' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'รายงานขายสินค้าและบริการ' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'รายงานสินค้าถึงจุดสั่งซื้อ' })).toBeVisible();
+  await expect(page).toHaveURL(`/app/tenant/${tenantId}`);
+  await expect(page.getByRole('heading', { name: 'ภาพรวม ร้านตัวอย่าง' })).toBeVisible();
+  await page.getByRole('button', { name: 'เปิดหรือปิดเมนู' }).click();
+  await expect(page.getByRole('link', { name: 'รายงานขายสินค้าและบริการ' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'รายงานสินค้าถึงจุดสั่งซื้อ' })).toBeVisible();
   await expect(page.getByText('รายงานซื้อสินค้าและตั้งหนี้')).toHaveCount(0);
   const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(hasHorizontalOverflow).toBe(false);
@@ -137,6 +165,7 @@ test('mobile report details use stacked rows without horizontal overflow', async
         page: { hasMore: false }
       }));
     }
+    if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(salesDashboard()));
     return route.fulfill(json({
       id: runId, tenantId, reportKey: 'sales_goods_services', status: 'SUCCEEDED', periodPreset: 'YESTERDAY',
       dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 1, isTruncated: false,
@@ -147,6 +176,8 @@ test('mobile report details use stacked rows without horizontal overflow', async
 
   await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services`);
 
+  await expect(page.getByRole('tab', { name: 'ข้อมูลรายละเอียด' })).toBeVisible();
+  await page.getByRole('tab', { name: 'ข้อมูลรายละเอียด' }).click();
   const mobileDetails = page.getByLabel('รายละเอียดรายงานแบบมือถือ');
   await expect(mobileDetails).toBeVisible();
   await expect(mobileDetails.getByText('IV-001')).toBeVisible();
@@ -219,10 +250,10 @@ test('admin previews the exact single Flex card with numeric samples', async ({ 
   });
 
   await page.goto(`/admin/tenants/${tenantId}`);
-  await page.getByRole('tab', { name: 'Schedules' }).click();
+  await page.getByRole('tab', { name: 'ตารางส่งรายงาน' }).click();
   await page.getByRole('button', { name: 'แก้ไข' }).click();
-  const dialog = page.getByRole('dialog', { name: 'แก้ไข Schedule' });
-  await dialog.getByRole('button', { name: 'ดูตัวอย่าง Flex' }).click();
+  const dialog = page.getByRole('dialog', { name: 'แก้ไขตารางส่งรายงาน' });
+  await dialog.getByRole('button', { name: 'ดูตัวอย่าง LINE Card' }).click();
 
   await expect(dialog.getByLabel('ตัวอย่าง LINE Flex Message')).toBeVisible();
   await expect(dialog.getByText('ตัวเลขสมมติเท่านั้น')).toBeVisible();
