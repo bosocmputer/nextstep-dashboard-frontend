@@ -1,18 +1,32 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { adminApi, type AuditPage } from '@/api';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { ApiError, adminApi, type AuditPage } from '@/api';
+import TenantFilterSelect from '@/components/admin/TenantFilterSelect.vue';
 import { errorMessage, formatDateTime } from '@/utils/format';
-import { statusLabel } from '@/utils/status';
+import { auditActionLabel, statusLabel } from '@/utils/status';
 
 type Audit = AuditPage['data'][number];
 const rows = ref<Audit[]>([]); const loading = ref(false); const error = ref(''); const cursor = ref<string>(); const hasMore = ref(false); const tenantId = ref('');
-async function load(reset = true) { loading.value = true; error.value = ''; try { const page = await adminApi.audit({ cursor: reset ? undefined : cursor.value, tenantId: tenantId.value.trim() || undefined }); rows.value = reset ? page.data : [...rows.value, ...page.data]; cursor.value = page.page.nextCursor ?? undefined; hasMore.value = page.page.hasMore; } catch (cause) { error.value = errorMessage(cause); } finally { loading.value = false; } }
+const selected = ref<Audit>(); let loadGeneration = 0; let controller: AbortController | undefined;
+async function load(reset = true) { if (!reset && loading.value) return; if (reset) { loadGeneration++; controller?.abort('filters-changed'); controller = new AbortController(); } const context = loadGeneration; loading.value = true; error.value = ''; try { const page = await adminApi.audit({ cursor: reset ? undefined : cursor.value, tenantId: tenantId.value || undefined }, controller?.signal); if (context !== loadGeneration) return; rows.value = reset ? page.data : [...rows.value, ...page.data]; cursor.value = page.page.nextCursor ?? undefined; hasMore.value = page.page.hasMore; } catch (cause) { if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause); } finally { if (context === loadGeneration) loading.value = false; } }
 onMounted(() => load());
+onBeforeUnmount(() => controller?.abort('unmounted'));
 </script>
 
 <template>
-  <div class="page-header"><div><h1 class="page-title">ประวัติการใช้งาน</h1><p class="page-subtitle">เหตุการณ์สำคัญเก็บ 365 วันและตัดข้อมูลลับออกก่อนบันทึก</p></div><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></div>
-  <form class="surface-card rounded-xl p-4 flex flex-col md:flex-row gap-3 mb-4" @submit.prevent="load()"><InputText v-model="tenantId" aria-label="กรองด้วยรหัสร้าน" placeholder="รหัสร้าน (ไม่บังคับ)" class="flex-1" /><Button type="submit" label="กรอง" icon="pi pi-filter" outlined /></form>
-  <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
-  <div class="surface-card rounded-xl overflow-hidden"><DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable><Column field="createdAt" header="เวลา"><template #body="{ data }">{{ formatDateTime(data.createdAt) }}</template></Column><Column field="actorType" header="ผู้ดำเนินการ"><template #body="{ data }"><Tag severity="secondary" :value="statusLabel(data.actorType)" /></template></Column><Column field="action" header="การทำงาน"><template #body="{ data }"><code>{{ data.action }}</code></template></Column><Column field="resourceType" header="ประเภทข้อมูล" /><Column field="resourceId" header="รหัสข้อมูล"><template #body="{ data }"><code>{{ data.resourceId || '—' }}</code></template></Column><Column field="result" header="ผลลัพธ์"><template #body="{ data }"><Tag :severity="data.result === 'SUCCESS' ? 'success' : data.result === 'DENIED' ? 'warn' : 'danger'" :value="statusLabel(data.result)" /></template></Column><Column field="safeErrorCode" header="รหัสข้อผิดพลาด"><template #body="{ data }"><code>{{ data.safeErrorCode || '—' }}</code></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีประวัติการใช้งาน</div></template></DataTable><div v-if="hasMore" class="p-4 text-center border-t border-surface"><Button label="โหลดเพิ่มเติม" outlined @click="load(false)" /></div></div>
+  <div class="page-header"><div><h1 class="page-title">ประวัติการใช้งาน</h1><p class="page-subtitle">ใครทำอะไร เมื่อใด และได้ผลอย่างไร · เก็บ 365 วัน</p></div></div>
+  <div class="card table-card">
+    <Toolbar class="mb-6 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template><template #end><form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()"><TenantFilterSelect v-model="tenantId" /><Button type="submit" label="กรอง" icon="pi pi-filter" /></form></template></Toolbar>
+    <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
+    <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
+      <Column field="createdAt" header="เวลา" frozen><template #body="{ data }">{{ formatDateTime(data.createdAt) }}</template></Column>
+      <Column field="actorType" header="ผู้ดำเนินการ"><template #body="{ data }"><Tag severity="secondary" :value="statusLabel(data.actorType)" /></template></Column>
+      <Column field="action" header="การทำงาน"><template #body="{ data }"><span class="font-medium">{{ auditActionLabel(data.action) }}</span></template></Column>
+      <Column field="result" header="ผลลัพธ์"><template #body="{ data }"><Tag :severity="data.result === 'SUCCESS' ? 'success' : data.result === 'DENIED' ? 'warn' : 'danger'" :value="statusLabel(data.result)" /></template></Column>
+      <Column header=""><template #body="{ data }"><Button icon="pi pi-info-circle" text rounded class="touch-action" aria-label="ดูรายละเอียดทางเทคนิค" v-tooltip.top="'รายละเอียดทางเทคนิค'" @click="selected = data" /></template></Column>
+      <template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีประวัติการใช้งาน</div></template>
+    </DataTable>
+    <div v-if="hasMore" class="table-footer text-center"><Button label="โหลดเพิ่มเติม" outlined :loading="loading" @click="load(false)" /></div>
+  </div>
+  <Dialog :visible="!!selected" modal header="รายละเอียดเหตุการณ์" class="responsive-dialog" :style="{ width: '34rem' }" @update:visible="selected = undefined"><dl v-if="selected" class="grid grid-cols-[9rem_1fr] gap-3 m-0"><dt>รหัสเหตุการณ์</dt><dd class="technical-detail m-0">{{ selected.id }}</dd><dt>รหัสร้าน</dt><dd class="technical-detail m-0">{{ selected.tenantId || '—' }}</dd><dt>รหัสการทำงาน</dt><dd class="technical-detail m-0">{{ selected.action }}</dd><dt>ประเภทข้อมูล</dt><dd class="technical-detail m-0">{{ selected.resourceType }}</dd><dt>รหัสข้อมูล</dt><dd class="technical-detail m-0">{{ selected.resourceId || '—' }}</dd><dt>รหัสข้อผิดพลาด</dt><dd class="technical-detail m-0">{{ selected.safeErrorCode || '—' }}</dd></dl></Dialog>
 </template>

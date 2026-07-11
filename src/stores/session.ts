@@ -50,6 +50,12 @@ function updateSession(session: AdminSession): void {
   state.status = 'authenticated';
 }
 
+function clearSession(): void {
+  state.session = null;
+  state.status = 'anonymous';
+  pending = null;
+}
+
 export function useAdminSession() {
-  return { state: readonly(state), ensureAdminSession, login, logout, updateSession };
+  return { state: readonly(state), ensureAdminSession, login, logout, updateSession, clearSession };
 }

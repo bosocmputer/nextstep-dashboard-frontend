@@ -91,7 +91,8 @@ async function requestOnce<T>(path: string, method: NonNullable<RequestOptions['
           requestId: response.headers.get('X-Request-ID') ?? '',
           retryable: response.status === 429 || response.status >= 500
         }, retryAfterMs);
-      if (response.status === 401 && options.scope) announceUnauthorized(options.scope);
+      const authScope = options.scope ?? inferAuthScope(path);
+      if (response.status === 401 && authScope) announceUnauthorized(authScope);
       throw error;
     }
     return payload as T;
@@ -142,6 +143,12 @@ function parseRetryAfter(value: string | null): number | undefined {
 
 function announceUnauthorized(scope: AuthScope): void {
   window.dispatchEvent(new CustomEvent('nextstep:unauthorized', { detail: { scope } }));
+}
+
+function inferAuthScope(path: string): AuthScope | undefined {
+  if (path.startsWith('/api/v1/admin/')) return 'admin';
+  if (path.startsWith('/api/v1/viewer/') && !path.includes('/viewer/line/session')) return 'viewer';
+  return undefined;
 }
 
 export function newIdempotencyKey(prefix: string): string {

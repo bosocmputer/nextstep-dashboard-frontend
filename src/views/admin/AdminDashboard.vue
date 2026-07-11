@@ -42,7 +42,7 @@ const shortcuts = [
 
 <template>
   <div class="page-header"><div><h1 class="page-title">ภาพรวมระบบ</h1><p class="page-subtitle">ศูนย์ควบคุมรายงาน SML และการส่ง LINE</p></div><Tag :severity="ready === 'ready' ? 'success' : ready === 'checking' ? 'secondary' : 'danger'" :value="ready === 'ready' ? 'ระบบพร้อมใช้งาน' : ready === 'checking' ? 'กำลังตรวจสอบ' : 'ระบบไม่พร้อม'" /></div>
-  <section class="surface-card rounded-xl p-5 mb-6" aria-labelledby="line-quota-title">
+  <section class="card" aria-labelledby="line-quota-title">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div><h2 id="line-quota-title" class="text-lg font-semibold m-0">LINE OA กลาง</h2><p class="m-0 mt-1 text-sm text-muted-color">ยอดประมาณจาก LINE รวม Nexflow และ OA Manager · Nextstep accepted {{ (lineQuota?.locallyAccepted ?? 0).toLocaleString('th-TH') }} ข้อความ</p></div>
       <Tag :severity="quotaSeverity" :value="lineQuota?.state ?? 'กำลังโหลด'" />
@@ -55,12 +55,22 @@ const shortcuts = [
     <Message v-else-if="lineQuota.state === 'UNLIMITED'" severity="success" :closable="false" class="mt-4">OA นี้ไม่มี target limit ที่ LINE รายงาน</Message>
   </section>
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-    <RouterLink v-for="item in shortcuts" :key="item.to" :to="item.to" class="surface-card rounded-xl p-5 no-underline text-color hover:border-primary transition-colors">
-      <div class="flex items-start justify-between"><div><h2 class="text-lg font-semibold mt-0 mb-2">{{ item.label }}</h2><p class="m-0 text-muted-color">{{ item.detail }}</p></div><span class="grid place-items-center w-11 h-11 rounded-xl bg-primary-50 dark:bg-primary-950 text-primary"><i :class="['pi', item.icon]" /></span></div>
+    <RouterLink v-for="item in shortcuts" :key="item.to" :to="item.to" class="card shortcut-card no-underline text-color">
+      <div class="flex items-start justify-between gap-4"><div><h2 class="text-lg font-semibold mt-0 mb-2">{{ item.label }}</h2><p class="m-0 text-muted-color">{{ item.detail }}</p></div><span class="grid place-items-center w-11 h-11 rounded-md bg-primary-50 dark:bg-primary-950 text-primary"><i :class="['pi', item.icon]" /></span></div>
     </RouterLink>
   </div>
-  <div class="surface-card rounded-xl p-6">
+  <div class="card">
     <div class="flex items-center justify-between gap-3 mb-4"><div><h2 class="text-xl font-semibold m-0">รายงานที่รองรับ</h2><p class="text-muted-color mt-1 mb-0">ใช้เฉพาะคำสั่ง SQL ที่ระบบตรวจสอบไว้ล่วงหน้า</p></div><Badge :value="reportDefinitions.length" /></div>
-    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"><div v-for="report in reportDefinitions" :key="report.reportKey" class="rounded-lg border border-surface p-4"><div class="flex items-start justify-between gap-2"><span class="font-medium">{{ report.label }}</span><i v-if="report.isSensitive" class="pi pi-lock text-orange-500" title="ข้อมูลอ่อนไหว" /></div><code class="block mt-2 text-xs text-muted-color safe-wrap">{{ report.reportKey }}</code></div></div>
+    <DataTable :value="reportDefinitions" data-key="reportKey" striped-rows responsive-layout="scroll">
+      <Column field="label" header="ชื่อรายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span></template></Column>
+      <Column field="category" header="หมวด"><template #body="{ data }"><Tag severity="secondary" :value="data.category" /></template></Column>
+      <Column field="isSensitive" header="การเข้าถึง"><template #body="{ data }"><span v-if="data.isSensitive"><i class="pi pi-lock mr-2 text-orange-500" />ข้อมูลอ่อนไหว</span><span v-else class="text-muted-color">ข้อมูลทั่วไป</span></template></Column>
+      <template #empty>ยังไม่มีนิยามรายงาน</template>
+    </DataTable>
   </div>
 </template>
+
+<style scoped>
+.shortcut-card { margin-bottom: 0; transition: transform .2s; }
+.shortcut-card:hover { transform: translateY(-2px); }
+</style>

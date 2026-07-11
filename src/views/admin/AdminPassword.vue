@@ -17,6 +17,7 @@ const loading = ref(false);
 const error = ref('');
 
 async function submit() {
+  if (loading.value) return;
   error.value = '';
   if (!currentPassword.value || !hasMinimumAdminPasswordLength(newPassword.value) || newPassword.value !== confirmation.value) {
     error.value = `กรอกรหัสผ่านปัจจุบัน และตั้งรหัสผ่านใหม่อย่างน้อย ${minimumAdminPasswordCharacters} ตัวอักษรโดยยืนยันให้ตรงกัน`;
@@ -36,14 +37,14 @@ async function submit() {
 <template>
   <div class="max-w-2xl mx-auto">
     <div class="page-header"><div><h1 class="page-title">ตั้งรหัสผ่านใหม่</h1><p class="page-subtitle">ต้องเปลี่ยน bootstrap password ก่อนใช้งานส่วนอื่น</p></div></div>
-    <div class="surface-card rounded-xl p-6">
+    <div class="card">
       <Message severity="warn" :closable="false" class="mb-5">ใช้รหัสผ่านที่ไม่ซ้ำกับระบบอื่นและเก็บใน password manager</Message>
       <Message v-if="error" severity="error" :closable="false" class="mb-5">{{ error }}</Message>
       <form class="grid gap-5" @submit.prevent="submit">
         <div class="grid gap-2"><label for="current">รหัสผ่านปัจจุบัน</label><Password input-id="current" v-model="currentPassword" :feedback="false" toggle-mask fluid /></div>
         <div class="grid gap-2"><label for="new">รหัสผ่านใหม่ (อย่างน้อย {{ minimumAdminPasswordCharacters }} ตัว)</label><Password input-id="new" v-model="newPassword" toggle-mask fluid /></div>
         <div class="grid gap-2"><label for="confirm">ยืนยันรหัสผ่านใหม่</label><Password input-id="confirm" v-model="confirmation" :feedback="false" toggle-mask fluid /></div>
-        <Button type="submit" label="บันทึกรหัสผ่าน" icon="pi pi-shield" :loading="loading" />
+        <Button type="submit" label="บันทึกรหัสผ่าน" icon="pi pi-shield" :loading="loading" :disabled="loading" />
       </form>
     </div>
   </div>

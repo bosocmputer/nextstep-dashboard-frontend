@@ -15,6 +15,8 @@
     "contract:verify": "node scripts/verify-contract.mjs"
   },
   "dependencies": {
+    "@fontsource/lato": "^5.2.7",
+    "@fontsource/noto-sans-thai": "^5.2.7",
     "@line/liff": "2.29.1",
     "@primeuix/themes": "2.0.3",
     "chart.js": "4.5.1",

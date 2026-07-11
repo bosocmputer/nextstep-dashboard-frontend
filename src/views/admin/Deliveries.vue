@@ -1,19 +1,33 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { adminApi, type DeliveryPage } from '@/api';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { ApiError, adminApi, type DeliveryPage } from '@/api';
+import TenantFilterSelect from '@/components/admin/TenantFilterSelect.vue';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
 
 type Delivery = DeliveryPage['data'][number];
 const rows = ref<Delivery[]>([]); const loading = ref(false); const error = ref(''); const cursor = ref<string>(); const hasMore = ref(false); const tenantId = ref('');
-async function load(reset = true) { loading.value = true; error.value = ''; try { const page = await adminApi.deliveries({ cursor: reset ? undefined : cursor.value, tenantId: tenantId.value.trim() || undefined }); rows.value = reset ? page.data : [...rows.value, ...page.data]; cursor.value = page.page.nextCursor ?? undefined; hasMore.value = page.page.hasMore; } catch (cause) { error.value = errorMessage(cause); } finally { loading.value = false; } }
+const selected = ref<Delivery>(); let loadGeneration = 0; let controller: AbortController | undefined;
+async function load(reset = true) { if (!reset && loading.value) return; if (reset) { loadGeneration++; controller?.abort('filters-changed'); controller = new AbortController(); } const context = loadGeneration; loading.value = true; error.value = ''; try { const page = await adminApi.deliveries({ cursor: reset ? undefined : cursor.value, tenantId: tenantId.value || undefined }, controller?.signal); if (context !== loadGeneration) return; rows.value = reset ? page.data : [...rows.value, ...page.data]; cursor.value = page.page.nextCursor ?? undefined; hasMore.value = page.page.hasMore; } catch (cause) { if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause); } finally { if (context === loadGeneration) loading.value = false; } }
 function severity(value: string) { return value === 'ACCEPTED' ? 'success' : value === 'FAILED_PERMANENT' ? 'danger' : value === 'UNCERTAIN' ? 'warn' : value === 'SENDING' ? 'info' : 'secondary'; }
 onMounted(() => load());
+onBeforeUnmount(() => controller?.abort('unmounted'));
 </script>
 
 <template>
-  <div class="page-header"><div><h1 class="page-title">การส่ง LINE</h1><p class="page-subtitle">ประวัติการส่งเก็บ 365 วัน โดยไม่แสดง LINE user ID หรือเนื้อหาข้อความ</p></div><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></div>
-  <form class="surface-card rounded-xl p-4 flex flex-col md:flex-row gap-3 mb-4" @submit.prevent="load()"><InputText v-model="tenantId" aria-label="กรองด้วยรหัสร้าน" placeholder="รหัสร้าน (ไม่บังคับ)" class="flex-1" /><Button type="submit" label="กรอง" icon="pi pi-filter" outlined /></form>
-  <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
-  <div class="surface-card rounded-xl overflow-hidden"><DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable><Column field="id" header="รหัสการส่ง"><template #body="{ data }"><code>{{ data.id }}</code></template></Column><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="severity(data.status)" :value="statusLabel(data.status)" /></template></Column><Column field="attempt" header="จำนวนครั้งที่ลอง" /><Column field="safeErrorCode" header="รหัสข้อผิดพลาด"><template #body="{ data }"><code v-if="data.safeErrorCode" class="text-red-600">{{ data.safeErrorCode }}</code><span v-else>—</span></template></Column><Column field="createdAt" header="สร้างเมื่อ"><template #body="{ data }">{{ formatDateTime(data.createdAt) }}</template></Column><Column field="acceptedAt" header="LINE รับเมื่อ"><template #body="{ data }">{{ formatDateTime(data.acceptedAt) }}</template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีประวัติการส่ง LINE</div></template></DataTable><div v-if="hasMore" class="p-4 text-center border-t border-surface"><Button label="โหลดเพิ่มเติม" outlined @click="load(false)" /></div></div>
+  <div class="page-header"><div><h1 class="page-title">การส่ง LINE</h1><p class="page-subtitle">ประวัติการส่งเก็บ 365 วัน โดยไม่แสดง LINE user ID หรือเนื้อหาข้อความ</p></div></div>
+  <div class="card table-card">
+    <Toolbar class="mb-6 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template><template #end><form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()"><TenantFilterSelect v-model="tenantId" /><Button type="submit" label="กรอง" icon="pi pi-filter" /></form></template></Toolbar>
+    <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
+    <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
+      <Column field="status" header="สถานะ" frozen><template #body="{ data }"><Tag :severity="severity(data.status)" :value="statusLabel(data.status)" /></template></Column>
+      <Column field="attempt" header="ครั้งที่ส่ง" />
+      <Column field="createdAt" header="เริ่มส่งเมื่อ"><template #body="{ data }">{{ formatDateTime(data.createdAt) }}</template></Column>
+      <Column field="acceptedAt" header="LINE รับเมื่อ"><template #body="{ data }">{{ formatDateTime(data.acceptedAt) }}</template></Column>
+      <Column header=""><template #body="{ data }"><Button icon="pi pi-info-circle" text rounded class="touch-action" aria-label="ดูรายละเอียดทางเทคนิค" v-tooltip.top="'รายละเอียดทางเทคนิค'" @click="selected = data" /></template></Column>
+      <template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีประวัติการส่ง LINE</div></template>
+    </DataTable>
+    <div v-if="hasMore" class="table-footer text-center"><Button label="โหลดเพิ่มเติม" outlined :loading="loading" @click="load(false)" /></div>
+  </div>
+  <Dialog :visible="!!selected" modal header="รายละเอียดการส่ง LINE" class="responsive-dialog" :style="{ width: '32rem' }" @update:visible="selected = undefined"><dl v-if="selected" class="grid grid-cols-[8rem_1fr] gap-3 m-0"><dt>รหัสการส่ง</dt><dd class="technical-detail m-0">{{ selected.id }}</dd><dt>รหัสร้าน</dt><dd class="technical-detail m-0">{{ selected.tenantId }}</dd><dt>รหัสข้อผิดพลาด</dt><dd class="technical-detail m-0">{{ selected.safeErrorCode || '—' }}</dd><dt>หมดอายุ</dt><dd class="m-0">{{ formatDateTime(selected.expiresAt) }}</dd></dl></Dialog>
 </template>

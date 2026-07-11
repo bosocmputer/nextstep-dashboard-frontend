@@ -16,6 +16,7 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       '@line/liff', '@primeuix/themes/aura',
+      'primevue/autocomplete',
       'primevue/badge', 'primevue/button', 'primevue/column', 'primevue/config',
       'primevue/confirmdialog', 'primevue/confirmationservice', 'primevue/datatable',
       'primevue/datepicker', 'primevue/dialog', 'primevue/iconfield', 'primevue/inputgroup',
@@ -23,7 +24,7 @@ export default defineConfig({
       'primevue/multiselect', 'primevue/password', 'primevue/progressbar',
       'primevue/progressspinner', 'primevue/select', 'primevue/skeleton', 'primevue/tab',
       'primevue/tablist', 'primevue/tabpanel', 'primevue/tabpanels', 'primevue/tabs',
-      'primevue/tag', 'primevue/toast', 'primevue/toastservice', 'primevue/usetoast'
+      'primevue/tag', 'primevue/toast', 'primevue/toastservice', 'primevue/tooltip', 'primevue/usetoast'
     ]
   },
   server: {

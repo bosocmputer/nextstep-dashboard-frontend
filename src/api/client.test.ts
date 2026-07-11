@@ -72,7 +72,7 @@ describe('apiRequest', () => {
     window.addEventListener('nextstep:unauthorized', listener);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: 'Expired', requestId: 'req-auth', retryable: false } }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
 
-    await expect(apiRequest('/api/test', { scope: 'admin' })).rejects.toEqual(expect.objectContaining({ code: 'UNAUTHORIZED' }));
+    await expect(apiRequest('/api/v1/admin/tenants')).rejects.toEqual(expect.objectContaining({ code: 'UNAUTHORIZED' }));
     expect(listener).toHaveBeenCalledOnce();
     expect((listener.mock.calls[0]![0] as CustomEvent).detail).toEqual({ scope: 'admin' });
     window.removeEventListener('nextstep:unauthorized', listener);

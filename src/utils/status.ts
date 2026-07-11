@@ -11,3 +11,23 @@ export function statusLabel(value?: string | null): string {
   if (!value) return '—';
   return labels[value] ?? value;
 }
+
+const auditActions: Record<string, string> = {
+  TENANT_CREATED: 'สร้างร้านค้า',
+  TENANT_UPDATED: 'แก้ไขข้อมูลร้านค้า',
+  SML_CONNECTION_REPLACED: 'บันทึกการเชื่อมต่อ SML',
+  SML_CONNECTION_TESTED: 'ทดสอบการเชื่อมต่อ SML',
+  RECIPIENT_INVITED: 'สร้างลิงก์เชิญผู้รับ',
+  RECIPIENT_PERMISSIONS_REPLACED: 'แก้ไขสิทธิ์รายงาน',
+  RECIPIENT_IDENTITY_BOUND: 'เชื่อมบัญชี LINE',
+  SCHEDULE_CREATED: 'สร้างตารางส่งรายงาน',
+  SCHEDULE_UPDATED: 'แก้ไขตารางส่งรายงาน',
+  SCHEDULE_ACTIVATED: 'เปิดตารางส่งรายงาน',
+  SCHEDULE_PAUSED: 'พักตารางส่งรายงาน',
+  SCHEDULE_TEST_SEND_ENQUEUED: 'เริ่มทดสอบส่งรายงานจริง'
+};
+
+export function auditActionLabel(value?: string | null): string {
+  if (!value) return '—';
+  return auditActions[value] ?? value.replaceAll('_', ' ');
+}
