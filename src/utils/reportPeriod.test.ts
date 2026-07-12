@@ -56,6 +56,7 @@ describe('report period model', () => {
     expect(selectionFromReportPeriod('DATE_RANGE', { preset: 'CUSTOM', dateFrom: '2026-07-01', dateTo: '2026-07-10' }, now)).toEqual({ periodPreset: 'CUSTOM', dateFrom: '2026-07-01', dateTo: '2026-07-10' });
     expect(selectionFromReportPeriod('AS_OF_DATE', { preset: 'CUSTOM', dateFrom: '2026-07-10', dateTo: '2026-07-10' }, now)).toEqual({ periodPreset: 'CUSTOM', dateFrom: '2026-07-10', dateTo: '2026-07-10' });
     expect(selectionFromReportPeriod('AS_OF_DATE', { preset: 'AS_OF_RUN', dateFrom: '2026-07-12', dateTo: '2026-07-12' }, now)).toEqual({ periodPreset: 'TODAY_TO_NOW' });
+    expect(selectionFromReportPeriod('DATE_RANGE', { preset: 'YESTERDAY', dateFrom: '2026-07-10', dateTo: '2026-07-10' }, now)).toEqual({ periodPreset: 'CUSTOM', dateFrom: '2026-07-10', dateTo: '2026-07-10' });
   });
 
   it('stores a versioned selection per tenant and discards malformed or future values', () => {

@@ -92,7 +92,11 @@ export function selectionFromReportPeriod(
   now = new Date()
 ): ReportPeriodSelection {
   if (mode === 'DATE_RANGE') {
-    if (period.preset === 'YESTERDAY' || period.preset === 'TODAY_TO_NOW' || period.preset === 'MONTH_TO_DATE') return { periodPreset: period.preset };
+    if (period.preset === 'YESTERDAY' || period.preset === 'TODAY_TO_NOW' || period.preset === 'MONTH_TO_DATE') {
+      const relative = { periodPreset: period.preset } as ReportPeriodSelection;
+      const resolved = validatePeriodSelection(relative, now);
+      if (resolved.dateFrom === period.dateFrom && resolved.dateTo === period.dateTo) return relative;
+    }
     return { periodPreset: 'CUSTOM', dateFrom: period.dateFrom, dateTo: period.dateTo };
   }
   if (mode === 'AS_OF_DATE') {
