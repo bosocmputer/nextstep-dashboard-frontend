@@ -393,7 +393,7 @@ test('mobile viewer renders only reports returned by permission API', async ({ p
   await expect(page.getByTestId('mobile-topbar-context')).toContainText('ร้านตัวอย่าง');
   await expect(page.getByTestId('mobile-topbar-context')).toContainText('ภาพรวม');
   await expect(page.getByRole('heading', { name: 'ยังไม่มี Snapshot สำหรับช่วงนี้' })).toBeVisible();
-  const hiddenPageHeading = await page.getByRole('heading', { name: 'ภาพรวม ร้านตัวอย่าง' }).boundingBox();
+  const hiddenPageHeading = await page.getByRole('heading', { name: 'ภาพรวมร้าน ร้านตัวอย่าง' }).boundingBox();
   expect(hiddenPageHeading?.width).toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: 'เปิดหรือปิดเมนู' }).click();
   await expect(page.getByRole('link', { name: 'รายงานขายสินค้าและบริการ' })).toBeVisible();
@@ -639,7 +639,7 @@ test('LINE deep link opens the exact snapshot without creating a new SQL run', a
   await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services?snapshotRunId=${runId}&deliveryRef=secret-reference`);
 
   await expect(page).toHaveURL(new RegExp(`snapshotRunId=${runId}$`));
-  await expect(page.getByText('ข้อมูลจาก LINE')).toBeVisible();
+  await expect(page.getByText('ข้อมูลจาก LINE', { exact: true })).toBeVisible();
   await expect(page.getByText('ข้อมูลล่าสุด')).toBeVisible();
   await expect(page.getByText('฿1,250')).toBeVisible();
   expect(createRunRequests).toBe(0);
