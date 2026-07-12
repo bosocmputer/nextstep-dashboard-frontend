@@ -56,7 +56,7 @@ async function load() {
     ]);
     if (smlResult.status === 'fulfilled') {
       sml.value = smlResult.value;
-      Object.assign(smlForm, { endpointUrl: '', configFileName: sml.value.configFileName ?? 'config.xml', databaseName: sml.value.databaseName ?? '', version: sml.value.version });
+      Object.assign(smlForm, { endpointUrl: sml.value.endpointUrl ?? '', configFileName: sml.value.configFileName ?? 'config.xml', databaseName: sml.value.databaseName ?? '', version: sml.value.version });
       smlBaseline.value = smlFingerprint.value;
       smlLoaded.value = true;
     } else if (smlResult.reason instanceof ApiError && smlResult.reason.status === 404) {
@@ -120,7 +120,7 @@ async function persistSML() {
   savingSML.value = true;
   try {
     sml.value = await adminApi.replaceSML(tenantId, { ...smlForm });
-    Object.assign(smlForm, { endpointUrl: '', configFileName: sml.value.configFileName ?? smlForm.configFileName, databaseName: sml.value.databaseName ?? smlForm.databaseName, version: sml.value.version });
+    Object.assign(smlForm, { endpointUrl: sml.value.endpointUrl ?? '', configFileName: sml.value.configFileName ?? smlForm.configFileName, databaseName: sml.value.databaseName ?? smlForm.databaseName, version: sml.value.version });
     smlBaseline.value = smlFingerprint.value;
     toast.add({ severity: 'success', summary: 'บันทึก SML แล้ว', detail: 'กรุณาทดสอบการเชื่อมต่อก่อนเปิดตารางส่งรายงาน', life: 4000 });
   } catch (cause) { toast.add({ severity: 'error', summary: 'บันทึก SML ไม่สำเร็จ', detail: errorMessage(cause), life: 5000 }); }
@@ -304,7 +304,11 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
   <div v-if="loading" class="card"><Skeleton height="2rem" width="15rem" class="mb-4" /><Skeleton height="12rem" /></div>
   <Message v-else-if="error" severity="error" :closable="false">{{ error }} <Button label="ลองใหม่" text @click="load" /></Message>
   <template v-else-if="tenant">
-    <AppPageHeader :title="tenant.name" subtitle="เวลาไทย" mobile-mode="entity"><template #back><Button label="ร้านค้าทั้งหมด" icon="pi pi-arrow-left" text class="entity-back-action -ml-3 mb-1" @click="router.push('/admin/tenants')" /></template><template #actions><div class="flex gap-2"><Tag :severity="tenant.status === 'ACTIVE' ? 'success' : 'secondary'" :value="statusLabel(tenant.status)" /><Tag :severity="sml?.readinessStatus === 'READY' ? 'success' : 'warn'" :value="`SML ${statusLabel(sml?.readinessStatus ?? 'UNCONFIGURED')}`" /></div></template></AppPageHeader>
+    <h1 class="sr-only">รายละเอียดร้าน {{ tenant.name }}</h1>
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <Button label="ร้านค้าทั้งหมด" icon="pi pi-arrow-left" text class="entity-back-action -ml-3" @click="router.push('/admin/tenants')" />
+      <div class="flex flex-wrap gap-2"><Tag :severity="tenant.status === 'ACTIVE' ? 'success' : 'secondary'" :value="statusLabel(tenant.status)" /><Tag :severity="sml?.readinessStatus === 'READY' ? 'success' : 'warn'" :value="`SML ${statusLabel(sml?.readinessStatus ?? 'UNCONFIGURED')}`" /></div>
+    </div>
     <div class="card"><Tabs v-model:value="activeTab">
       <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">การเชื่อมต่อ SML</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">ตารางส่งรายงาน</Tab></TabList>
       <TabPanels>

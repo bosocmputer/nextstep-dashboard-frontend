@@ -741,6 +741,11 @@ export interface components {
         };
         SMLConnectionStatus: {
             isConfigured: boolean;
+            /**
+             * Format: uri
+             * @description Safe editable JavaWS URL; credentials are never returned. Standard SML service paths are reduced to the base URL.
+             */
+            endpointUrl?: string | null;
             endpointHost?: string | null;
             databaseName?: string | null;
             configFileName?: string | null;
@@ -908,6 +913,8 @@ export interface components {
                 dateTo: string;
             };
             periodLabel: string;
+            /** @description Optional executive context explaining an expected presentation limitation such as unavailable equal-time comparison. */
+            contextNote?: string;
             /** Format: date-time */
             generatedAt: string;
             /** Format: uri */

@@ -23,7 +23,29 @@ const createError = ref('');
 let loadGeneration = 0;
 let loadController: AbortController | undefined;
 let createActionKey = '';
-const form = reactive<{ name: string }>({ name: '' });
+
+function bangkokCalendarDate() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return new Date(Number(value.year), Number(value.month) - 1, Number(value.day));
+}
+
+function defaultAccessEndDate() {
+  const date = bangkokCalendarDate();
+  date.setFullYear(date.getFullYear() + 1);
+  return date;
+}
+
+function bangkokEndOfDayISO(date: Date) {
+  const year = String(date.getFullYear()).padStart(4, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return new Date(`${year}-${month}-${day}T23:59:59.999+07:00`).toISOString();
+}
+
+const form = reactive<{ name: string; accessEndsAt: Date | null }>({ name: '', accessEndsAt: defaultAccessEndDate() });
 const statusOptions = [{ label: 'ทั้งหมด', value: undefined }, { label: 'ใช้งาน', value: 'ACTIVE' }, { label: 'ปิดใช้งาน', value: 'DISABLED' }, { label: 'หมดอายุ', value: 'EXPIRED' }];
 
 async function load(reset = true) {
@@ -50,9 +72,17 @@ async function createTenant() {
     createError.value = 'กรุณาระบุชื่อร้าน';
     return;
   }
+  if (!form.accessEndsAt) {
+    createError.value = 'กรุณาระบุวันสิ้นสุดสิทธิ์';
+    return;
+  }
+  if (form.accessEndsAt < bangkokCalendarDate()) {
+    createError.value = 'วันสิ้นสุดสิทธิ์ต้องไม่เป็นวันที่ผ่านมาแล้ว';
+    return;
+  }
   saving.value = true;
   try {
-    const input: TenantInput = { name: form.name.trim() };
+    const input: TenantInput = { name: form.name.trim(), accessEndsAt: bangkokEndOfDayISO(form.accessEndsAt) };
     createActionKey ||= newIdempotencyKey('tenant');
     const created = await adminApi.createTenant(input, createActionKey);
     createActionKey = '';
@@ -61,6 +91,13 @@ async function createTenant() {
     await router.push(`/admin/tenants/${created.id}`);
   } catch (cause) { if (!(cause instanceof ApiError) || !cause.retryable) createActionKey = ''; createError.value = errorMessage(cause); }
   finally { saving.value = false; }
+}
+
+function openCreateDialog() {
+  Object.assign(form, { name: '', accessEndsAt: defaultAccessEndDate() });
+  createError.value = '';
+  createActionKey = '';
+  createOpen.value = true;
 }
 
 function statusSeverity(value: Tenant['status']) { return value === 'ACTIVE' ? 'success' : value === 'EXPIRED' ? 'danger' : 'secondary'; }
@@ -73,7 +110,7 @@ onMounted(() => load());
   <AppPageHeader title="ร้านค้า" subtitle="สิทธิ์การใช้งานและความพร้อมของ SML" />
   <div class="card table-card">
     <Toolbar class="mb-6 border-0 p-0">
-      <template #start><Button label="เพิ่มร้านค้า" icon="pi pi-plus" @click="createOpen = true" /></template>
+      <template #start><Button label="เพิ่มร้านค้า" icon="pi pi-plus" @click="openCreateDialog" /></template>
       <template #end>
         <form class="flex flex-col md:flex-row gap-3 w-full md:w-auto" @submit.prevent="load()">
           <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" aria-label="ค้นหาร้านค้าด้วยชื่อ" placeholder="ค้นหาชื่อร้าน" /></IconField>
@@ -98,7 +135,12 @@ onMounted(() => load());
     <Message v-if="createError" severity="error" :closable="false" class="mb-4">{{ createError }}</Message>
     <form id="create-tenant" class="grid gap-4" @submit.prevent="createTenant">
       <div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="form.name" maxlength="160" fluid /></div>
-      <Message severity="info" :closable="false">ระบบจะสร้างรหัสภายใน ตั้งเวลาไทย และกำหนดสิทธิ์เริ่มต้นหนึ่งปีให้อัตโนมัติ สามารถแก้ภายหลังได้</Message>
+      <div class="grid gap-2">
+        <label for="tenant-access-end">สิ้นสุดสิทธิ์</label>
+        <DatePicker input-id="tenant-access-end" v-model="form.accessEndsAt" date-format="dd/mm/yy" :min-date="bangkokCalendarDate()" show-icon fluid />
+        <small class="text-muted-color">สิทธิ์จะสิ้นสุดเวลา 23:59 น. ตามเวลาไทยของวันที่เลือก</small>
+      </div>
+      <Message severity="info" :closable="false">ระบบจะสร้างรหัสภายในและตั้งเขตเวลาไทยให้อัตโนมัติ</Message>
     </form>
     <template #footer><Button label="ยกเลิก" text :disabled="saving" @click="createOpen = false" /><Button type="submit" form="create-tenant" label="สร้างร้านค้า" icon="pi pi-check" :loading="saving" :disabled="saving" /></template>
   </Dialog>

@@ -235,13 +235,13 @@ test('admin login ignores an external redirect target', async ({ page }) => {
   await expect(page).toHaveURL('/admin');
 });
 
-test('tenant form creates an internal slug without asking the admin', async ({ page }) => {
+test('tenant form creates an internal slug and uses the admin-selected access end date', async ({ page }) => {
   await mockAdminLogin(page);
   let createRequests = 0;
   await page.route(`**${api}/admin/tenants**`, async (route) => {
     if (route.request().method() === 'POST') {
       createRequests++;
-      expect(route.request().postDataJSON()).toEqual({ name: 'ร้านทดสอบ' });
+      expect(route.request().postDataJSON()).toEqual({ name: 'ร้านทดสอบ', accessEndsAt: '2027-12-31T16:59:59.999Z' });
       await route.fulfill(json({ id: tenantId, slug: 'shop-k7m2p9x4abcd', name: 'ร้านทดสอบ', timezone: 'Asia/Bangkok', status: 'DISABLED', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'UNCONFIGURED', createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' }, 201));
       return;
     }
@@ -254,9 +254,34 @@ test('tenant form creates an internal slug without asking the admin', async ({ p
 
   await page.getByRole('button', { name: 'เพิ่มร้านค้า' }).click();
   await page.getByLabel('ชื่อร้าน').fill('ร้านทดสอบ');
+  await page.getByLabel('สิ้นสุดสิทธิ์').fill('31/12/2027');
+  await page.getByLabel('สิ้นสุดสิทธิ์').press('Tab');
   await expect(page.getByLabel('Slug', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'สร้างร้านค้า' }).click();
   await expect.poll(() => createRequests).toBe(1);
+});
+
+test('tenant detail restores the editable SML URL, removes duplicate entity header, and keeps the tenant menu active', async ({ page }) => {
+  const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
+  await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
+  await page.route(`**${api}/admin/tenants/${tenantId}`, (route) => route.fulfill(json({
+    id: tenantId, slug: 'sample-shop', name: 'วาวา', timezone: 'Asia/Bangkok', status: 'ACTIVE',
+    accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY',
+    createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
+  })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({
+    isConfigured: true, endpointUrl: 'http://43.229.149.11:8080', endpointHost: '43.229.149.11:8080',
+    databaseName: 'WAWA2', configFileName: 'SMLConfigDATA.xml', readinessStatus: 'READY', version: 2
+  })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
+
+  await page.goto(`/admin/tenants/${tenantId}?tab=sml`);
+
+  await expect(page.locator('.page-header')).toHaveCount(0);
+  await expect(page.getByLabel('Java Web Service Base URL')).toHaveValue('http://43.229.149.11:8080');
+  await expect(page.getByRole('link', { name: 'ร้านค้า', exact: true })).toHaveClass(/active-route/);
+  await expect(page.getByText('เวลาไทย', { exact: true })).toHaveCount(0);
 });
 
 test('admin manages recipient permissions on a full searchable page with optimistic versioning', async ({ page }) => {
@@ -273,6 +298,7 @@ test('admin manages recipient permissions on a full searchable page with optimis
   });
 
   await page.goto(`/admin/tenants/${tenantId}/recipients/${recipientId}/permissions`);
+  await expect(page.getByRole('link', { name: 'ร้านค้า', exact: true })).toHaveClass(/active-route/);
   await expect(page.getByRole('heading', { name: 'กำหนดสิทธิ์รายงาน' })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByLabel('ค้นหารายงาน').fill('สต็อกคงเหลือ');
@@ -640,6 +666,7 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'แก้ไข' }).click();
   await expect(page).toHaveURL(`/admin/tenants/${tenantId}/schedules/${schedule.id}/edit`);
+  await expect(page.getByRole('link', { name: 'ร้านค้า', exact: true })).toHaveClass(/active-route/);
   await expect(page.getByRole('heading', { name: 'แก้ไขตารางส่งรายงาน' })).toBeVisible();
   await expect(page.getByText('1 LINE Card · 1/10 รายงาน')).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

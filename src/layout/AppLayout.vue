@@ -12,7 +12,7 @@ const mobileTitle = computed(() => typeof route.meta.pageTitle === 'string' ? ro
 const model: NavigationItem[] = [
   { label: 'จัดการระบบ', items: [
     { label: 'ภาพรวม', icon: 'pi pi-fw pi-home', to: '/admin' },
-    { label: 'ร้านค้า', icon: 'pi pi-fw pi-building', to: '/admin/tenants' }
+    { label: 'ร้านค้า', icon: 'pi pi-fw pi-building', to: '/admin/tenants', activePrefix: '/admin/tenants' }
   ] },
   { label: 'ติดตามการทำงาน', items: [
     { label: 'การสร้างรายงาน', icon: 'pi pi-fw pi-database', to: '/admin/report-runs' },
