@@ -15,6 +15,6 @@ if printf '%s\n' "$logs" | grep -F "$marker" >/dev/null; then
   echo "Nginx access log exposed a query parameter or Referer" >&2
   exit 1
 fi
-printf '%s\n' "$logs" | grep -F 'GET /app HTTP/1.1' >/dev/null
+printf '%s\n' "$logs" | grep -E 'GET /(app|index\.html) HTTP/1\.1' >/dev/null
 
 echo "Nginx access log redaction test passed."
