@@ -154,6 +154,28 @@ test('admin can sign in and sees API readiness', async ({ page }) => {
   expect(consoleErrors).toEqual([]);
 });
 
+test('mobile admin topbar shows the current route instead of duplicating the brand', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockAdminLogin(page);
+  await page.goto('/admin/login');
+  await page.getByLabel('รหัสผ่าน').fill('local-e2e-password');
+  await page.getByRole('button', { name: 'เข้าสู่ระบบ' }).click();
+
+  await expect(page.getByTestId('mobile-topbar-context')).toContainText('ภาพรวมระบบ');
+  await expect(page.getByTestId('mobile-topbar-context')).toContainText('Nextstep Admin');
+  await expect(page.getByText('NEXTSTEP', { exact: true })).toBeHidden();
+  for (const width of [320, 390, 768]) {
+    await page.setViewportSize({ width, height: width === 768 ? 1024 : 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+  }
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.getByTestId('mobile-topbar-context').locator('strong, span').evaluateAll((elements) => {
+    elements.forEach((element) => { (element as HTMLElement).style.fontSize = '200%'; });
+  });
+  await expect(page.getByTestId('mobile-topbar-context')).toContainText('ภาพรวมระบบ');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+});
+
 test('admin operation tables identify the tenant and LINE recipient', async ({ page }) => {
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
   const pageInfo = { hasMore: false };
@@ -314,7 +336,10 @@ test('mobile viewer renders only reports returned by permission API', async ({ p
   await page.goto('/app');
 
   await expect(page).toHaveURL(`/app/tenant/${tenantId}`);
-  await expect(page.getByRole('heading', { name: 'ภาพรวม ร้านตัวอย่าง' })).toBeVisible();
+  await expect(page.getByTestId('mobile-topbar-context')).toContainText('ร้านตัวอย่าง');
+  await expect(page.getByTestId('mobile-topbar-context')).toContainText('ภาพรวม');
+  const hiddenPageHeading = await page.getByRole('heading', { name: 'ภาพรวม ร้านตัวอย่าง' }).boundingBox();
+  expect(hiddenPageHeading?.width).toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: 'เปิดหรือปิดเมนู' }).click();
   await expect(page.getByRole('link', { name: 'รายงานขายสินค้าและบริการ' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'รายงานสินค้าถึงจุดสั่งซื้อ' })).toBeVisible();
@@ -326,7 +351,74 @@ test('mobile viewer renders only reports returned by permission API', async ({ p
     expect(box?.width).toBeGreaterThanOrEqual(44);
     expect(box?.height).toBeGreaterThanOrEqual(44);
   }
+  await page.getByRole('button', { name: 'เปิดหรือปิดเมนู' }).press('Escape');
+  await expect.poll(() => page.evaluate(() => document.body.classList.contains('blocked-scroll'))).toBe(false);
   expect(consoleErrors).toEqual([]);
+});
+
+test('mobile viewer switches tenants from the sidebar without showing stale topbar context', async ({ page }) => {
+  const secondTenantId = '22222222-2222-4222-8222-222222222223';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({ recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-12T00:00:00Z' })));
+  await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({
+    data: [
+      { id: tenantId, name: 'ร้านหนึ่ง', timezone: 'Asia/Bangkok', reportKeys: ['sales_goods_services'] },
+      { id: secondTenantId, name: 'ร้านสอง', timezone: 'Asia/Bangkok', reportKeys: ['sales_goods_services'] }
+    ],
+    page: { hasMore: false }
+  })));
+  await page.route(`**${api}/viewer/tenants/*/reports`, async (route) => {
+    if (route.request().url().includes(secondTenantId)) await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fulfill(json({ data: [{ reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false }], page: { hasMore: false } }));
+  });
+  await page.route(`**${api}/viewer/tenants/*/executive-overview`, (route) => route.fulfill(json({ tenantId: route.request().url().includes(secondTenantId) ? secondTenantId : tenantId, timezone: 'Asia/Bangkok', items: [] })));
+
+  await page.goto(`/app/tenant/${tenantId}`);
+  await expect(page.getByTestId('mobile-topbar-context')).toContainText('ร้านหนึ่ง');
+  await page.getByRole('button', { name: 'เปิดหรือปิดเมนู' }).click();
+  await page.getByRole('combobox', { name: 'ร้านที่กำลังดู' }).click();
+  await page.getByRole('option', { name: 'ร้านสอง' }).click();
+  await expect(page.getByTestId('mobile-topbar-context')).toContainText('กำลังเปลี่ยนร้าน');
+
+  await expect(page).toHaveURL(`/app/tenant/${secondTenantId}`);
+  await expect(page.getByTestId('mobile-topbar-context')).toContainText('ร้านสอง');
+  await expect(page.getByTestId('mobile-topbar-context')).not.toContainText('ร้านหนึ่ง');
+});
+
+test('viewer refreshes SQL only after confirming the current tenant context', async ({ page }) => {
+  let refreshRequests = 0;
+  const reports = [
+    { reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false },
+    { reportKey: 'stock_balance', version: '1.0.0', label: 'รายงานสต็อกคงเหลือ', category: 'INVENTORY', isSensitive: false }
+  ];
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({ recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-12T00:00:00Z' })));
+  await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'วาวา', timezone: 'Asia/Bangkok', reportKeys: reports.map((report) => report.reportKey) }], page: { hasMore: false } })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports, page: { hasMore: false } })));
+  await mockEmptyExecutiveOverview(page);
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/refreshes`, (route) => {
+    refreshRequests++;
+    return route.fulfill(json({ id: 'refresh-1', status: 'QUEUED', total: 2, completed: 0, failed: 0 }, 201));
+  });
+
+  await page.goto(`/app/tenant/${tenantId}`);
+  await page.getByTestId('overview-refresh-button').click();
+
+  await expect(page.getByRole('alertdialog')).toContainText('วาวา');
+  await expect(page.getByRole('alertdialog')).toContainText('2 รายงาน');
+  expect(refreshRequests).toBe(0);
+  await page.getByRole('button', { name: 'ยกเลิก' }).click();
+  expect(refreshRequests).toBe(0);
+
+  await page.getByTestId('overview-refresh-button').click();
+  await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services`);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  expect(refreshRequests).toBe(0);
+
+  await page.goto(`/app/tenant/${tenantId}`);
+  await page.getByTestId('overview-refresh-button').click();
+  await page.getByRole('button', { name: 'ดึง SQL ใหม่' }).click();
+  await expect.poll(() => refreshRequests).toBe(1);
 });
 
 test('LINE mobile overview renders readable responsive charts with full table data', async ({ page }) => {
@@ -347,6 +439,8 @@ test('LINE mobile overview renders readable responsive charts with full table da
 
   await page.goto(`/app/tenant/${tenantId}`);
 
+  const firstKpi = await page.locator('.executive-kpi').first().boundingBox();
+  expect(firstKpi?.y).toBeLessThanOrEqual(220);
   const stockCard = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'สินค้าที่มีมูลค่าคงเหลือสูงสุด' }) });
   await expect(stockCard.getByTestId('ranking-item')).toHaveCount(5);
   await expect(stockCard.getByTestId('ranking-item').filter({ hasText: 'สินค้าทดสอบชื่อยาวสำหรับผู้บริหาร อันดับ 1' })).toBeVisible();
@@ -625,6 +719,7 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     for (const [reportKey, label] of reports) {
       await page.goto(`/app/tenant/${tenantId}/report/${reportKey}`);
+      if (width === 390) await expect(page.getByTestId('mobile-topbar-context')).toContainText(label);
       await expect(page.getByRole('heading', { name: label })).toBeVisible();
       await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
       await expect(page.getByText('เทียบกับ 8 ก.ค. 2569')).toBeVisible();

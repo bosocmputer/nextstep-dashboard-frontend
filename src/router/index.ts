@@ -12,16 +12,16 @@ const router = createRouter({
       component: () => import('@/layout/AppLayout.vue'),
       meta: { requiresAdmin: true },
       children: [
-        { path: '', name: 'admin-dashboard', component: () => import('@/views/admin/AdminDashboard.vue') },
-        { path: 'password', name: 'admin-password', component: () => import('@/views/admin/AdminPassword.vue') },
-        { path: 'tenants', name: 'admin-tenants', component: () => import('@/views/admin/TenantList.vue') },
-        { path: 'tenants/:tenantId/recipients/:recipientId/permissions', name: 'admin-recipient-permissions', component: () => import('@/views/admin/RecipientPermissions.vue') },
-        { path: 'tenants/:tenantId/schedules/new', name: 'admin-schedule-new', component: () => import('@/views/admin/ScheduleEditor.vue') },
-        { path: 'tenants/:tenantId/schedules/:scheduleId/edit', name: 'admin-schedule-edit', component: () => import('@/views/admin/ScheduleEditor.vue') },
-        { path: 'tenants/:tenantId', name: 'admin-tenant-detail', component: () => import('@/views/admin/TenantDetail.vue') },
-        { path: 'report-runs', name: 'admin-report-runs', component: () => import('@/views/admin/ReportRuns.vue') },
-        { path: 'deliveries', name: 'admin-deliveries', component: () => import('@/views/admin/Deliveries.vue') },
-        { path: 'audit', name: 'admin-audit', component: () => import('@/views/admin/AuditLogs.vue') }
+        { path: '', name: 'admin-dashboard', component: () => import('@/views/admin/AdminDashboard.vue'), meta: { pageTitle: 'ภาพรวมระบบ' } },
+        { path: 'password', name: 'admin-password', component: () => import('@/views/admin/AdminPassword.vue'), meta: { pageTitle: 'ตั้งรหัสผ่านใหม่' } },
+        { path: 'tenants', name: 'admin-tenants', component: () => import('@/views/admin/TenantList.vue'), meta: { pageTitle: 'ร้านค้า' } },
+        { path: 'tenants/:tenantId/recipients/:recipientId/permissions', name: 'admin-recipient-permissions', component: () => import('@/views/admin/RecipientPermissions.vue'), meta: { pageTitle: 'กำหนดสิทธิ์รายงาน' } },
+        { path: 'tenants/:tenantId/schedules/new', name: 'admin-schedule-new', component: () => import('@/views/admin/ScheduleEditor.vue'), meta: { pageTitle: 'เพิ่มตารางส่งรายงาน' } },
+        { path: 'tenants/:tenantId/schedules/:scheduleId/edit', name: 'admin-schedule-edit', component: () => import('@/views/admin/ScheduleEditor.vue'), meta: { pageTitle: 'แก้ไขตารางส่งรายงาน' } },
+        { path: 'tenants/:tenantId', name: 'admin-tenant-detail', component: () => import('@/views/admin/TenantDetail.vue'), meta: { pageTitle: 'รายละเอียดร้าน' } },
+        { path: 'report-runs', name: 'admin-report-runs', component: () => import('@/views/admin/ReportRuns.vue'), meta: { pageTitle: 'การสร้างรายงาน' } },
+        { path: 'deliveries', name: 'admin-deliveries', component: () => import('@/views/admin/Deliveries.vue'), meta: { pageTitle: 'การส่ง LINE' } },
+        { path: 'audit', name: 'admin-audit', component: () => import('@/views/admin/AuditLogs.vue'), meta: { pageTitle: 'ประวัติการใช้งาน' } }
       ]
     },
     {

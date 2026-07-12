@@ -15,7 +15,7 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
 </script>
 
 <template>
-  <div class="page-header"><div><h1 class="page-title">การส่ง LINE</h1><p class="page-subtitle">ประวัติการส่งเก็บ 365 วัน โดยไม่แสดง LINE user ID หรือเนื้อหาข้อความ</p></div></div>
+  <AppPageHeader title="การส่ง LINE" subtitle="ประวัติการส่งเก็บ 365 วัน โดยไม่แสดง LINE user ID หรือเนื้อหาข้อความ" />
   <div class="card table-card">
     <Toolbar class="mb-6 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template><template #end><form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()"><TenantFilterSelect v-model="tenantId" /><Button type="submit" label="กรอง" icon="pi pi-filter" /></form></template></Toolbar>
     <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>

@@ -99,10 +99,18 @@
 
 @media (max-width: 991px) {
     .layout-topbar {
+        height: 64px;
         padding: 0 2rem;
+
+        .layout-topbar-action {
+            width: 50px;
+            height: 50px;
+        }
 
         .layout-topbar-logo-container {
             width: auto;
+            flex: 1 1 auto;
+            min-width: 0;
         }
 
         .layout-menu-button {
@@ -156,6 +164,15 @@
         .layout-topbar-menu-content {
             flex-direction: column;
         }
+    }
+}
+
+@media (max-width: 767px) {
+    .layout-topbar {
+        padding: 0 16px;
+
+        .layout-topbar-actions { gap: 0.25rem; }
+        .layout-menu-button { margin-right: 0.25rem; }
     }
 }
 

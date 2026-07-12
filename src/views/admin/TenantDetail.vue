@@ -304,7 +304,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
   <div v-if="loading" class="card"><Skeleton height="2rem" width="15rem" class="mb-4" /><Skeleton height="12rem" /></div>
   <Message v-else-if="error" severity="error" :closable="false">{{ error }} <Button label="ลองใหม่" text @click="load" /></Message>
   <template v-else-if="tenant">
-    <div class="page-header"><div><Button label="ร้านค้าทั้งหมด" icon="pi pi-arrow-left" text class="-ml-3 mb-1" @click="router.push('/admin/tenants')" /><h1 class="page-title">{{ tenant.name }}</h1><p class="page-subtitle">เวลาไทย (UTC+7)</p></div><div class="flex gap-2"><Tag :severity="tenant.status === 'ACTIVE' ? 'success' : 'secondary'" :value="statusLabel(tenant.status)" /><Tag :severity="sml?.readinessStatus === 'READY' ? 'success' : 'warn'" :value="`SML ${statusLabel(sml?.readinessStatus ?? 'UNCONFIGURED')}`" /></div></div>
+    <AppPageHeader :title="tenant.name" subtitle="เวลาไทย" mobile-mode="entity"><template #back><Button label="ร้านค้าทั้งหมด" icon="pi pi-arrow-left" text class="entity-back-action -ml-3 mb-1" @click="router.push('/admin/tenants')" /></template><template #actions><div class="flex gap-2"><Tag :severity="tenant.status === 'ACTIVE' ? 'success' : 'secondary'" :value="statusLabel(tenant.status)" /><Tag :severity="sml?.readinessStatus === 'READY' ? 'success' : 'warn'" :value="`SML ${statusLabel(sml?.readinessStatus ?? 'UNCONFIGURED')}`" /></div></template></AppPageHeader>
     <div class="card"><Tabs v-model:value="activeTab">
       <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">การเชื่อมต่อ SML</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">ตารางส่งรายงาน</Tab></TabList>
       <TabPanels>

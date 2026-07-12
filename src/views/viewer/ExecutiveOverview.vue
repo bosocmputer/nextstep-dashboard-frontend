@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
 import { ApiError, viewerApi, type DashboardRefresh, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
@@ -10,11 +12,14 @@ import { errorMessage, formatDateTime } from '@/utils/format';
 
 const route = useRoute();
 const router = useRouter();
+const confirm = useConfirm();
+const toast = useToast();
 const { state, ensureReports, selectTenant } = useViewerSession();
 const overview = ref<ExecutiveOverview>();
 const refresh = ref<DashboardRefresh>();
 const loading = ref(true);
 const refreshing = ref(false);
+const refreshConfirmOpen = ref(false);
 const error = ref('');
 let pollTimer: number | undefined;
 let pollCount = 0;
@@ -80,6 +85,37 @@ async function startRefresh() {
   }
 }
 
+function requestRefresh() {
+  if (loading.value || refreshing.value || refreshConfirmOpen.value || !reports.value.length) return;
+  const expectedTenantId = tenantId.value;
+  const expectedGeneration = generation;
+  const expectedReportCount = reports.value.length;
+  const expectedReportKeys = reports.value.map((report) => report.reportKey).sort().join('\u0000');
+  const expectedTenantName = tenant.value?.name ?? 'ร้านนี้';
+  refreshConfirmOpen.value = true;
+  confirm.require({
+    header: `อัปเดตข้อมูล ${expectedTenantName}`,
+    message: `ระบบจะดึง SQL ใหม่ ${expectedReportCount.toLocaleString('th-TH')} รายงาน และอาจใช้เวลาหลายนาที ต้องการดำเนินการต่อหรือไม่`,
+    icon: 'pi pi-database',
+    blockScroll: true,
+    defaultFocus: 'reject',
+    rejectLabel: 'ยกเลิก',
+    acceptLabel: 'ดึง SQL ใหม่',
+    rejectProps: { severity: 'secondary', text: true },
+    accept: () => {
+      refreshConfirmOpen.value = false;
+      const currentReportKeys = reports.value.map((report) => report.reportKey).sort().join('\u0000');
+      if (expectedGeneration !== generation || expectedTenantId !== tenantId.value || expectedReportCount !== reports.value.length || expectedReportKeys !== currentReportKeys) {
+        toast.add({ severity: 'warn', summary: 'บริบทของร้านเปลี่ยนแล้ว', detail: 'กรุณาตรวจสอบร้านและกดอัปเดตอีกครั้ง', life: 4000 });
+        return;
+      }
+      void startRefresh();
+    },
+    reject: () => { refreshConfirmOpen.value = false; },
+    onHide: () => { refreshConfirmOpen.value = false; }
+  });
+}
+
 function schedulePoll(context: number) {
   stopPolling();
   const delay = document.visibilityState === 'hidden' ? 5000 : Math.min(1500 + pollCount * 150, 3500);
@@ -114,15 +150,12 @@ function handleVisibilityChange() {
 }
 
 onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void loadOverview(); });
-onBeforeUnmount(() => { generation++; document.removeEventListener('visibilitychange', handleVisibilityChange); pageController?.abort('unmounted'); stopPolling(); });
+onBeforeUnmount(() => { generation++; refreshConfirmOpen.value = false; confirm.close(); document.removeEventListener('visibilitychange', handleVisibilityChange); pageController?.abort('unmounted'); stopPolling(); });
 watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; void loadOverview(); });
 </script>
 
 <template>
-  <div class="page-header executive-heading">
-    <div><h1 class="page-title">ภาพรวม {{ tenant?.name }}</h1><p class="page-subtitle">ตัวเลขสำคัญ 4 ด้าน · เวลาไทย (Asia/Bangkok)</p></div>
-    <div class="flex flex-wrap items-center gap-3"><span v-if="newestGeneratedAt" class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />อัปเดตล่าสุด {{ formatDateTime(newestGeneratedAt) }}</span><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :loading="refreshing" :disabled="loading || !reports.length" @click="startRefresh" /></div>
-  </div>
+  <AppPageHeader :title="`ภาพรวม ${tenant?.name ?? ''}`" subtitle="ตัวเลขสำคัญ 4 ด้าน · เวลาไทย"><template #actions><div class="overview-header-actions"><span v-if="newestGeneratedAt" class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />อัปเดต {{ formatDateTime(newestGeneratedAt) }}</span><Button class="overview-refresh-desktop" label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @click="requestRefresh" /><Button class="overview-refresh-mobile touch-action" data-testid="overview-refresh-button" label="อัปเดต" aria-label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @click="requestRefresh" /></div></template></AppPageHeader>
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="loadOverview" /></Message>
   <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refresh?.completed ?? 0 }} จาก {{ refresh?.total ?? reports.length }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ระบบรันทีละรายงานเพื่อลดภาระฐานข้อมูลของร้าน คุณออกจากหน้านี้ได้โดยไม่ยกเลิกงาน</p></div>
@@ -136,11 +169,12 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
     <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
   </div>
-  <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึง SQL ล่าสุดและสร้างกราฟตามสิทธิ์ของคุณ</p><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :disabled="!reports.length" @click="startRefresh" /></div>
+  <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึง SQL ล่าสุดและสร้างกราฟตามสิทธิ์ของคุณ</p><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :disabled="refreshConfirmOpen || !reports.length" @click="requestRefresh" /></div>
 </template>
 
 <style scoped>
-.executive-heading { align-items: center; }
+.overview-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .75rem; }
+.overview-refresh-mobile { display: none; }
 .executive-panel { border-radius: var(--content-border-radius); }
 .dashboard-card { margin-bottom: 0; }
 .executive-kpi { position: relative; display: flex; align-items: flex-start; gap: 1rem; min-height: 8.5rem; margin-bottom: 0; color: inherit; border: 0; text-align: left; cursor: pointer; transition: transform .2s; }
@@ -162,4 +196,12 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 .empty-overview h2 { margin: 1rem 0 .4rem; }
 .empty-overview p { max-width: 34rem; margin: 0 0 1.25rem; color: var(--text-color-secondary); }
 @media (prefers-reduced-motion: reduce) { .executive-kpi { transition: none; } }
+@media (max-width: 767px) {
+  .overview-header-actions { width: 100%; justify-content: space-between; gap: .5rem; }
+  .overview-header-actions > span { font-size: .75rem; }
+  .overview-refresh-desktop { display: none; }
+  .overview-refresh-mobile { display: inline-flex; }
+  .executive-kpi { min-height: 7rem; padding: 1.25rem; }
+  .executive-panel.dashboard-card { padding: 1.25rem; }
+}
 </style>

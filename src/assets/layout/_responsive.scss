@@ -75,6 +75,7 @@
         }
 
         .layout-sidebar {
+            width: min(20rem, calc(100vw - 2rem));
             transform: translateX(-100%);
             left: 0;
             top: 0;
@@ -106,5 +107,12 @@
                 display: block;
             }
         }
+    }
+}
+
+@media (max-width: 767px) {
+    .layout-wrapper .layout-main-container {
+        padding-left: 16px;
+        padding-right: 16px;
     }
 }

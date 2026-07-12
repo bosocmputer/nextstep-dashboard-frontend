@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router';
+import { computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useAdminSession } from '@/stores/session';
 import type { NavigationItem } from './menu';
 import AppShell from './AppShell.vue';
 
 const router = useRouter();
+const route = useRoute();
 const { state, logout } = useAdminSession();
+const mobileTitle = computed(() => typeof route.meta.pageTitle === 'string' ? route.meta.pageTitle : 'Nextstep Admin');
 const model: NavigationItem[] = [
   { label: 'จัดการระบบ', items: [
     { label: 'ภาพรวม', icon: 'pi pi-fw pi-home', to: '/admin' },
@@ -25,7 +28,7 @@ async function signOut() {
 </script>
 
 <template>
-  <AppShell :menu-model="model" home-to="/admin" :account-label="state.session?.username" confirm-dialogs @sign-out="signOut">
+  <AppShell :menu-model="model" home-to="/admin" :mobile-title="mobileTitle" mobile-subtitle="Nextstep Admin" :account-label="state.session?.username" confirm-dialogs @sign-out="signOut">
     <RouterView />
   </AppShell>
 </template>

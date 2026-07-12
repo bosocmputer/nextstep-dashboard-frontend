@@ -41,7 +41,7 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
 </script>
 
 <template>
-  <div class="page-header"><div><h1 class="page-title">การสร้างรายงาน</h1><p class="page-subtitle">ตรวจคิวและผลการทำงาน · แสดงเวลาไทย</p></div></div>
+  <AppPageHeader title="การสร้างรายงาน" subtitle="ตรวจคิวและผลการทำงาน · เวลาไทย" />
   <div class="card table-card">
     <Toolbar class="mb-6 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template><template #end><form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()"><TenantFilterSelect v-model="tenantId" /><Select v-model="status" aria-label="กรองสถานะการสร้างรายงาน" :options="statuses" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" class="md:w-48" /><Button type="submit" label="กรอง" icon="pi pi-filter" /></form></template></Toolbar>
     <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>

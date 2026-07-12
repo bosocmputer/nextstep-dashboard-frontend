@@ -251,11 +251,7 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 </script>
 
 <template>
-  <Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="-ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" />
-  <div class="page-header report-heading">
-    <div><h1 class="page-title">{{ definition?.label ?? reportKey }}</h1><p class="page-subtitle">{{ tenant?.name }} · เวลาไทย (Asia/Bangkok)</p></div>
-    <div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div><Button label="เปลี่ยนช่วงข้อมูล" icon="pi pi-filter" severity="secondary" outlined :aria-expanded="showFilters" @click="showFilters = !showFilters" /></div>
-  </div>
+  <AppPageHeader :title="definition?.label ?? 'รายงาน'" :subtitle="`${tenant?.name ?? ''} · เวลาไทย`"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action -ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div><Button label="ช่วงข้อมูล" aria-label="เปลี่ยนช่วงข้อมูล" icon="pi pi-filter" severity="secondary" outlined class="touch-action" :aria-expanded="showFilters" @click="showFilters = !showFilters" /></div></template></AppPageHeader>
 
   <section v-if="showFilters" class="card report-filter" aria-label="ตัวกรองรายงาน">
     <div class="filter-heading"><div><h2>เลือกช่วงข้อมูลใหม่</h2><p>ระบบจะดึง SQL จากฐานร้านเมื่อกด “ดึงข้อมูลช่วงนี้”</p></div><Button icon="pi pi-times" text rounded aria-label="ปิดตัวกรอง" @click="showFilters = false" /></div>
@@ -294,7 +290,6 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 
 <style scoped>
 .report-filter, .report-panel { border-radius: var(--content-border-radius); }
-.report-heading { align-items: center; margin-bottom: 1rem; }
 .report-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; }
 .report-filter { padding: 1rem; margin-bottom: 1rem; }
 .filter-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
@@ -314,6 +309,7 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 .chart-empty strong { color: var(--text-color); }
 .mobile-row { padding: 1rem; display: grid; gap: .65rem; border: 1px solid var(--surface-border); border-radius: var(--content-border-radius); }
 @media (max-width: 767px) {
+  .report-back-action { display: none; }
   .report-heading-actions { width: 100%; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
   .report-heading-actions .p-button { width: auto; }
   .report-summary-bar { align-items: flex-start; flex-direction: column; gap: .45rem; }

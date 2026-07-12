@@ -98,7 +98,7 @@ onBeforeUnmount(() => { controller.abort('unmount'); window.removeEventListener(
   <div v-if="loading" class="card"><Skeleton height="2rem" width="18rem" class="mb-4" /><Skeleton height="24rem" /></div>
   <Message v-else-if="error" severity="error" :closable="false">{{ error }} <Button label="ลองใหม่" text @click="load" /></Message>
   <template v-else-if="tenant && recipient && catalog">
-    <div class="page-header"><div><Button label="ผู้รับและสิทธิ์" icon="pi pi-arrow-left" text class="-ml-3 mb-1 touch-action" @click="back" /><h1 class="page-title">กำหนดสิทธิ์รายงาน</h1><p class="page-subtitle">{{ recipient.displayName }} · ร้าน {{ tenant.name }}</p></div><Tag :severity="recipient.status === 'ACTIVE' ? 'success' : 'warn'" :value="recipient.status === 'ACTIVE' ? 'ยืนยัน LINE แล้ว' : 'รอยืนยัน LINE'" /></div>
+    <AppPageHeader title="กำหนดสิทธิ์รายงาน" :subtitle="`${recipient.displayName} · ร้าน ${tenant.name}`" mobile-mode="entity"><template #back><Button label="ผู้รับและสิทธิ์" icon="pi pi-arrow-left" text class="entity-back-action -ml-3 mb-1 touch-action" @click="back" /></template><template #actions><Tag :severity="recipient.status === 'ACTIVE' ? 'success' : 'warn'" :value="recipient.status === 'ACTIVE' ? 'ยืนยัน LINE แล้ว' : 'รอยืนยัน LINE'" /></template></AppPageHeader>
     <Message v-if="conflict" severity="warn" :closable="false" class="mb-4">{{ conflict }}</Message>
     <Message v-if="dependencySchedules.length" severity="error" :closable="false" class="mb-4">สิทธิ์ที่นำออกยังถูกใช้โดยตารางส่ง: {{ dependencySchedules.join(', ') }} กรุณาพักหรือแก้ตารางส่งก่อน</Message>
     <div class="card">

@@ -39,10 +39,11 @@ button, input, textarea, select { font: inherit; }
 
 @media (max-width: 767px) {
   .page-header { flex-direction: column; }
-  .page-header .p-button { width: 100%; }
   .page-title { font-size: 1.4rem; }
   .responsive-dialog { width: calc(100vw - 2rem) !important; }
   .table-card { padding: 1.25rem; }
   .table-card > .p-datatable { margin-inline: -1.25rem; width: calc(100% + 2.5rem); }
   .table-card > .p-datatable + .table-footer { margin: 1rem -1.25rem -1.25rem; padding: 1rem 1.25rem; }
+  .entity-back-action .p-button-label { display: none; }
+  .entity-back-action.p-button { width: 44px; min-width: 44px; height: 44px; padding: 0; }
 }

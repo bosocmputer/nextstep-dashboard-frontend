@@ -44,7 +44,7 @@ const shortcuts = [
 </script>
 
 <template>
-  <div class="page-header"><div><h1 class="page-title">ภาพรวมระบบ</h1><p class="page-subtitle">ศูนย์ควบคุมรายงาน SML และการส่ง LINE</p></div><Tag :severity="ready === 'ready' ? 'success' : ready === 'checking' ? 'secondary' : 'danger'" :value="ready === 'ready' ? 'ระบบพร้อมใช้งาน' : ready === 'checking' ? 'กำลังตรวจสอบ' : 'ระบบไม่พร้อม'" /></div>
+  <AppPageHeader title="ภาพรวมระบบ" subtitle="ศูนย์ควบคุมรายงาน SML และการส่ง LINE"><template #actions><Tag :severity="ready === 'ready' ? 'success' : ready === 'checking' ? 'secondary' : 'danger'" :value="ready === 'ready' ? 'ระบบพร้อมใช้งาน' : ready === 'checking' ? 'กำลังตรวจสอบ' : 'ระบบไม่พร้อม'" /></template></AppPageHeader>
   <section class="card" aria-labelledby="line-quota-title">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div><h2 id="line-quota-title" class="text-lg font-semibold m-0">LINE OA กลาง</h2><p class="m-0 mt-1 text-sm text-muted-color">ยอดประมาณจาก LINE รวม Nexflow และ OA Manager · Nextstep accepted {{ (lineQuota?.locallyAccepted ?? 0).toLocaleString('th-TH') }} ข้อความ</p></div>

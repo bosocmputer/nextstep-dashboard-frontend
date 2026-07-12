@@ -75,7 +75,7 @@ onBeforeUnmount(() => {
         <div class="layout-sidebar-menu"><AppMenu :model="model" /></div>
         <div class="layout-sidebar-footer">
             <span v-if="accountLabel" class="safe-wrap"><i class="pi pi-user mr-2" />{{ accountLabel }}</span>
-            <Button label="ออกจากระบบ" icon="pi pi-sign-out" severity="secondary" text fluid @click="signOut" />
+            <Button label="ออกจากระบบ" icon="pi pi-sign-out" severity="secondary" text fluid class="touch-action" @click="signOut" />
         </div>
     </aside>
 </template>

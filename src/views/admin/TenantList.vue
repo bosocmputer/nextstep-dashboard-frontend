@@ -70,7 +70,7 @@ onMounted(() => load());
 </script>
 
 <template>
-  <div class="page-header"><div><h1 class="page-title">ร้านค้า</h1><p class="page-subtitle">สิทธิ์การใช้งานและความพร้อมของ SML</p></div></div>
+  <AppPageHeader title="ร้านค้า" subtitle="สิทธิ์การใช้งานและความพร้อมของ SML" />
   <div class="card table-card">
     <Toolbar class="mb-6 border-0 p-0">
       <template #start><Button label="เพิ่มร้านค้า" icon="pi pi-plus" @click="createOpen = true" /></template>

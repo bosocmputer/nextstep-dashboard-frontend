@@ -15,23 +15,40 @@ const route = useRoute(); const router = useRouter();
 const toast = useToast();
 const { state, loadViewer, setViewer, setTenants, selectTenant, ensureReports, clearViewer } = useViewerSession();
 const stage = ref<'loading' | 'ready' | 'error'>('loading'); const message = ref('');
+const switchingTenantId = ref('');
 const selectedTenant = computed(() => state.tenants.find((tenant) => tenant.id === state.selectedTenantId));
+const routeTenant = computed(() => typeof route.params.tenantId === 'string' ? state.tenants.find((tenant) => tenant.id === route.params.tenantId) : selectedTenant.value);
+const contextTenantId = computed(() => routeTenant.value?.id ?? state.selectedTenantId);
 const selectedTenantId = computed({
-  get: () => state.selectedTenantId,
+  get: () => switchingTenantId.value || state.selectedTenantId,
   set: (tenantId: string) => { void switchTenant(tenantId); }
 });
 const tenantOptions = computed(() => [...state.tenants]);
-const availableReports = computed(() => state.reportsByTenant[state.selectedTenantId]
-  ?? selectedTenant.value?.reportKeys.map((reportKey) => reportDefinitionByKey.get(reportKey)).filter((item) => item !== undefined)
+const availableReports = computed(() => state.reportsByTenant[contextTenantId.value]
+  ?? routeTenant.value?.reportKeys.map((reportKey) => reportDefinitionByKey.get(reportKey)).filter((item) => item !== undefined)
   ?? []);
+const mobileTitle = computed(() => {
+  if (switchingTenantId.value) return 'กำลังเปลี่ยนร้าน';
+  if (typeof route.params.tenantId === 'string' && !routeTenant.value) return 'กำลังเปลี่ยนร้าน';
+  return routeTenant.value?.name ?? 'Nextstep Dashboard';
+});
+const mobileSubtitle = computed(() => {
+  if (route.name === 'viewer-overview') return 'ภาพรวม';
+  if (route.name === 'viewer-report') {
+    const key = typeof route.params.reportKey === 'string' ? route.params.reportKey : '';
+    return availableReports.value.find((report) => report.reportKey === key)?.label ?? 'รายงาน';
+  }
+  return 'Dashboard';
+});
+const mobileHomeTo = computed(() => routeTenant.value ? `/app/tenant/${routeTenant.value.id}` : '/app');
 const menuModel = computed<NavigationItem[]>(() => [
   { label: 'ภาพรวมผู้บริหาร', items: [
-    { label: 'ภาพรวมร้าน', icon: 'pi pi-fw pi-home', to: state.selectedTenantId ? `/app/tenant/${state.selectedTenantId}` : '/app' }
+    { label: 'ภาพรวมร้าน', icon: 'pi pi-fw pi-home', to: contextTenantId.value ? `/app/tenant/${contextTenantId.value}` : '/app' }
   ] },
   { label: 'รายงาน', items: availableReports.value.map((report) => ({
     label: report.label,
     icon: reportIcon(report.reportKey),
-    to: `/app/tenant/${state.selectedTenantId}/report/${report.reportKey}`
+    to: `/app/tenant/${contextTenantId.value}/report/${report.reportKey}`
   })) }
 ]);
 
@@ -80,11 +97,13 @@ async function removeDeliveryReference() {
 
 async function switchTenant(tenantId: string) {
   if (!tenantId || tenantId === state.selectedTenantId && route.params.tenantId === tenantId) return;
+  switchingTenantId.value = tenantId;
   try {
     await ensureReports(tenantId);
     selectTenant(tenantId);
     await router.push(`/app/tenant/${tenantId}`);
   } catch (cause) { toast.add({ severity: 'error', summary: 'เปลี่ยนร้านไม่สำเร็จ', detail: errorMessage(cause), life: 4500 }); }
+  finally { if (switchingTenantId.value === tenantId) switchingTenantId.value = ''; }
 }
 
 async function logout() {
@@ -109,10 +128,14 @@ watch(() => route.params.tenantId, (tenantId) => {
     <div v-if="stage === 'loading'" class="w-full max-w-2xl card"><div class="flex flex-col items-center text-center gap-3 mb-5 py-2"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h1 class="text-xl font-semibold m-0">กำลังยืนยัน LINE</h1><p class="text-muted-color mt-1 mb-0">ตรวจสอบตัวตนและสิทธิ์ล่าสุด</p></div></div><Skeleton height="10rem" /></div>
     <section v-else class="w-full max-w-xl card text-center"><i class="pi pi-shield text-5xl text-red-500" /><h1 class="text-2xl font-bold mb-2">ไม่สามารถเปิด Dashboard</h1><p class="text-muted-color safe-wrap">{{ message }}</p><Button label="ลองใหม่" icon="pi pi-refresh" class="mt-4" @click="initialize" /></section>
   </div>
-  <AppShell v-else :menu-model="menuModel" :home-to="selectedTenant ? `/app/tenant/${selectedTenant.id}` : '/app'" :account-label="state.me?.displayName" @sign-out="logout">
+  <AppShell v-else :menu-model="menuModel" :home-to="selectedTenant ? `/app/tenant/${selectedTenant.id}` : '/app'" :mobile-title="mobileTitle" :mobile-subtitle="mobileSubtitle" :mobile-home-to="mobileHomeTo" :account-label="state.me?.displayName" confirm-dialogs @sign-out="logout">
     <template #topbar-context>
       <Select v-if="state.tenants.length > 1" v-model="selectedTenantId" :options="tenantOptions" option-label="name" option-value="id" aria-label="เลือกร้านค้า" class="viewer-tenant-select" />
-      <span v-else-if="selectedTenant" class="hidden sm:inline self-center text-sm font-medium"><i class="pi pi-building mr-2 text-primary" />{{ selectedTenant.name }}</span>
+      <span v-else-if="selectedTenant" class="self-center text-sm font-medium"><i class="pi pi-building mr-2 text-primary" />{{ selectedTenant.name }}</span>
+    </template>
+    <template #sidebar-context>
+      <div v-if="state.tenants.length > 1" class="grid gap-2"><label for="mobile-tenant" class="text-xs font-semibold">ร้านที่กำลังดู</label><Select input-id="mobile-tenant" v-model="selectedTenantId" :options="tenantOptions" option-label="name" option-value="id" aria-label="ร้านที่กำลังดู" fluid /></div>
+      <div v-else-if="selectedTenant" class="font-semibold safe-wrap"><i class="pi pi-building mr-2 text-primary" />{{ selectedTenant.name }}</div>
     </template>
     <RouterView />
   </AppShell>

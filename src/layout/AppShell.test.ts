@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useLayout } from '@/layout/composables/layout';
 import AppShell from './AppShell.vue';
 
@@ -14,6 +14,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   document.body.classList.remove('blocked-scroll');
   useLayout().layoutState.mobileMenuActive = false;
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
@@ -65,5 +66,33 @@ describe('AppShell mobile drawer lifecycle', () => {
     wrapper.unmount();
 
     expect(document.body.classList.contains('blocked-scroll')).toBe(false);
+  });
+
+  it('closes the mobile drawer and releases the scroll lock at the desktop breakpoint', async () => {
+    let breakpointListener: ((event: MediaQueryListEvent) => void) | undefined;
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => { breakpointListener = listener as (event: MediaQueryListEvent) => void; },
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }));
+    const wrapper = mount(AppShell, {
+      attachTo: document.body,
+      props: { menuModel: [], homeTo: '/app', mobileTitle: 'วาวา' },
+      global: { stubs: { AppSidebar: sidebarStub, AppFooter: true, RouterLink: true, Toast: true, ConfirmDialog: true } }
+    });
+
+    await wrapper.get('[aria-label="เปิดหรือปิดเมนู"]').trigger('click');
+    expect(document.body.classList.contains('blocked-scroll')).toBe(true);
+    breakpointListener?.({ matches: true } as MediaQueryListEvent);
+    await wrapper.vm.$nextTick();
+
+    expect(useLayout().layoutState.mobileMenuActive).toBe(false);
+    expect(document.body.classList.contains('blocked-scroll')).toBe(false);
+    wrapper.unmount();
   });
 });
