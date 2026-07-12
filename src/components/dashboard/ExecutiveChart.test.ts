@@ -119,6 +119,24 @@ describe('ExecutiveChart responsive presentation', () => {
     expect(optionUpdates).toHaveBeenCalledTimes(updatesBeforeResize);
   });
 
+  it('waits a render frame before mounting canvas again after a rapid mobile round trip', async () => {
+    const observer = installControlledResizeObserver(768);
+    const wrapper = mount(ExecutiveChart, { props: { visualization: ranking() }, global: { stubs: { Chart: chartStub } } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    observer.resize(390);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(wrapper.find('[data-testid="mobile-ranking"]').exists()).toBe(true);
+
+    observer.resize(768);
+    expect(wrapper.find('[data-testid="chart-canvas"]').exists()).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="chart-canvas"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="mobile-ranking"]').exists()).toBe(false);
+  });
+
   it('uses the category axis for tooltip hit testing on horizontal bars', async () => {
     installResizeObserver(768);
     const wrapper = mount(ExecutiveChart, { props: { visualization: ranking() }, global: { stubs: { Chart: chartStub } } });

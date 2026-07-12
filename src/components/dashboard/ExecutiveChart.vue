@@ -14,8 +14,10 @@ const chartOptions = ref();
 const isNarrow = ref(false);
 const sizeReady = ref(false);
 const reducedMotion = ref(false);
+const canvasReady = ref(false);
 let resizeObserver: ResizeObserver | undefined;
 let resizeFrame = 0;
+let canvasFrame = 0;
 let motionQuery: MediaQueryList | undefined;
 let disposed = false;
 
@@ -128,6 +130,14 @@ function updateMotionPreference(event?: MediaQueryListEvent) {
   reducedMotion.value = event?.matches ?? motionQuery?.matches ?? false;
 }
 
+function queueCanvasMount() {
+  if (canvasFrame) cancelAnimationFrame(canvasFrame);
+  canvasFrame = requestAnimationFrame(() => {
+    if (!disposed && !mobileSemanticMode.value) canvasReady.value = true;
+    canvasFrame = 0;
+  });
+}
+
 onMounted(() => {
   if (root.value) {
     applyWidth(root.value.getBoundingClientRect().width);
@@ -139,18 +149,31 @@ onMounted(() => {
   motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   updateMotionPreference();
   motionQuery.addEventListener('change', updateMotionPreference);
-  if (!mobileSemanticMode.value) setChartOptions();
+  if (!mobileSemanticMode.value) {
+    setChartOptions();
+    canvasReady.value = true;
+  }
 });
 onBeforeUnmount(() => {
   disposed = true;
   resizeObserver?.disconnect();
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
+  if (canvasFrame) cancelAnimationFrame(canvasFrame);
   motionQuery?.removeEventListener('change', updateMotionPreference);
+});
+watch(mobileSemanticMode, (semanticMode) => {
+  if (disposed) return;
+  if (semanticMode) {
+    canvasReady.value = false;
+    return;
+  }
+  setChartOptions();
+  queueCanvasMount();
 });
 watch([model, () => layoutConfig.primary, () => layoutConfig.surface, isDarkTheme, isNarrow, reducedMotion, horizontalCanvas], () => {
   // Do not update Chart.js props in the same render cycle that removes its
   // canvas. PrimeVue otherwise schedules an update after the canvas is gone.
-  if (!disposed && !mobileSemanticMode.value) setChartOptions();
+  if (!disposed && !mobileSemanticMode.value && canvasReady.value) setChartOptions();
 }, { deep: true });
 </script>
 
@@ -160,7 +183,8 @@ watch([model, () => layoutConfig.primary, () => layoutConfig.surface, isDarkThem
 
     <div v-if="!sizeReady" class="chart-pending" aria-hidden="true" />
     <MobileExecutiveChart v-else-if="canRender && mobileSemanticMode" :model="model" :compact="compact" />
-    <Chart v-else-if="canRender && chartData" :type="type" :data="chartData" :options="chartOptions" :style="{ height: chartHeight }" />
+    <Chart v-else-if="canRender && chartData && canvasReady" :type="type" :data="chartData" :options="chartOptions" :style="{ height: chartHeight }" />
+    <div v-else-if="canRender" class="chart-pending" :style="{ height: chartHeight }" aria-hidden="true" />
     <div v-else-if="model.status === 'ALL_ZERO'" class="chart-empty" role="status"><i class="pi pi-minus-circle" /><strong>ไม่มีความเคลื่อนไหวในช่วงนี้</strong><span>ค่าที่ได้รับเป็นศูนย์ทั้งหมด</span></div>
     <div v-else-if="model.status === 'INVALID_DATA'" class="chart-empty" role="alert"><i class="pi pi-exclamation-triangle" /><strong>ไม่สามารถสร้างกราฟจากข้อมูลชุดนี้</strong><span>{{ model.warnings[0] ?? 'รูปแบบข้อมูลกราฟไม่ถูกต้อง' }}</span></div>
     <div v-else class="chart-empty" role="status"><i class="pi pi-chart-bar" /><strong>ยังไม่มีข้อมูลสำหรับช่วงนี้</strong></div>
