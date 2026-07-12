@@ -39,6 +39,7 @@ declare module 'vue' {
     Password: typeof import('primevue/password')['default']
     ProgressBar: typeof import('primevue/progressbar')['default']
     ProgressSpinner: typeof import('primevue/progressspinner')['default']
+    ReportPeriodToolbar: typeof import('./src/components/dashboard/ReportPeriodToolbar.vue')['default']
     ReportPickerPanel: typeof import('./src/components/admin/ReportPickerPanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

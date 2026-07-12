@@ -94,6 +94,9 @@ export function errorMessage(error: unknown): string {
       REPORT_ROWS_EXPIRED: 'ข้อมูลรายละเอียดหมดอายุแล้ว กรุณาอัปเดตรายงานใหม่',
       REPORT_RUN_NOT_FOUND: 'ไม่พบรายงานนี้หรือรายงานหมดอายุแล้ว',
       REPORT_NOT_CANCELLABLE: 'รายงานทำงานเสร็จแล้ว จึงยกเลิกไม่ได้',
+      VIEWER_CONTEXT_CHANGED: 'สิทธิ์หรือร้านค้าที่กำลังดูเปลี่ยนแล้ว กรุณาตรวจสอบและลองใหม่',
+      DASHBOARD_REFRESH_NOT_READY: 'ภาพรวมยังประมวลผลไม่เสร็จ กรุณารอสักครู่',
+      IDEMPOTENCY_CONFLICT: 'คำขอเดิมถูกใช้กับช่วงข้อมูลอื่นแล้ว กรุณาลองใหม่',
       VALIDATION_ERROR: 'ข้อมูลที่กรอกไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
       VERSION_CONFLICT: 'ข้อมูลถูกแก้ไขจากที่อื่นแล้ว กรุณาโหลดหน้าใหม่ก่อนบันทึก'
     };

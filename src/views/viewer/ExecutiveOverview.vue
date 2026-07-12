@@ -4,19 +4,25 @@ import { useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
-import { ApiError, viewerApi, type DashboardRefresh, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
+import ReportPeriodToolbar from '@/components/dashboard/ReportPeriodToolbar.vue';
+import { ApiError, viewerApi, type DashboardRefresh, type DashboardRefreshInput, type DashboardRefreshResult, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { buildExecutiveKpis, comparisonPeriodText, executiveFeaturedVisualizationKeys, formatDashboardValue, formatPeriodRange, snapshotForReport } from '@/utils/dashboard';
 import { errorMessage, formatDateTime } from '@/utils/format';
+import { selectionFromReportPeriod, selectionLabel, type ReportPeriodSelection } from '@/utils/reportPeriod';
 
 const route = useRoute();
 const router = useRouter();
 const confirm = useConfirm();
 const toast = useToast();
-const { state, ensureReports, selectTenant } = useViewerSession();
+const { state, ensureReports, selectTenant, periodSelection, setPeriodSelection } = useViewerSession();
 const overview = ref<ExecutiveOverview>();
 const refresh = ref<DashboardRefresh>();
+const refreshFailures = ref<DashboardRefreshResult['failures']>([]);
+const selectedPeriod = ref<ReportPeriodSelection>({ periodPreset: 'MONTH_TO_DATE' });
+const displayedPeriodLabel = ref('ข้อมูลล่าสุดแต่ละรายงาน');
+const exactRefreshLoaded = ref(false);
 const loading = ref(true);
 const refreshing = ref(false);
 const refreshConfirmOpen = ref(false);
@@ -28,7 +34,7 @@ let pollDeadline = 0;
 let pollInFlight = false;
 let pageController: AbortController | undefined;
 let pollController: AbortController | undefined;
-let refreshActionKey = '';
+let refreshAction: { fingerprint: string; key: string } | undefined;
 
 const tenantId = computed(() => String(route.params.tenantId));
 const tenant = computed(() => state.tenants.find((item) => item.id === tenantId.value));
@@ -55,47 +61,83 @@ const featuredCharts = computed(() => {
   return selected.slice(0, 4);
 });
 const refreshPercent = computed(() => refresh.value?.total ? Math.round(((refresh.value.completed + refresh.value.failed) / refresh.value.total) * 100) : 0);
+const failedReportLabels = computed(() => refreshFailures.value.map((failure) => reports.value.find((report) => report.reportKey === failure.reportKey)?.label ?? failure.reportKey));
 
-async function loadOverview() {
+async function initializeOverview() {
   const context = ++generation;
   const selectedTenantId = tenantId.value;
   pageController?.abort('new-overview'); pageController = new AbortController(); stopPolling();
-  loading.value = true; error.value = '';
+  loading.value = true; refreshing.value = false; error.value = ''; refreshFailures.value = []; exactRefreshLoaded.value = false;
   try {
     selectTenant(selectedTenantId);
     await ensureReports(selectedTenantId, true, pageController.signal);
-    const result = await viewerApi.overview(selectedTenantId, pageController.signal);
-    if (context === generation && selectedTenantId === tenantId.value) overview.value = result;
-  } catch (cause) { if (!isCancelled(cause) && context === generation) error.value = errorMessage(cause); }
+    selectedPeriod.value = periodSelection(selectedTenantId);
+    const refreshId = validUUID(route.query.refreshId);
+    if (route.query.refreshId !== undefined && !refreshId) {
+      await removeRefreshReference();
+      error.value = 'ลิงก์ชุดข้อมูลไม่ถูกต้อง กำลังแสดงข้อมูลล่าสุดแทน';
+    }
+    if (refreshId) {
+      refresh.value = await viewerApi.dashboardRefresh(selectedTenantId, refreshId, pageController.signal);
+      if (!isCurrent(context, selectedTenantId)) return;
+      if (isTerminal(refresh.value.status)) await loadRefreshResult(context, selectedTenantId, refreshId, pageController.signal);
+      else { refreshing.value = true; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context); }
+    } else {
+      overview.value = await viewerApi.overview(selectedTenantId, pageController.signal);
+      displayedPeriodLabel.value = 'ข้อมูลล่าสุดแต่ละรายงาน';
+    }
+  } catch (cause) {
+    if (!isCancelled(cause) && context === generation) {
+      if (cause instanceof ApiError && cause.status === 404 && route.query.refreshId !== undefined) {
+        await removeRefreshReference();
+        try {
+          overview.value = await viewerApi.overview(selectedTenantId, pageController.signal);
+          displayedPeriodLabel.value = 'ข้อมูลล่าสุดแต่ละรายงาน';
+          error.value = 'ชุดข้อมูลเดิมไม่พร้อมใช้งานแล้ว กำลังแสดงข้อมูลล่าสุดแทน';
+        } catch (fallbackCause) { error.value = errorMessage(fallbackCause); }
+      } else error.value = errorMessage(cause);
+    }
+  }
   finally { if (context === generation) loading.value = false; }
 }
 
-async function startRefresh() {
+async function startRefresh(selection: ReportPeriodSelection) {
   if (refreshing.value) return;
   const context = generation;
   const selectedTenantId = tenantId.value;
-  stopPolling(); refreshing.value = true; error.value = ''; pollCount = 0; refreshActionKey ||= newIdempotencyKey('dashboard-refresh');
+  stopPolling(); refreshing.value = true; error.value = ''; pollCount = 0;
+  const input: DashboardRefreshInput = {
+    periodPreset: selection.periodPreset,
+    reportKeys: reports.value.map((report) => report.reportKey),
+    ...(selection.periodPreset === 'CUSTOM' ? { dateFrom: selection.dateFrom, dateTo: selection.dateTo } : {})
+  };
+  const fingerprint = JSON.stringify([selectedTenantId, input]);
+  if (!refreshAction || refreshAction.fingerprint !== fingerprint) refreshAction = { fingerprint, key: newIdempotencyKey('dashboard-refresh') };
   try {
-    const created = await viewerApi.createDashboardRefresh(selectedTenantId, refreshActionKey);
-    if (context !== generation || selectedTenantId !== tenantId.value) return;
-    refresh.value = created; refreshActionKey = ''; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
+    const created = await viewerApi.createDashboardRefresh(selectedTenantId, input, refreshAction.key);
+    if (!isCurrent(context, selectedTenantId)) return;
+    selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
+    refresh.value = created; refreshFailures.value = []; exactRefreshLoaded.value = false; refreshAction = undefined;
+    await router.replace({ path: route.path, query: { ...route.query, refreshId: created.id }, hash: route.hash });
+    pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
   } catch (cause) {
     if (!isCancelled(cause) && context === generation) { refreshing.value = false; error.value = errorMessage(cause); }
-    if (!(cause instanceof ApiError) || !cause.retryable) refreshActionKey = '';
+    if (!(cause instanceof ApiError) || !cause.retryable) refreshAction = undefined;
   }
 }
 
-function requestRefresh() {
+function requestRefresh(selection: ReportPeriodSelection) {
   if (loading.value || refreshing.value || refreshConfirmOpen.value || !reports.value.length) return;
   const expectedTenantId = tenantId.value;
   const expectedGeneration = generation;
   const expectedReportCount = reports.value.length;
   const expectedReportKeys = reports.value.map((report) => report.reportKey).sort().join('\u0000');
   const expectedTenantName = tenant.value?.name ?? 'ร้านนี้';
+  const expectedSelection = JSON.stringify(selection);
   refreshConfirmOpen.value = true;
   confirm.require({
     header: `อัปเดตข้อมูล ${expectedTenantName}`,
-    message: `ระบบจะดึง SQL ใหม่ ${expectedReportCount.toLocaleString('th-TH')} รายงาน และอาจใช้เวลาหลายนาที ต้องการดำเนินการต่อหรือไม่`,
+    message: `ช่วงที่จะดึง: ${selectionLabel(selection, 'SMART_OVERVIEW')} · ระบบจะดึง SQL ใหม่ ${expectedReportCount.toLocaleString('th-TH')} รายงาน และอาจใช้เวลาหลายนาที`,
     icon: 'pi pi-database',
     blockScroll: true,
     defaultFocus: 'reject',
@@ -105,11 +147,11 @@ function requestRefresh() {
     accept: () => {
       refreshConfirmOpen.value = false;
       const currentReportKeys = reports.value.map((report) => report.reportKey).sort().join('\u0000');
-      if (expectedGeneration !== generation || expectedTenantId !== tenantId.value || expectedReportCount !== reports.value.length || expectedReportKeys !== currentReportKeys) {
+      if (expectedGeneration !== generation || expectedTenantId !== tenantId.value || expectedReportCount !== reports.value.length || expectedReportKeys !== currentReportKeys || expectedSelection !== JSON.stringify(selection)) {
         toast.add({ severity: 'warn', summary: 'บริบทของร้านเปลี่ยนแล้ว', detail: 'กรุณาตรวจสอบร้านและกดอัปเดตอีกครั้ง', life: 4000 });
         return;
       }
-      void startRefresh();
+      void startRefresh(selection);
     },
     reject: () => { refreshConfirmOpen.value = false; },
     onHide: () => { refreshConfirmOpen.value = false; }
@@ -131,15 +173,44 @@ async function pollRefresh(context: number) {
     const latest = await viewerApi.dashboardRefresh(selectedTenantId, refreshId, pollController.signal);
     if (context !== generation || selectedTenantId !== tenantId.value || refresh.value?.id !== refreshId) return;
     refresh.value = latest; pollCount++;
-    if (['SUCCEEDED', 'PARTIAL', 'FAILED'].includes(refresh.value.status)) {
-      refreshing.value = false; await loadOverview(); return;
+    if (isTerminal(refresh.value.status)) {
+      refreshing.value = false; await loadRefreshResult(context, selectedTenantId, refreshId, pollController.signal); return;
     }
     schedulePoll(context);
   } catch (cause) { if (!isCancelled(cause) && context === generation) { refreshing.value = false; error.value = errorMessage(cause); } }
   finally { pollInFlight = false; pollController = undefined; }
 }
 
-function openReport(reportKey: ReportKey) { void router.push(`/app/tenant/${tenantId.value}/report/${reportKey}`); }
+async function loadRefreshResult(context: number, selectedTenantId: string, refreshId: string, signal?: AbortSignal) {
+  const result = await viewerApi.dashboardRefreshResult(selectedTenantId, refreshId, signal);
+  if (!isCurrent(context, selectedTenantId) || refresh.value?.id !== refreshId) return;
+  refreshFailures.value = result.failures;
+  if (result.items.length) {
+    overview.value = { tenantId: selectedTenantId, timezone: 'Asia/Bangkok', items: result.items };
+    exactRefreshLoaded.value = true;
+    const inferred = inferSelection(result);
+    if (inferred) { selectedPeriod.value = inferred; setPeriodSelection(selectedTenantId, inferred); }
+    const onlyCurrent = result.items.length > 0 && result.items.every((snapshot) => reports.value.find((report) => report.reportKey === snapshot.dashboard.reportKey)?.periodMode === 'CURRENT_ONLY');
+    displayedPeriodLabel.value = onlyCurrent ? 'สถานะปัจจุบัน' : selectionLabel(inferred ?? selectedPeriod.value, 'SMART_OVERVIEW');
+  }
+  if (result.status === 'FAILED') error.value = overview.value ? 'อัปเดตไม่สำเร็จ กำลังแสดงข้อมูลก่อนหน้า' : 'อัปเดตข้อมูลไม่สำเร็จ กรุณาลองใหม่';
+}
+
+function inferSelection(result: DashboardRefreshResult): ReportPeriodSelection | undefined {
+  for (const preferredMode of ['DATE_RANGE', 'AS_OF_DATE'] as const) {
+    const item = result.items.find((snapshot) => reports.value.find((report) => report.reportKey === snapshot.dashboard.reportKey)?.periodMode === preferredMode);
+    if (item) return selectionFromReportPeriod(preferredMode, item.dashboard.period);
+  }
+}
+
+function openReport(reportKey: ReportKey) {
+  const snapshot = exactRefreshLoaded.value ? snapshotForReport(snapshots.value, reportKey) : undefined;
+  void router.push({ path: `/app/tenant/${tenantId.value}/report/${reportKey}`, query: snapshot ? { runId: snapshot.runId } : undefined });
+}
+function isTerminal(status: DashboardRefresh['status']) { return status === 'SUCCEEDED' || status === 'PARTIAL' || status === 'FAILED'; }
+function isCurrent(context: number, selectedTenantId: string) { return context === generation && selectedTenantId === tenantId.value; }
+function validUUID(value: unknown): string | undefined { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : undefined; }
+async function removeRefreshReference() { const query = { ...route.query }; delete query.refreshId; await router.replace({ path: route.path, query, hash: route.hash }); }
 function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; pollController?.abort('poll-stopped'); pollController = undefined; }
 function isCancelled(cause: unknown) { return cause instanceof ApiError && cause.code === 'CANCELLED'; }
 function handleVisibilityChange() {
@@ -149,17 +220,20 @@ function handleVisibilityChange() {
   }
 }
 
-onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void loadOverview(); });
+onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void initializeOverview(); });
 onBeforeUnmount(() => { generation++; refreshConfirmOpen.value = false; confirm.close(); document.removeEventListener('visibilitychange', handleVisibilityChange); pageController?.abort('unmounted'); stopPolling(); });
-watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; void loadOverview(); });
+watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; void initializeOverview(); });
 </script>
 
 <template>
-  <AppPageHeader :title="`ภาพรวม ${tenant?.name ?? ''}`" subtitle="ตัวเลขสำคัญ 4 ด้าน · เวลาไทย"><template #actions><div class="overview-header-actions"><span v-if="newestGeneratedAt" class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />อัปเดต {{ formatDateTime(newestGeneratedAt) }}</span><Button class="overview-refresh-desktop" label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @click="requestRefresh" /><Button class="overview-refresh-mobile touch-action" data-testid="overview-refresh-button" label="อัปเดต" aria-label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @click="requestRefresh" /></div></template></AppPageHeader>
+  <AppPageHeader :title="`ภาพรวม ${tenant?.name ?? ''}`" subtitle="ตัวเลขสำคัญ 4 ด้าน · เวลาไทย"><template #actions><span v-if="newestGeneratedAt" class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />อัปเดต {{ formatDateTime(newestGeneratedAt) }}</span></template></AppPageHeader>
 
-  <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="loadOverview" /></Message>
-  <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refresh?.completed ?? 0 }} จาก {{ refresh?.total ?? reports.length }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ระบบรันทีละรายงานเพื่อลดภาระฐานข้อมูลของร้าน คุณออกจากหน้านี้ได้โดยไม่ยกเลิกงาน</p></div>
-  <Message v-if="!loading && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มีข้อมูลล่าสุด {{ missingReportCount }} รายงาน — กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึงจาก SQL ของร้าน</Message>
+  <ReportPeriodToolbar mode="SMART_OVERVIEW" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" action-label="อัปเดตภาพรวม" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @apply="requestRefresh" />
+
+  <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="initializeOverview" /></Message>
+  <Message v-if="refreshFailures.length" severity="warn" :closable="false" class="mb-4">อัปเดตไม่สำเร็จ {{ refreshFailures.length }} รายงาน: {{ failedReportLabels.join(', ') }} — ช่องดังกล่าวจะไม่ใช้ตัวเลขเดิมมาปะปน</Message>
+  <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refresh?.completed ?? 0 }} จาก {{ refresh?.total ?? reports.length }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ข้อมูลด้านล่างยังเป็นชุดเดิมจนกว่าการอัปเดตจะเสร็จ ระบบรันทีละรายงานเพื่อลดภาระฐานข้อมูลของร้าน</p></div>
+  <Message v-if="!loading && !exactRefreshLoaded && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มีข้อมูลล่าสุด {{ missingReportCount }} รายงาน — เลือกช่วงข้อมูลแล้วกด “อัปเดตภาพรวม” เพื่อดึงจาก SQL ของร้าน</Message>
 
   <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5"><Skeleton v-for="index in 4" :key="index" height="9rem" /></div>
   <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
@@ -169,12 +243,11 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
     <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
   </div>
-  <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึง SQL ล่าสุดและสร้างกราฟตามสิทธิ์ของคุณ</p><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :disabled="refreshConfirmOpen || !reports.length" @click="requestRefresh" /></div>
+  <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>เลือกช่วงข้อมูลด้านบน แล้วกด “อัปเดตภาพรวม” เพื่อดึง SQL ตามสิทธิ์ของคุณ</p></div>
 </template>
 
 <style scoped>
 .overview-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .75rem; }
-.overview-refresh-mobile { display: none; }
 .executive-panel { border-radius: var(--content-border-radius); }
 .dashboard-card { margin-bottom: 0; }
 .executive-kpi { position: relative; display: flex; align-items: flex-start; gap: 1rem; min-height: 8.5rem; margin-bottom: 0; color: inherit; border: 0; text-align: left; cursor: pointer; transition: transform .2s; }
@@ -199,8 +272,6 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 @media (max-width: 767px) {
   .overview-header-actions { width: 100%; justify-content: space-between; gap: .5rem; }
   .overview-header-actions > span { font-size: .75rem; }
-  .overview-refresh-desktop { display: none; }
-  .overview-refresh-mobile { display: inline-flex; }
   .executive-kpi { min-height: 7rem; padding: 1.25rem; }
   .executive-panel.dashboard-card { padding: 1.25rem; }
 }

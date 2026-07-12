@@ -548,6 +548,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/viewer/tenants/{tenantId}/executive-overview/refreshes/{refreshId}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getViewerDashboardRefreshResult"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/viewer/tenants/{tenantId}/reports/{reportKey}/runs": {
         parameters: {
             query?: never;
@@ -800,6 +816,8 @@ export interface components {
             label: string;
             category: string;
             isSensitive: boolean;
+            /** @enum {string} */
+            periodMode?: "DATE_RANGE" | "AS_OF_DATE" | "CURRENT_ONLY";
         };
         AdminReportDefinition: {
             reportKey: components["schemas"]["ReportKey"];
@@ -1090,6 +1108,30 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             finishedAt?: string | null;
+        };
+        DashboardRefreshInput: {
+            /** @enum {string} */
+            periodPreset: "YESTERDAY" | "TODAY_TO_NOW" | "MONTH_TO_DATE" | "CUSTOM";
+            /** Format: date */
+            dateFrom?: string;
+            /** Format: date */
+            dateTo?: string;
+            reportKeys: components["schemas"]["ReportKey"][];
+        };
+        DashboardRefreshFailure: {
+            reportKey: components["schemas"]["ReportKey"];
+            status: components["schemas"]["ReportRunStatus"];
+            safeErrorCode?: string;
+        };
+        DashboardRefreshResult: {
+            /** Format: uuid */
+            refreshId: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** @enum {string} */
+            status: "PARTIAL" | "SUCCEEDED" | "FAILED";
+            items: components["schemas"]["DashboardSnapshot"][];
+            failures: components["schemas"]["DashboardRefreshFailure"][];
         };
         LineSessionInput: {
             idToken: string;
@@ -2305,7 +2347,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DashboardRefreshInput"];
+            };
+        };
         responses: {
             /** @description A bounded refresh of all authorized reports was queued. */
             202: {
@@ -2345,6 +2391,32 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getViewerDashboardRefreshResult: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                refreshId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact dashboards and failures produced by a terminal dashboard refresh. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardRefreshResult"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     createViewerReportRun: {

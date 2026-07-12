@@ -432,6 +432,7 @@ test('mobile viewer switches tenants from the sidebar without showing stale topb
 
 test('viewer refreshes SQL only after confirming the current tenant context', async ({ page }) => {
   let refreshRequests = 0;
+  const refreshId = '44444444-4444-4444-8444-444444444444';
   const reports = [
     { reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false },
     { reportKey: 'stock_balance', version: '1.0.0', label: 'รายงานสต็อกคงเหลือ', category: 'INVENTORY', isSensitive: false }
@@ -443,11 +444,13 @@ test('viewer refreshes SQL only after confirming the current tenant context', as
   await mockEmptyExecutiveOverview(page);
   await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/refreshes`, (route) => {
     refreshRequests++;
-    return route.fulfill(json({ id: 'refresh-1', status: 'QUEUED', total: 2, completed: 0, failed: 0 }, 201));
+    expect(route.request().postDataJSON()).toEqual({ periodPreset: 'MONTH_TO_DATE', reportKeys: ['sales_goods_services', 'stock_balance'] });
+    return route.fulfill(json({ id: refreshId, tenantId, status: 'QUEUED', total: 2, completed: 0, failed: 0, runs: [], createdAt: '2026-07-12T00:00:00Z' }, 202));
   });
 
   await page.goto(`/app/tenant/${tenantId}`);
-  await page.getByTestId('overview-refresh-button').click();
+  await page.getByRole('button', { name: 'เปลี่ยนช่วง' }).click();
+  await page.getByRole('button', { name: 'อัปเดตภาพรวม' }).click();
 
   await expect(page.getByRole('alertdialog')).toContainText('วาวา');
   await expect(page.getByRole('alertdialog')).toContainText('2 รายงาน');
@@ -455,15 +458,54 @@ test('viewer refreshes SQL only after confirming the current tenant context', as
   await page.getByRole('button', { name: 'ยกเลิก' }).click();
   expect(refreshRequests).toBe(0);
 
-  await page.getByTestId('overview-refresh-button').click();
+  await page.getByRole('button', { name: 'เปลี่ยนช่วง' }).click();
+  await page.getByRole('button', { name: 'อัปเดตภาพรวม' }).click();
   await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services`);
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
   expect(refreshRequests).toBe(0);
 
   await page.goto(`/app/tenant/${tenantId}`);
-  await page.getByTestId('overview-refresh-button').click();
+  await page.getByRole('button', { name: 'เปลี่ยนช่วง' }).click();
+  await page.getByRole('button', { name: 'อัปเดตภาพรวม' }).click();
   await page.getByRole('button', { name: 'ดึง SQL ใหม่' }).click();
   await expect.poll(() => refreshRequests).toBe(1);
+});
+
+test('exact overview refresh keeps partial results isolated and opens its run without another SQL request', async ({ page }) => {
+  const refreshId = '44444444-4444-4444-8444-444444444444';
+  const runId = '55555555-5555-4555-8555-555555555555';
+  let createRunRequests = 0;
+  const reports = [
+    { reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false, periodMode: 'DATE_RANGE' },
+    { reportKey: 'stock_balance', version: '1.0.0', label: 'รายงานสต็อกคงเหลือ', category: 'INVENTORY', isSensitive: true, periodMode: 'AS_OF_DATE' }
+  ];
+  await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({ recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-12T00:00:00Z' })));
+  await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'วาวา', timezone: 'Asia/Bangkok', reportKeys: reports.map((report) => report.reportKey) }], page: { hasMore: false } })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports, page: { hasMore: false } })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/refreshes/${refreshId}`, (route) => route.fulfill(json({
+    id: refreshId, tenantId, status: 'PARTIAL', total: 2, completed: 1, failed: 1,
+    runs: [{ reportKey: 'sales_goods_services', runId, status: 'SUCCEEDED' }, { reportKey: 'stock_balance', runId: '66666666-6666-4666-8666-666666666666', status: 'FAILED' }],
+    createdAt: '2026-07-12T00:00:00Z', finishedAt: '2026-07-12T00:01:00Z'
+  })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/refreshes/${refreshId}/result`, (route) => route.fulfill(json({
+    refreshId, tenantId, status: 'PARTIAL',
+    items: [{ runId, dashboard: salesDashboard() }],
+    failures: [{ reportKey: 'stock_balance', status: 'FAILED', safeErrorCode: 'SML_TIMEOUT' }]
+  })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports/sales_goods_services/runs**`, (route) => {
+    if (route.request().method() === 'POST') { createRunRequests++; return route.fulfill(json({}, 500)); }
+    if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(salesDashboard()));
+    return route.fulfill(json({ id: runId, tenantId, reportKey: 'sales_goods_services', status: 'SUCCEEDED', periodPreset: 'YESTERDAY', dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 1, isTruncated: false, queuedAt: '2026-07-10T00:00:00Z', finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z' }));
+  });
+
+  await page.goto(`/app/tenant/${tenantId}?refreshId=${refreshId}`);
+
+  await expect(page.getByText('อัปเดตไม่สำเร็จ 1 รายงาน')).toContainText('รายงานสต็อกคงเหลือ');
+  await expect(page.locator('.executive-kpi').filter({ hasText: 'มูลค่าสต็อก' })).toContainText('ยังไม่มีข้อมูล');
+  await page.locator('.executive-kpi').filter({ hasText: 'ยอดขาย' }).click();
+  await expect(page).toHaveURL(new RegExp(`runId=${runId}`));
+  await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
+  expect(createRunRequests).toBe(0);
 });
 
 test('LINE mobile overview renders readable responsive charts with full table data', async ({ page }) => {
@@ -759,10 +801,11 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
   await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({ recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-11T00:00:00Z' })));
   await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', reportKeys: reports.map(([key]) => key) }], page: { hasMore: false } })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports.map(([reportKey, label]) => ({ reportKey, label, version: '1.0.0', category: 'REPORT', isSensitive: false })), page: { hasMore: false } })));
+  const runIds = new Map(reports.map(([key], index) => [key, `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`]));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports/*/runs**`, (route) => {
     const reportKey = route.request().url().split('/reports/')[1]!.split('/')[0]!;
     if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(dashboardForReport(reportKey)));
-    return route.fulfill(json({ id: `${reportKey}-run`, tenantId, reportKey, status: 'SUCCEEDED', periodPreset: reportKey.startsWith('stock_') ? 'AS_OF_RUN' : 'YESTERDAY', dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 0, isTruncated: false, queuedAt: '2026-07-10T00:00:00Z', finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z' }, route.request().method() === 'POST' ? 201 : 200));
+    return route.fulfill(json({ id: runIds.get(reportKey), tenantId, reportKey, status: 'SUCCEEDED', periodPreset: reportKey.startsWith('stock_') ? 'AS_OF_RUN' : 'YESTERDAY', dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 0, isTruncated: false, queuedAt: '2026-07-10T00:00:00Z', finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z' }, route.request().method() === 'POST' ? 202 : 200));
   });
 
   for (const width of [390, 1440]) {
@@ -773,7 +816,8 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
       await expect(page.getByRole('heading', { name: label })).toBeVisible();
       await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
       await expect(page.getByText('เทียบกับ 8 ก.ค. 2569')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'เปลี่ยนช่วงข้อมูล' })).toBeVisible();
+      if (width === 390) await expect(page.getByRole('button', { name: reportKey === 'stock_reorder' ? 'รีเฟรช' : 'เปลี่ยนช่วง' })).toBeVisible();
+      else await expect(page.getByRole('button', { name: /ดึงข้อมูลช่วงนี้|ดูสถานะปัจจุบัน/ })).toBeVisible();
       await expect(page.getByLabel('ตัวกรองรายงาน')).toHaveCount(0);
       const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
       expect(hasHorizontalOverflow).toBe(false);

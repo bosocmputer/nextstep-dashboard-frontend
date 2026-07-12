@@ -1,25 +1,28 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
+import ReportPeriodToolbar from '@/components/dashboard/ReportPeriodToolbar.vue';
 import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, type ReportDashboard, type ReportKey, type ReportRun } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { comparisonPeriodText, formatDashboardValue, formatPeriodRange, periodLabel } from '@/utils/dashboard';
-import { errorMessage, formatDateOnly, formatDateTime, formatMetric } from '@/utils/format';
+import { errorMessage, formatDateTime, formatMetric } from '@/utils/format';
+import { periodModeForReport, selectionForMode, selectionFromReportPeriod, selectionToRunInput, type ReportPeriodSelection } from '@/utils/reportPeriod';
 import { presentationFor, visibleReportColumns, type ReportColumnDefinition } from '@/utils/reportPresentation';
-import { cleanViewerQuery, snapshotReplayInput, validSnapshotRunId } from '@/utils/viewerSnapshot';
+import { cleanViewerQuery, validSnapshotRunId, validViewerRunId } from '@/utils/viewerSnapshot';
 
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
-const { state, selectTenant, ensureReports } = useViewerSession();
+const { state, selectTenant, ensureReports, periodSelection, setPeriodSelection } = useViewerSession();
 const tenantId = computed(() => String(route.params.tenantId));
 const reportKey = computed(() => String(route.params.reportKey) as ReportKey);
-const definition = computed(() => reportDefinitionByKey.get(reportKey.value));
+const definition = computed(() => state.reportsByTenant[tenantId.value]?.find((item) => item.reportKey === reportKey.value) ?? reportDefinitionByKey.get(reportKey.value));
+const periodMode = computed(() => definition.value?.periodMode ?? periodModeForReport(reportKey.value));
 const tenant = computed(() => state.tenants.find((item) => item.id === tenantId.value));
-const input = reactive<{ periodPreset: CreateReportRunInput['periodPreset']; dateFrom: Date | null; dateTo: Date | null }>({ periodPreset: 'YESTERDAY', dateFrom: null, dateTo: null });
+const selectedPeriod = ref<ReportPeriodSelection>({ periodPreset: 'MONTH_TO_DATE' });
 const run = ref<ReportRun>();
 const dashboard = ref<ReportDashboard>();
 const rows = ref<Record<string, unknown>[]>([]);
@@ -36,8 +39,8 @@ const snapshotMissing = ref(false);
 const loading = ref(false);
 const loadingRows = ref(false);
 const error = ref('');
-const showFilters = ref(false);
 let pollTimer: number | undefined;
+let autoRunTimer: number | undefined;
 let pollCount = 0;
 let generation = 0;
 let pollDeadline = 0;
@@ -45,98 +48,81 @@ let pollInFlight = false;
 let initializeController: AbortController | undefined;
 let pollController: AbortController | undefined;
 let rowsController: AbortController | undefined;
-let runActionKey = '';
+let runAction: { fingerprint: string; key: string } | undefined;
 
 const active = computed(() => !!run.value && ['QUEUED', 'CLAIMED', 'RUNNING'].includes(run.value.status));
 const snapshotRunId = computed(() => validSnapshotRunId(route.query.snapshotRunId));
+const viewerRunId = computed(() => validViewerRunId(route.query.runId));
 const statusLabel = computed(() => {
   if (snapshotMode.value && dashboard.value) return 'Snapshot พร้อมใช้งาน';
   const labels: Record<string, string> = { QUEUED: 'รอคิว', CLAIMED: 'กำลังเตรียม', RUNNING: 'กำลังดึงข้อมูล', SUCCEEDED: 'พร้อมใช้งาน', FAILED: 'ไม่สำเร็จ', CANCELLED: 'ยกเลิกแล้ว', EXPIRED: 'หมดอายุ' };
   return run.value ? labels[run.value.status] ?? run.value.status : '';
 });
 const statusSeverity = computed(() => snapshotMode.value && dashboard.value ? 'success' : run.value?.status === 'SUCCEEDED' ? 'success' : run.value?.status === 'FAILED' ? 'danger' : active.value ? 'info' : 'secondary');
-const snapshotRowsUnavailable = computed(() => snapshotMode.value && (rowsUnavailable.value || run.value?.status === 'EXPIRED'));
+const detailRowsUnavailable = computed(() => rowsUnavailable.value || run.value?.status === 'EXPIRED');
+const displayedPeriodLabel = computed(() => dashboard.value ? `${periodLabel(dashboard.value.period.preset)} · ${formatPeriodRange(dashboard.value.period)}` : run.value?.dateFrom && run.value.dateTo ? formatPeriodRange({ preset: run.value.periodPreset as ReportDashboard['period']['preset'], dateFrom: run.value.dateFrom, dateTo: run.value.dateTo }) : 'ยังไม่มีข้อมูล');
 const columnOptions = computed(() => presentationFor(reportKey.value, columns.value));
 const displayedColumns = computed(() => visibleReportColumns(reportKey.value, columns.value, selectedColumnKeys.value));
 const mobileSummaryColumns = computed(() => displayedColumns.value.filter((column) => column.mobilePriority >= 4).slice(0, 6));
-const periodOptions = [
-  { label: 'เมื่อวาน', value: 'YESTERDAY' },
-  { label: 'วันนี้ถึงปัจจุบัน', value: 'TODAY_TO_NOW' },
-  { label: 'เดือนนี้ถึงปัจจุบัน', value: 'MONTH_TO_DATE' },
-  { label: 'ณ เวลาที่อัปเดต', value: 'AS_OF_RUN' },
-  { label: 'กำหนดช่วงวันที่', value: 'CUSTOM' }
-];
-
-function setDefaultPeriod() {
-  input.periodPreset = ['stock_balance', 'stock_reorder', 'ar_customer_movement'].includes(reportKey.value) ? 'AS_OF_RUN' : 'YESTERDAY';
-}
-
-async function startRun() {
+async function startRun(selection: ReportPeriodSelection) {
   if (loading.value) return;
   if (!definition.value) { error.value = 'ไม่พบรายงานหรือคุณไม่มีสิทธิ์เปิดรายงานนี้'; return; }
-  if (input.periodPreset === 'CUSTOM' && (!input.dateFrom || !input.dateTo)) { error.value = 'กรุณาเลือกวันที่เริ่มต้นและสิ้นสุด'; return; }
-  if (input.periodPreset === 'CUSTOM' && formatDateOnly(input.dateTo!) < formatDateOnly(input.dateFrom!)) { error.value = 'วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่มต้น'; return; }
-  if (snapshotMode.value || route.query.snapshotRunId !== undefined) await leaveSnapshotMode();
-  showFilters.value = false;
+  let payload: CreateReportRunInput;
+  try { payload = selectionToRunInput(periodMode.value, selection); }
+  catch (cause) { error.value = errorMessage(cause); return; }
   const context = ++generation;
   const selectedTenantId = tenantId.value;
   const selectedReportKey = reportKey.value;
   stopPolling(); rowsController?.abort('new-run'); rowsController = undefined;
-  loading.value = true; error.value = ''; dashboard.value = undefined; run.value = undefined; activeTab.value = 'overview';
-  rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set(); nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; rowsUnavailable.value = false; pollCount = 0;
-  const payload: CreateReportRunInput = { periodPreset: input.periodPreset };
-  if (input.periodPreset === 'CUSTOM') { payload.dateFrom = formatDateOnly(input.dateFrom!); payload.dateTo = formatDateOnly(input.dateTo!); }
-  runActionKey ||= newIdempotencyKey('viewer-run');
+  loading.value = true; error.value = ''; activeTab.value = 'overview'; pollCount = 0;
+  const fingerprint = JSON.stringify([selectedTenantId, selectedReportKey, payload]);
+  if (!runAction || runAction.fingerprint !== fingerprint) runAction = { fingerprint, key: newIdempotencyKey('viewer-run') };
   try {
-    const created = await viewerApi.createRun(selectedTenantId, selectedReportKey, payload, runActionKey);
+    const created = await viewerApi.createRun(selectedTenantId, selectedReportKey, payload, runAction.key);
     if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
-    run.value = created; runActionKey = ''; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
+    selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
+    snapshotMode.value = false; snapshotMissing.value = false; dashboard.value = undefined; run.value = created; resetRows(); runAction = undefined;
+    const query = cleanViewerQuery(route.query); delete query.snapshotRunId; query.runId = created.id;
+    await router.replace({ path: route.path, query, hash: route.hash });
+    if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
+    pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
   } catch (cause) {
     if (!isCurrent(context, selectedTenantId, selectedReportKey) || isCancelled(cause)) return;
-    if (!(cause instanceof ApiError) || !cause.retryable) runActionKey = '';
+    if (!(cause instanceof ApiError) || !cause.retryable) runAction = undefined;
     error.value = errorMessage(cause); loading.value = false;
   }
 }
 
-async function leaveSnapshotMode() {
-  snapshotMode.value = false; snapshotMissing.value = false;
-  if (route.query.snapshotRunId !== undefined) {
-    const query = cleanViewerQuery(route.query);
-    delete query.snapshotRunId;
-    await router.replace({ path: route.path, query, hash: route.hash });
-  }
-}
-
 function applyRunPeriod(item: ReportRun) {
-  input.periodPreset = item.periodPreset as CreateReportRunInput['periodPreset'];
-  input.dateFrom = item.dateFrom ? new Date(`${item.dateFrom}T00:00:00`) : null;
-  input.dateTo = item.dateTo ? new Date(`${item.dateTo}T00:00:00`) : null;
+  if (!item.dateFrom || !item.dateTo) return;
+  selectedPeriod.value = selectionFromReportPeriod(periodMode.value, { preset: item.periodPreset, dateFrom: item.dateFrom, dateTo: item.dateTo });
 }
 
-async function loadSnapshot(context: number, selectedTenantId: string, selectedReportKey: ReportKey, selectedRunId: string) {
-  snapshotMode.value = true; snapshotMissing.value = false; loading.value = true;
+async function loadExistingRun(context: number, selectedTenantId: string, selectedReportKey: ReportKey, selectedRunId: string, fromLine: boolean) {
+  snapshotMode.value = fromLine; snapshotMissing.value = false; loading.value = true;
+  pollCount = 0;
   dashboard.value = undefined; run.value = undefined; activeTab.value = 'overview'; error.value = '';
-  rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set(); nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; rowsUnavailable.value = false;
-  const [runResult, dashboardResult] = await Promise.allSettled([
-    viewerApi.run(selectedTenantId, selectedReportKey, selectedRunId, initializeController?.signal),
-    viewerApi.dashboard(selectedTenantId, selectedReportKey, selectedRunId, initializeController?.signal)
-  ]);
+  resetRows();
+  const runResult = await viewerApi.run(selectedTenantId, selectedReportKey, selectedRunId, initializeController?.signal);
   if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
-  if (runResult.status === 'rejected') throw runResult.reason;
-  run.value = runResult.value; applyRunPeriod(runResult.value);
-  if (dashboardResult.status === 'fulfilled') dashboard.value = dashboardResult.value;
-  else if (dashboardResult.reason instanceof ApiError && dashboardResult.reason.status === 404) snapshotMissing.value = true;
-  else throw dashboardResult.reason;
-  loading.value = false;
+  run.value = runResult; applyRunPeriod(runResult);
+  if (['QUEUED', 'CLAIMED', 'RUNNING'].includes(runResult.status)) {
+    pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context); return;
+  }
+  if (runResult.status === 'SUCCEEDED' || runResult.status === 'EXPIRED') {
+    try { dashboard.value = await viewerApi.dashboard(selectedTenantId, selectedReportKey, selectedRunId, initializeController?.signal); }
+    catch (cause) {
+      if (fromLine && cause instanceof ApiError && cause.status === 404) snapshotMissing.value = true;
+      else throw cause;
+    }
+    loading.value = false; return;
+  }
+  loading.value = false; error.value = runResult.safeErrorMessage || 'สร้างรายงานไม่สำเร็จ กรุณาลองใหม่';
 }
 
 async function replaySnapshot() {
   if (!run.value) return;
-  const payload = snapshotReplayInput(reportKey.value, run.value);
-  input.periodPreset = payload.periodPreset;
-  input.dateFrom = payload.dateFrom ? new Date(`${payload.dateFrom}T00:00:00`) : null;
-  input.dateTo = payload.dateTo ? new Date(`${payload.dateTo}T00:00:00`) : null;
-  await startRun();
+  await startRun(selectedPeriod.value);
 }
 
 function schedulePoll(context: number) {
@@ -192,7 +178,12 @@ async function loadRows(reset = false) {
     columns.value = [...new Set([...columns.value, ...page.columns])];
     if (reset) selectedColumnKeys.value = visibleReportColumns(selectedReportKey, columns.value).map((column) => column.key);
     nextCursor.value = page.page.nextCursor ?? undefined; hasMore.value = page.page.hasMore; rowsLoaded.value = true;
-  } catch (cause) { if (!isCancelled(cause) && context === generation) error.value = errorMessage(cause); }
+  } catch (cause) {
+    if (!isCancelled(cause) && context === generation) {
+      if (cause instanceof ApiError && cause.code === 'REPORT_ROWS_EXPIRED') rowsUnavailable.value = true;
+      else error.value = errorMessage(cause);
+    }
+  }
   finally { if (context === generation) loadingRows.value = false; }
 }
 
@@ -203,7 +194,7 @@ async function cancel() {
 }
 
 function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; pollController?.abort('poll-stopped'); pollController = undefined; }
-function stopLifecycle() { generation++; stopPolling(); initializeController?.abort('route-changed'); rowsController?.abort('route-changed'); initializeController = undefined; rowsController = undefined; pollInFlight = false; }
+function stopLifecycle() { generation++; if (autoRunTimer) window.clearTimeout(autoRunTimer); autoRunTimer = undefined; stopPolling(); initializeController?.abort('route-changed'); rowsController?.abort('route-changed'); initializeController = undefined; rowsController = undefined; pollInFlight = false; }
 function isCancelled(cause: unknown) { return cause instanceof ApiError && cause.code === 'CANCELLED'; }
 function isCurrent(context: number, selectedTenantId: string, selectedReportKey: ReportKey) { return context === generation && tenantId.value === selectedTenantId && reportKey.value === selectedReportKey; }
 function handleVisibilityChange() {
@@ -220,9 +211,9 @@ function toggleMobileRow(row: Record<string, unknown>) {
   if (next.has(key)) next.delete(key); else next.add(key);
   expandedMobileRows.value = next;
 }
+function resetRows() { rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set(); nextCursor.value = undefined; hasMore.value = false; rowsLoaded.value = false; rowsUnavailable.value = false; }
 async function initialize() {
   stopLifecycle();
-  showFilters.value = false;
   const context = generation;
   const selectedTenantId = tenantId.value;
   const selectedReportKey = reportKey.value;
@@ -236,32 +227,35 @@ async function initialize() {
       error.value = 'คุณไม่มีสิทธิ์เปิดรายงานนี้ กรุณาเลือกจากเมนูรายงาน';
       return;
     }
+    selectedPeriod.value = selectionForMode(periodMode.value, periodSelection(selectedTenantId));
     if (route.query.snapshotRunId !== undefined && !snapshotRunId.value) {
       error.value = 'ลิงก์ Snapshot ไม่ถูกต้อง กรุณาเปิดจากข้อความ LINE อีกครั้ง'; loading.value = false; return;
     }
-    if (snapshotRunId.value) await loadSnapshot(context, selectedTenantId, selectedReportKey, snapshotRunId.value);
-    else { snapshotMode.value = false; snapshotMissing.value = false; setDefaultPeriod(); await startRun(); }
+    if (route.query.runId !== undefined && !viewerRunId.value) {
+      error.value = 'ลิงก์รายงานไม่ถูกต้อง กรุณาเลือกช่วงข้อมูลแล้วลองใหม่'; loading.value = false; return;
+    }
+    if (snapshotRunId.value) await loadExistingRun(context, selectedTenantId, selectedReportKey, snapshotRunId.value, true);
+    else if (viewerRunId.value) await loadExistingRun(context, selectedTenantId, selectedReportKey, viewerRunId.value, false);
+    else {
+      snapshotMode.value = false; snapshotMissing.value = false; loading.value = false;
+      autoRunTimer = window.setTimeout(() => {
+        autoRunTimer = undefined;
+        if (isCurrent(context, selectedTenantId, selectedReportKey)) void startRun(selectedPeriod.value);
+      }, 300);
+    }
   } catch (cause) { if (!isCancelled(cause) && context === generation) { error.value = errorMessage(cause); loading.value = false; } }
 }
 
 watch(activeTab, (value) => { if (value === 'detail' && run.value?.status === 'SUCCEEDED' && !rowsLoaded.value && !rowsUnavailable.value) void loadRows(true); });
-watch([tenantId, reportKey], () => void initialize());
+watch([tenantId, reportKey, () => route.query.runId, () => route.query.snapshotRunId], () => void initialize());
 onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void initialize(); });
 onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleVisibilityChange); stopLifecycle(); });
 </script>
 
 <template>
-  <AppPageHeader :title="definition?.label ?? 'รายงาน'" :subtitle="`${tenant?.name ?? ''} · เวลาไทย`"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action -ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div><Button label="ช่วงข้อมูล" aria-label="เปลี่ยนช่วงข้อมูล" icon="pi pi-filter" severity="secondary" outlined class="touch-action" :aria-expanded="showFilters" @click="showFilters = !showFilters" /></div></template></AppPageHeader>
+  <AppPageHeader :title="definition?.label ?? 'รายงาน'" :subtitle="`${tenant?.name ?? ''} · เวลาไทย`"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action -ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div><Button v-if="active" icon="pi pi-stop" severity="danger" outlined rounded aria-label="ยกเลิกการสร้างรายงาน" @click="cancel" /></div></template></AppPageHeader>
 
-  <section v-if="showFilters" class="card report-filter" aria-label="ตัวกรองรายงาน">
-    <div class="filter-heading"><div><h2>เลือกช่วงข้อมูลใหม่</h2><p>ระบบจะดึง SQL จากฐานร้านเมื่อกด “ดึงข้อมูลช่วงนี้”</p></div><Button icon="pi pi-times" text rounded aria-label="ปิดตัวกรอง" @click="showFilters = false" /></div>
-    <div class="grid grid-cols-1 md:grid-cols-[14rem_1fr_1fr_auto] gap-3 items-end">
-      <div class="grid gap-2"><label for="report-period">ช่วงข้อมูล</label><Select input-id="report-period" v-model="input.periodPreset" :options="periodOptions" option-label="label" option-value="value" fluid /></div>
-      <div v-if="input.periodPreset === 'CUSTOM'" class="grid gap-2"><label for="report-date-from">จากวันที่</label><DatePicker input-id="report-date-from" v-model="input.dateFrom" date-format="dd/mm/yy" show-icon fluid /></div>
-      <div v-if="input.periodPreset === 'CUSTOM'" class="grid gap-2"><label for="report-date-to">ถึงวันที่</label><DatePicker input-id="report-date-to" v-model="input.dateTo" date-format="dd/mm/yy" show-icon fluid /></div>
-      <div class="flex gap-2"><Button label="ดึงข้อมูลช่วงนี้" icon="pi pi-refresh" :loading="loading" :disabled="loading" @click="startRun" /><Button v-if="active" icon="pi pi-stop" severity="danger" outlined aria-label="ยกเลิกการสร้างรายงาน" @click="cancel" /></div>
-    </div>
-  </section>
+  <ReportPeriodToolbar :mode="periodMode" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" :action-label="periodMode === 'CURRENT_ONLY' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงนี้'" :loading="loading" @apply="startRun" />
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
   <Message v-if="snapshotMissing && run" severity="warn" :closable="false" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลสรุปชุดนี้หมดอายุแล้ว กรุณาดึงข้อมูลใหม่จากฐานร้าน</span><Button :label="reportKey === 'stock_reorder' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงเดิมใหม่'" icon="pi pi-refresh" size="small" @click="replaySnapshot" /></div></Message>
@@ -280,7 +274,7 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
         <div v-if="!dashboard.visualizations.length" class="card report-panel text-center text-muted-color"><i class="pi pi-chart-bar text-3xl" /><p class="mb-0">ช่วงนี้ไม่มีข้อมูลเพียงพอสำหรับสร้างกราฟ</p></div>
       </TabPanel>
       <TabPanel value="detail">
-        <Message v-if="snapshotRowsUnavailable" severity="info" :closable="false"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลแถวรายละเอียดเป็นข้อมูลชั่วคราวและหมดอายุแล้ว แต่ Snapshot ภาพรวมจาก LINE ยังเปิดดูได้ กรุณาดึง SQL ใหม่เมื่อต้องการตรวจรายการ</span><Button :label="reportKey === 'stock_reorder' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงเดิมใหม่'" icon="pi pi-refresh" size="small" @click="replaySnapshot" /></div></Message>
+        <Message v-if="detailRowsUnavailable" severity="info" :closable="false"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลแถวรายละเอียดเป็นข้อมูลชั่วคราวและหมดอายุแล้ว แต่ภาพรวมยังเปิดดูได้ กรุณาดึง SQL ใหม่เมื่อต้องการตรวจรายการ</span><Button :label="reportKey === 'stock_reorder' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงเดิมใหม่'" icon="pi pi-refresh" size="small" @click="replaySnapshot" /></div></Message>
         <template v-else><div class="flex flex-wrap items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">{{ snapshotMode ? 'ข้อมูล Snapshot จาก SQL' : 'ข้อมูลจาก SQL' }}</h2><p class="text-sm text-muted-color mt-1 mb-0">{{ run.rowCount.toLocaleString('th-TH') }} แถว · เก็บข้อมูลรายละเอียดชั่วคราว 24 ชั่วโมง</p></div><div class="flex flex-wrap gap-2"><MultiSelect v-model="selectedColumnKeys" :options="columnOptions" option-label="label" option-value="key" display="chip" filter aria-label="เลือกคอลัมน์ที่ต้องการแสดง" placeholder="เลือกคอลัมน์" class="w-full sm:w-80"><template #option="{ option }"><div class="flex items-center justify-between gap-3 w-full"><span>{{ option.label }}</span><Tag v-if="option.technical" severity="secondary" value="เทคนิค" /></div></template></MultiSelect><Tag v-if="run.isTruncated" severity="warn" value="ผลลัพธ์ถูกจำกัดตามจำนวนแถวสูงสุด" /></div></div>
         <div class="card table-card report-panel"><div class="hidden md:block"><DataTable :value="rows" :loading="loadingRows" data-key="__rowKey" scrollable striped-rows><Column v-for="column in displayedColumns" :key="column.key" :field="column.key" :header="column.label" :frozen="column.frozen" align-frozen="left"><template #body="{ data }"><span class="safe-wrap metric-value">{{ formatMetric(data[column.key]) }}</span></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก' }}</div></template></DataTable></div><div class="md:hidden grid gap-3" aria-label="รายละเอียดรายงานแบบมือถือ"><article v-for="row in rows" :key="String(row.__rowKey)" class="mobile-row"><div v-for="column in mobileColumns(row)" :key="column.key" class="flex items-start justify-between gap-4"><span class="text-xs text-muted-color safe-wrap">{{ column.label }}</span><strong class="text-sm text-right metric-value safe-wrap">{{ formatMetric(row[column.key]) }}</strong></div><Button v-if="displayedColumns.length > mobileSummaryColumns.length" :label="expandedMobileRows.has(String(row.__rowKey)) ? 'แสดงน้อยลง' : 'ดูรายละเอียดเพิ่ม'" :icon="expandedMobileRows.has(String(row.__rowKey)) ? 'pi pi-angle-up' : 'pi pi-angle-down'" text size="small" class="justify-self-start" @click="toggleMobileRow(row)" /></article><div v-if="!loadingRows && !rows.length" class="py-8 text-center text-muted-color">รายงานนี้ไม่มีข้อมูลในช่วงที่เลือก</div></div><div v-if="hasMore" class="table-footer text-center"><Button label="โหลดอีก 25 แถว" icon="pi pi-angle-down" outlined :loading="loadingRows" @click="loadRows(false)" /></div></div></template>
       </TabPanel>
@@ -289,12 +283,8 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 </template>
 
 <style scoped>
-.report-filter, .report-panel { border-radius: var(--content-border-radius); }
+.report-panel { border-radius: var(--content-border-radius); }
 .report-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; }
-.report-filter { padding: 1rem; margin-bottom: 1rem; }
-.filter-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
-.filter-heading h2 { margin: 0; font-size: 1rem; }
-.filter-heading p { margin: .2rem 0 0; color: var(--text-color-secondary); font-size: .8rem; }
 .dashboard-card { margin-bottom: 0; }
 .report-tabs :deep(.p-tabpanels) { padding: 1.25rem 0 0; background: transparent; }
 .report-summary-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding-bottom: .9rem; border-bottom: 1px solid var(--surface-border); }

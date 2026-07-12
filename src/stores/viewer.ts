@@ -1,32 +1,44 @@
 import { reactive, readonly } from 'vue';
 import { viewerApi, type ReportDefinition, type ViewerMe, type ViewerTenant } from '@/api';
+import { clearStoredPeriodSelections, defaultPeriodSelection, loadPeriodSelection, savePeriodSelection, type ReportPeriodSelection } from '@/utils/reportPeriod';
 
 type ViewerState = {
   me: ViewerMe | null;
   tenants: ViewerTenant[];
   selectedTenantId: string;
   reportsByTenant: Record<string, ReportDefinition[]>;
+  periodByTenant: Record<string, ReportPeriodSelection>;
   ready: boolean;
 };
 
-const state = reactive<ViewerState>({ me: null, tenants: [], selectedTenantId: '', reportsByTenant: {}, ready: false });
+const state = reactive<ViewerState>({ me: null, tenants: [], selectedTenantId: '', reportsByTenant: {}, periodByTenant: {}, ready: false });
 
 async function loadViewer(): Promise<void> {
   state.me = await viewerApi.me();
-  state.tenants = (await viewerApi.tenants()).data;
-  if (!state.tenants.some((tenant) => tenant.id === state.selectedTenantId)) state.selectedTenantId = state.tenants[0]?.id ?? '';
+  setTenants((await viewerApi.tenants()).data);
   state.ready = true;
 }
 
 function setViewer(me: ViewerMe): void { state.me = me; state.ready = true; }
 function setTenants(tenants: ViewerTenant[]): void {
   state.tenants = tenants;
+  clearStoredPeriodSelections(tenants.map((tenant) => tenant.id));
+  Object.keys(state.periodByTenant).forEach((tenantId) => { if (!tenants.some((tenant) => tenant.id === tenantId)) delete state.periodByTenant[tenantId]; });
   if (!tenants.some((tenant) => tenant.id === state.selectedTenantId)) state.selectedTenantId = tenants[0]?.id ?? '';
 }
 function selectTenant(tenantId: string): void {
   if (state.tenants.some((tenant) => tenant.id === tenantId)) state.selectedTenantId = tenantId;
 }
 function setReports(tenantId: string, reports: ReportDefinition[]): void { state.reportsByTenant[tenantId] = reports; }
+function periodSelection(tenantId: string): ReportPeriodSelection {
+  if (!tenantId) return defaultPeriodSelection();
+  state.periodByTenant[tenantId] ??= loadPeriodSelection(tenantId);
+  return { ...state.periodByTenant[tenantId] };
+}
+function setPeriodSelection(tenantId: string, selection: ReportPeriodSelection): void {
+  state.periodByTenant[tenantId] = { ...selection };
+  savePeriodSelection(tenantId, selection);
+}
 async function ensureReports(tenantId: string, force = false, signal?: AbortSignal): Promise<ReportDefinition[]> {
   if (!force && state.reportsByTenant[tenantId]) return state.reportsByTenant[tenantId];
   const reports = (await viewerApi.reports(tenantId, signal)).data;
@@ -38,9 +50,11 @@ function clearViewer(): void {
   state.tenants = [];
   state.selectedTenantId = '';
   state.reportsByTenant = {};
+  state.periodByTenant = {};
+  clearStoredPeriodSelections();
   state.ready = false;
 }
 
 export function useViewerSession() {
-  return { state: readonly(state), loadViewer, setViewer, setTenants, selectTenant, setReports, ensureReports, clearViewer };
+  return { state: readonly(state), loadViewer, setViewer, setTenants, selectTenant, setReports, ensureReports, periodSelection, setPeriodSelection, clearViewer };
 }

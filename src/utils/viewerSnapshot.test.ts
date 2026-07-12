@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { cleanViewerQuery, snapshotReplayInput, validSnapshotRunId } from './viewerSnapshot';
+import { cleanViewerQuery, snapshotReplayInput, validSnapshotRunId, validViewerRunId } from './viewerSnapshot';
 
 describe('viewer snapshot navigation', () => {
   it('accepts only UUID snapshot run identifiers', () => {
     expect(validSnapshotRunId('6bb2747b-65c7-4d5e-9296-40c53b69b09a')).toBe('6bb2747b-65c7-4d5e-9296-40c53b69b09a');
     expect(validSnapshotRunId('not-a-run')).toBeUndefined();
     expect(validSnapshotRunId(['6bb2747b-65c7-4d5e-9296-40c53b69b09a'])).toBeUndefined();
+    expect(validViewerRunId('1d669ca3-a9cb-447e-b28a-1798bbaa6beb')).toBe('1d669ca3-a9cb-447e-b28a-1798bbaa6beb');
   });
 
   it('removes delivery and OAuth references while preserving the snapshot route state', () => {

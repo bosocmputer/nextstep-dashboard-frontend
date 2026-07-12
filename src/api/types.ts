@@ -42,6 +42,9 @@ export type DashboardSnapshot = components['schemas']['DashboardSnapshot'];
 export type ExecutiveOverview = components['schemas']['ExecutiveOverview'];
 export type DashboardRefreshRun = components['schemas']['DashboardRefreshRun'];
 export type DashboardRefresh = components['schemas']['DashboardRefresh'];
+export type DashboardRefreshInput = components['schemas']['DashboardRefreshInput'];
+export type DashboardRefreshFailure = components['schemas']['DashboardRefreshFailure'];
+export type DashboardRefreshResult = components['schemas']['DashboardRefreshResult'];
 
 export interface DataPage<T> {
   data: T[];
@@ -49,16 +52,16 @@ export interface DataPage<T> {
 }
 
 export const reportDefinitions: ReportDefinition[] = [
-  { reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false },
-  { reportKey: 'purchase_goods_payables', version: '1.0.0', label: 'รายงานซื้อสินค้าและตั้งหนี้', category: 'PURCHASE', isSensitive: true },
-  { reportKey: 'gross_profit_by_product', version: '1.0.0', label: 'กำไรขั้นต้นตามสินค้า', category: 'GROSS_PROFIT', isSensitive: true },
-  { reportKey: 'gross_profit_by_ar_customer', version: '1.0.0', label: 'กำไรขั้นต้นตามลูกหนี้', category: 'GROSS_PROFIT', isSensitive: true },
-  { reportKey: 'stock_balance', version: '1.0.0', label: 'รายงานสต็อกคงเหลือ', category: 'INVENTORY', isSensitive: true },
-  { reportKey: 'stock_reorder', version: '1.0.0', label: 'รายงานสินค้าถึงจุดสั่งซื้อ', category: 'INVENTORY', isSensitive: false },
-  { reportKey: 'ar_customer_movement', version: '1.0.0', label: 'รายงานความเคลื่อนไหวลูกหนี้', category: 'AR', isSensitive: true },
-  { reportKey: 'ar_debt_receipt', version: '1.0.0', label: 'รายงานรับชำระหนี้', category: 'AR', isSensitive: true },
-  { reportKey: 'cash_bank_receipts', version: '1.0.0', label: 'รายงานรับเงิน', category: 'CASH_BANK', isSensitive: true },
-  { reportKey: 'cash_bank_payments', version: '1.0.0', label: 'รายงานจ่ายเงิน', category: 'CASH_BANK', isSensitive: true }
+  { reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false, periodMode: 'DATE_RANGE' },
+  { reportKey: 'purchase_goods_payables', version: '1.0.0', label: 'รายงานซื้อสินค้าและตั้งหนี้', category: 'PURCHASE', isSensitive: true, periodMode: 'DATE_RANGE' },
+  { reportKey: 'gross_profit_by_product', version: '1.0.0', label: 'กำไรขั้นต้นตามสินค้า', category: 'GROSS_PROFIT', isSensitive: true, periodMode: 'DATE_RANGE' },
+  { reportKey: 'gross_profit_by_ar_customer', version: '1.0.0', label: 'กำไรขั้นต้นตามลูกหนี้', category: 'GROSS_PROFIT', isSensitive: true, periodMode: 'DATE_RANGE' },
+  { reportKey: 'stock_balance', version: '1.0.0', label: 'รายงานสต็อกคงเหลือ', category: 'INVENTORY', isSensitive: true, periodMode: 'AS_OF_DATE' },
+  { reportKey: 'stock_reorder', version: '1.0.0', label: 'รายงานสินค้าถึงจุดสั่งซื้อ', category: 'INVENTORY', isSensitive: false, periodMode: 'CURRENT_ONLY' },
+  { reportKey: 'ar_customer_movement', version: '1.0.0', label: 'รายงานความเคลื่อนไหวลูกหนี้', category: 'AR', isSensitive: true, periodMode: 'AS_OF_DATE' },
+  { reportKey: 'ar_debt_receipt', version: '1.0.0', label: 'รายงานรับชำระหนี้', category: 'AR', isSensitive: true, periodMode: 'DATE_RANGE' },
+  { reportKey: 'cash_bank_receipts', version: '1.0.0', label: 'รายงานรับเงิน', category: 'CASH_BANK', isSensitive: true, periodMode: 'DATE_RANGE' },
+  { reportKey: 'cash_bank_payments', version: '1.0.0', label: 'รายงานจ่ายเงิน', category: 'CASH_BANK', isSensitive: true, periodMode: 'DATE_RANGE' }
 ];
 
 export const reportDefinitionByKey = new Map(reportDefinitions.map((item) => [item.reportKey, item]));

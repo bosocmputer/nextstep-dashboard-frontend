@@ -7,6 +7,10 @@ export function validSnapshotRunId(value: unknown): string | undefined {
   return typeof value === 'string' && uuidPattern.test(value) ? value : undefined;
 }
 
+export function validViewerRunId(value: unknown): string | undefined {
+  return typeof value === 'string' && uuidPattern.test(value) ? value : undefined;
+}
+
 export function cleanViewerQuery(query: Record<string, unknown>): Record<string, string | string[]> {
   const cleaned: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(query)) {
