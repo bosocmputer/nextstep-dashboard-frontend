@@ -885,10 +885,19 @@ export interface components {
             supporting?: components["schemas"]["FlexPreviewMetric"][];
             comparison?: components["schemas"]["FlexPreviewComparison"];
             attention?: components["schemas"]["FlexPreviewAttention"];
+            /**
+             * @description Optional presentation state; absent for legacy preview producers.
+             * @enum {string}
+             */
+            dataState?: "DATA" | "ZERO";
+            /** @description Backend-approved Thai state text when dataState is ZERO. */
+            stateText?: string;
             /** Format: uri */
             actionUrl?: string;
         };
         FlexPreview: {
+            /** @description Optional renderer presentation contract version; absent for legacy preview producers. */
+            presentationVersion?: string;
             altText: string;
             tenantName: string;
             period: {
