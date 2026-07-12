@@ -70,6 +70,28 @@ describe('ExecutiveChart responsive presentation', () => {
     expect(wrapper.find('[data-testid="mobile-ranking"]').exists()).toBe(false);
   });
 
+  it('uses the category axis for tooltip hit testing on horizontal bars', async () => {
+    installResizeObserver(768);
+    const wrapper = mount(ExecutiveChart, { props: { visualization: ranking() }, global: { stubs: { Chart: chartStub } } });
+    await wrapper.vm.$nextTick();
+
+    const chart = wrapper.getComponent({ name: 'Chart' });
+    const options = chart.props('options') as { interaction: { axis?: string; intersect: boolean; mode: string } };
+
+    expect(options.interaction).toEqual({ mode: 'index', axis: 'y', intersect: false });
+  });
+
+  it('keeps trend tooltip hit testing on the horizontal time axis', async () => {
+    installResizeObserver(768);
+    const wrapper = mount(ExecutiveChart, { props: { visualization: trend() }, global: { stubs: { Chart: chartStub } } });
+    await wrapper.vm.$nextTick();
+
+    const chart = wrapper.getComponent({ name: 'Chart' });
+    const options = chart.props('options') as { interaction: { axis?: string; intersect: boolean; mode: string } };
+
+    expect(options.interaction).toEqual({ mode: 'index', axis: 'x', intersect: false });
+  });
+
   it('shows exact composition percentages without mounting canvas in a narrow card', async () => {
     installResizeObserver(390);
     const wrapper = mount(ExecutiveChart, { props: { visualization: composition() }, global: { stubs: { Chart: chartStub } } });

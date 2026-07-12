@@ -85,7 +85,7 @@ function setChartOptions() {
     resizeDelay: 100,
     indexAxis: horizontal ? 'y' : 'x',
     animation: isNarrow.value || reducedMotion.value ? false : { duration: 200 },
-    interaction: { mode: 'index', intersect: false },
+    interaction: { mode: 'index', axis: horizontal ? 'y' : 'x', intersect: false },
     plugins: {
       legend: { display: model.value.series.length > 1, position: 'bottom', labels: { color: textColor, usePointStyle: true, boxWidth: 8 } },
       tooltip: {
