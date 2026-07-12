@@ -9,8 +9,8 @@ import {
   formatPeriodRange,
   numberForChart,
   snapshotForReport,
-  visualizationHasActivity,
-  visualizationCategoryLabels
+  visualizationCategoryLabels,
+  executiveFeaturedVisualizationKeys
 } from './dashboard';
 
 function metric(key: string, value: string): DashboardMetric {
@@ -74,12 +74,6 @@ describe('dashboard helpers', () => {
     expect(comparisonPeriodText({ preset: 'CUSTOM', dateFrom: '2026-07-08', dateTo: '2026-07-08' })).toBe('เทียบกับ 8 ก.ค. 2569');
   });
 
-  it('treats an all-zero visualization as no business activity instead of a useful chart', () => {
-    const base: DashboardVisualization = { key: 'trend', title: 'trend', intent: 'TREND', unit: 'THB', categories: ['2026-07-09'], series: [{ key: 'current', label: 'ปัจจุบัน', values: ['0.00'] }] };
-    expect(visualizationHasActivity(base)).toBe(false);
-    expect(visualizationHasActivity({ ...base, series: [{ ...base.series[0]!, values: ['12.50'] }] })).toBe(true);
-  });
-
   it('builds the four owner KPIs without substituting missing reports with zero', () => {
     const sales = snapshot('sales_goods_services', '2026-07-10T10:00:00Z', [metric('total_amount', '604058.00')]);
     const profit = snapshot('gross_profit_by_product', '2026-07-10T10:00:00Z', [metric('gross_profit_amount', '46308.80')]);
@@ -90,5 +84,10 @@ describe('dashboard helpers', () => {
     expect(dashboardMetricValue(result[1]?.metric)).toBe('46308.80');
     expect(result[2]?.metric).toBeUndefined();
     expect(result[3]?.metric).toBeUndefined();
+  });
+
+  it('selects overview charts by the backend visualization keys', () => {
+    expect(executiveFeaturedVisualizationKeys.gross_profit_by_product).toBe('top_profit_products');
+    expect(executiveFeaturedVisualizationKeys.stock_balance).toBe('top_stock_value');
   });
 });

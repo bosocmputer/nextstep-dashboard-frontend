@@ -33,6 +33,7 @@ declare module 'vue' {
     InputText: typeof import('primevue/inputtext')['default']
     LineFlexPreview: typeof import('./src/components/LineFlexPreview.vue')['default']
     Message: typeof import('primevue/message')['default']
+    MobileExecutiveChart: typeof import('./src/components/dashboard/MobileExecutiveChart.vue')['default']
     MultiSelect: typeof import('primevue/multiselect')['default']
     Password: typeof import('primevue/password')['default']
     ProgressBar: typeof import('primevue/progressbar')['default']

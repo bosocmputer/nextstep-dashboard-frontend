@@ -20,6 +20,13 @@ const executiveKpiDefinitions: Omit<ExecutiveKpi, 'metric' | 'period' | 'compari
   { key: 'receivable', label: 'ลูกหนี้เคลื่อนไหวสุทธิ', icon: 'pi pi-users', reportKey: 'ar_customer_movement', metricKey: 'net_movement_amount' }
 ];
 
+export const executiveFeaturedVisualizationKeys = {
+  sales_goods_services: 'sales_trend',
+  gross_profit_by_product: 'top_profit_products',
+  stock_balance: 'top_stock_value',
+  cash_bank_receipts: 'cash_receipt_trend'
+} satisfies Partial<Record<ReportKey, string>>;
+
 export function numberForChart(value: string): number | null {
   const number = Number(value.replaceAll(',', '').trim());
   return Number.isFinite(number) ? number : null;
@@ -33,13 +40,6 @@ export function visualizationCategoryLabels(visualization: DashboardVisualizatio
   const currentLabels = visualization.series.find((series) => series.key === 'current')?.pointLabels;
   if (currentLabels?.length === visualization.categories.length && currentLabels.every(Boolean)) return currentLabels;
   return visualization.categories;
-}
-
-export function visualizationHasActivity(visualization: DashboardVisualization): boolean {
-  return visualization.series.some((series) => series.values.some((value) => {
-    const number = numberForChart(value);
-    return number !== null && number !== 0;
-  }));
 }
 
 export function snapshotForReport(items: DashboardSnapshot[], reportKey: ReportKey): DashboardSnapshot | undefined {

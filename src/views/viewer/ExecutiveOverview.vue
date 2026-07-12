@@ -5,7 +5,7 @@ import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
 import { ApiError, viewerApi, type DashboardRefresh, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
-import { buildExecutiveKpis, comparisonPeriodText, formatDashboardValue, formatPeriodRange, snapshotForReport, visualizationHasActivity } from '@/utils/dashboard';
+import { buildExecutiveKpis, comparisonPeriodText, executiveFeaturedVisualizationKeys, formatDashboardValue, formatPeriodRange, snapshotForReport } from '@/utils/dashboard';
 import { errorMessage, formatDateTime } from '@/utils/format';
 
 const route = useRoute();
@@ -33,12 +33,7 @@ const kpis = computed(() => buildExecutiveKpis(snapshots.value));
 const missingReportCount = computed(() => Math.max(0, reports.value.length - new Set(snapshots.value.map((item) => item.dashboard.reportKey)).size));
 const newestGeneratedAt = computed(() => snapshots.value.reduce<string | undefined>((latest, item) => !latest || Date.parse(item.dashboard.generatedAt) > Date.parse(latest) ? item.dashboard.generatedAt : latest, undefined));
 const featuredCharts = computed(() => {
-  const choices: Array<[ReportKey, string]> = [
-    ['sales_goods_services', 'sales_trend'],
-    ['gross_profit_by_product', 'gross_profit_ranking'],
-    ['stock_balance', 'stock_value_ranking'],
-    ['cash_bank_receipts', 'cash_receipt_trend']
-  ];
+  const choices = Object.entries(executiveFeaturedVisualizationKeys) as Array<[ReportKey, string]>;
   const selected: { snapshot: DashboardSnapshot; visualization: DashboardSnapshot['dashboard']['visualizations'][number] }[] = [];
   for (const [reportKey, preferredKey] of choices) {
     const snapshot = snapshotForReport(snapshots.value, reportKey);
@@ -139,7 +134,7 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
   </div>
 
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
-    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart v-if="visualizationHasActivity(item.visualization)" :visualization="item.visualization" compact /><div v-else class="chart-empty" role="status"><i class="pi pi-minus-circle" /><strong>ไม่มีความเคลื่อนไหวในช่วงนี้</strong></div></article>
+    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
   </div>
   <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>กด “อัปเดตข้อมูลทั้งหมด” เพื่อดึง SQL ล่าสุดและสร้างกราฟตามสิทธิ์ของคุณ</p><Button label="อัปเดตข้อมูลทั้งหมด" icon="pi pi-refresh" :disabled="!reports.length" @click="startRefresh" /></div>
 </template>

@@ -77,6 +77,54 @@ function salesDashboard() {
   };
 }
 
+const longThaiLabels = Array.from({ length: 10 }, (_, index) => `สินค้าทดสอบชื่อยาวสำหรับผู้บริหาร อันดับ ${index + 1}`);
+
+function trendVisualization(key: string, title: string) {
+  return {
+    key, title, intent: 'TREND', unit: 'THB', categories: Array.from({ length: 10 }, (_, index) => String(index + 1)),
+    series: [
+      { key: 'current', label: 'งวดปัจจุบัน', values: Array.from({ length: 10 }, (_, index) => String((index + 1) * 1000)), pointLabels: Array.from({ length: 10 }, (_, index) => `2026-07-${String(index + 1).padStart(2, '0')}`) },
+      { key: 'previous', label: 'งวดก่อน', values: Array.from({ length: 10 }, (_, index) => String((index + 1) * 900)), pointLabels: Array.from({ length: 10 }, (_, index) => `2026-06-${String(index + 1).padStart(2, '0')}`) }
+    ]
+  };
+}
+
+function rankingVisualization(key: string, title: string, negative = false) {
+  return {
+    key, title, intent: 'RANKING', unit: 'THB', categories: longThaiLabels,
+    series: [{ key: 'value', label: title, values: Array.from({ length: 10 }, (_, index) => String((negative ? -1 : 1) * (10_000_000 / (index + 1)))) }]
+  };
+}
+
+function compositionVisualization(key: string, title: string, multiple = false) {
+  const categories = multiple ? longThaiLabels : ['เงินสด', 'เงินโอน', 'บัตร', 'เช็ค'];
+  return {
+    key, title, intent: 'COMPOSITION', unit: 'THB', categories,
+    series: multiple
+      ? [{ key: 'in', label: 'รับเข้า', values: categories.map((_, index) => String(1000 - index * 25)) }, { key: 'out', label: 'จ่ายออก', values: categories.map((_, index) => String(700 - index * 20)) }]
+      : [{ key: 'amount', label: 'จำนวนเงิน', values: ['25', '75', '40', '10'] }]
+  };
+}
+
+const visualizationsByReport: Record<string, ReturnType<typeof trendVisualization>[]> = {
+  sales_goods_services: [trendVisualization('sales_trend', 'แนวโน้มยอดขาย'), rankingVisualization('top_products', 'สินค้าทำยอดขายสูงสุด')],
+  purchase_goods_payables: [trendVisualization('purchase_trend', 'แนวโน้มยอดซื้อ'), rankingVisualization('top_suppliers', 'ผู้จำหน่ายที่มียอดซื้อสูงสุด')],
+  gross_profit_by_product: [rankingVisualization('top_profit_products', 'สินค้ากำไรสูงสุด'), rankingVisualization('loss_products', 'สินค้าที่ขาดทุน', true)],
+  gross_profit_by_ar_customer: [rankingVisualization('top_profit_customers', 'ลูกค้าที่สร้างกำไรสูงสุด'), rankingVisualization('loss_customers', 'ลูกค้าที่ขาดทุน', true)],
+  stock_balance: [rankingVisualization('top_stock_value', 'สินค้าที่มีมูลค่าคงเหลือสูงสุด'), compositionVisualization('stock_movement', 'มูลค่ารับเข้าและจ่ายออกตามสินค้า', true)],
+  stock_reorder: [rankingVisualization('reorder_shortage_ratio', 'สินค้าที่ต่ำกว่าจุดสั่งซื้อมากที่สุด')],
+  ar_customer_movement: [rankingVisualization('customer_net_movement', 'ลูกหนี้ที่มียอดเคลื่อนไหวสุทธิสูงสุด'), compositionVisualization('customer_debit_credit', 'ยอดเพิ่มและยอดลดตามลูกหนี้', true)],
+  ar_debt_receipt: [trendVisualization('debt_receipt_trend', 'แนวโน้มรับชำระหนี้'), compositionVisualization('debt_receipt_methods', 'วิธีรับชำระ')],
+  cash_bank_receipts: [trendVisualization('cash_receipt_trend', 'แนวโน้มรับเงิน'), compositionVisualization('cash_receipt_methods', 'ช่องทางการชำระ')],
+  cash_bank_payments: [trendVisualization('cash_payment_trend', 'แนวโน้มจ่ายเงิน'), compositionVisualization('cash_payment_methods', 'ช่องทางการชำระ')]
+};
+
+if (Object.values(visualizationsByReport).flat().length !== 19) throw new Error('The executive chart fixture must cover all 19 visualizations.');
+
+function dashboardForReport(reportKey: string) {
+  return { ...salesDashboard(), reportKey, visualizations: visualizationsByReport[reportKey] ?? [] };
+}
+
 test('admin guard redirects an anonymous user to sign in', async ({ page }) => {
   const consoleErrors = captureUnexpectedConsoleErrors(page);
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(unauthorized()));
@@ -278,6 +326,35 @@ test('mobile viewer renders only reports returned by permission API', async ({ p
     expect(box?.width).toBeGreaterThanOrEqual(44);
     expect(box?.height).toBeGreaterThanOrEqual(44);
   }
+  expect(consoleErrors).toEqual([]);
+});
+
+test('LINE mobile overview renders readable responsive charts with full table data', async ({ page }) => {
+  const consoleErrors = captureUnexpectedConsoleErrors(page);
+  const reports = [
+    ['sales_goods_services', 'รายงานขายสินค้าและบริการ'],
+    ['gross_profit_by_product', 'กำไรขั้นต้นตามสินค้า'],
+    ['stock_balance', 'รายงานสต็อกคงเหลือ'],
+    ['cash_bank_receipts', 'รายงานรับเงิน']
+  ] as const;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({ recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-12T00:00:00Z' })));
+  await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', reportKeys: reports.map(([key]) => key) }], page: { hasMore: false } })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports.map(([reportKey, label]) => ({ reportKey, label, version: '1.0.0', category: 'REPORT', isSensitive: false })), page: { hasMore: false } })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview`, (route) => route.fulfill(json({
+    tenantId, timezone: 'Asia/Bangkok', items: reports.map(([reportKey], index) => ({ runId: `${index + 1}1111111-1111-4111-8111-111111111111`, dashboard: dashboardForReport(reportKey) }))
+  })));
+
+  await page.goto(`/app/tenant/${tenantId}`);
+
+  const stockCard = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'สินค้าที่มีมูลค่าคงเหลือสูงสุด' }) });
+  await expect(stockCard.getByTestId('ranking-item')).toHaveCount(5);
+  await expect(stockCard.getByTestId('ranking-item').filter({ hasText: 'สินค้าทดสอบชื่อยาวสำหรับผู้บริหาร อันดับ 1' })).toBeVisible();
+  await expect(stockCard.locator('canvas')).toHaveCount(0);
+  await stockCard.getByText('ดูครบทั้ง 10 รายการในรูปแบบตาราง').click();
+  await expect(stockCard.locator('tbody tr')).toHaveCount(10);
+  const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(hasHorizontalOverflow).toBe(false);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -540,16 +617,21 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports.map(([reportKey, label]) => ({ reportKey, label, version: '1.0.0', category: 'REPORT', isSensitive: false })), page: { hasMore: false } })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports/*/runs**`, (route) => {
     const reportKey = route.request().url().split('/reports/')[1]!.split('/')[0]!;
-    if (route.request().url().endsWith('/dashboard')) return route.fulfill(json({ ...salesDashboard(), reportKey }));
+    if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(dashboardForReport(reportKey)));
     return route.fulfill(json({ id: `${reportKey}-run`, tenantId, reportKey, status: 'SUCCEEDED', periodPreset: reportKey.startsWith('stock_') ? 'AS_OF_RUN' : 'YESTERDAY', dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 0, isTruncated: false, queuedAt: '2026-07-10T00:00:00Z', finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z' }, route.request().method() === 'POST' ? 201 : 200));
   });
 
-  for (const [reportKey, label] of reports) {
-    await page.goto(`/app/tenant/${tenantId}/report/${reportKey}`);
-    await expect(page.getByRole('heading', { name: label })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
-    await expect(page.getByText('เทียบกับ 8 ก.ค. 2569')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'เปลี่ยนช่วงข้อมูล' })).toBeVisible();
-    await expect(page.getByLabel('ตัวกรองรายงาน')).toHaveCount(0);
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    for (const [reportKey, label] of reports) {
+      await page.goto(`/app/tenant/${tenantId}/report/${reportKey}`);
+      await expect(page.getByRole('heading', { name: label })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
+      await expect(page.getByText('เทียบกับ 8 ก.ค. 2569')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'เปลี่ยนช่วงข้อมูล' })).toBeVisible();
+      await expect(page.getByLabel('ตัวกรองรายงาน')).toHaveCount(0);
+      const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+      expect(hasHorizontalOverflow).toBe(false);
+    }
   }
 });
