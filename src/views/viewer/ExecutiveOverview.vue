@@ -5,12 +5,12 @@ import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
 import ReportPeriodToolbar from '@/components/dashboard/ReportPeriodToolbar.vue';
-import { ApiError, viewerApi, type DashboardRefresh, type DashboardRefreshInput, type DashboardRefreshResult, type DashboardSnapshot, type ExecutiveOverview, type OverviewRevalidation, type ReportKey, type ReportRun } from '@/api';
+import { ApiError, viewerApi, type DashboardRefresh, type DashboardRefreshInput, type DashboardRefreshResult, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { buildExecutiveKpis, comparisonPeriodText, executiveFeaturedVisualizationKeys, formatDashboardValue, formatPeriodRange, snapshotForReport } from '@/utils/dashboard';
 import { errorMessage, formatDateTime } from '@/utils/format';
-import { freshnessPresentation, progressPresentation, typicalDurationText } from '@/utils/freshness';
+import { freshnessPresentation, progressPresentation } from '@/utils/freshness';
 import { selectionFromReportPeriod, selectionLabel, type ReportPeriodSelection } from '@/utils/reportPeriod';
 
 const route = useRoute();
@@ -24,9 +24,8 @@ const refreshFailures = ref<DashboardRefreshResult['failures']>([]);
 const selectedPeriod = ref<ReportPeriodSelection>({ periodPreset: 'MONTH_TO_DATE' });
 const displayedPeriodLabel = ref('ข้อมูลล่าสุดแต่ละรายงาน');
 const exactRefreshLoaded = ref(false);
-const backgroundMode = ref(false);
-const backgroundRuns = ref<ReportRun[]>([]);
 const loading = ref(true);
+const lookingUp = ref(false);
 const refreshing = ref(false);
 const refreshConfirmOpen = ref(false);
 const error = ref('');
@@ -62,22 +61,27 @@ const featuredCharts = computed(() => {
   }
   return selected.slice(0, 4);
 });
-const backgroundCompleted = computed(() => snapshots.value.filter((item) => item.freshnessStatus === 'FRESH').length + backgroundRuns.value.filter((item) => ['FAILED', 'CANCELLED', 'EXPIRED'].includes(item.status)).length);
-const refreshPercent = computed(() => backgroundMode.value
-  ? (reports.value.length ? Math.min(100, Math.round((backgroundCompleted.value / reports.value.length) * 100)) : 0)
-  : refresh.value?.total ? Math.round(((refresh.value.completed + refresh.value.failed) / refresh.value.total) * 100) : 0);
-const refreshCompletedLabel = computed(() => backgroundMode.value ? backgroundCompleted.value : refresh.value?.completed ?? 0);
-const refreshTotalLabel = computed(() => backgroundMode.value ? reports.value.length : refresh.value?.total ?? reports.value.length);
-const activeBackgroundRun = computed(() => backgroundRuns.value.find((item) => ['CLAIMED', 'RUNNING'].includes(item.status)) ?? backgroundRuns.value.find((item) => item.status === 'QUEUED'));
-const backgroundProgressLabel = computed(() => progressPresentation(activeBackgroundRun.value?.progress?.phase));
-const backgroundTypicalDuration = computed(() => typicalDurationText(activeBackgroundRun.value?.progress));
+const refreshPercent = computed(() => refresh.value?.total ? Math.round(((refresh.value.completed + refresh.value.failed) / refresh.value.total) * 100) : 0);
+const refreshCompletedLabel = computed(() => refresh.value?.completed ?? 0);
+const refreshTotalLabel = computed(() => refresh.value?.total ?? reports.value.length);
+const activeRefreshRun = computed(() => refresh.value?.runs.find((item) => ['CLAIMED', 'RUNNING'].includes(item.status)) ?? refresh.value?.runs.find((item) => item.status === 'QUEUED'));
+const activeRefreshLabel = computed(() => activeRefreshRun.value
+  ? `${progressPresentation(activeRefreshRun.value.progressPhase)} · ${reports.value.find((item) => item.reportKey === activeRefreshRun.value?.reportKey)?.label ?? activeRefreshRun.value.reportKey}`
+  : 'กำลังเตรียมรายงาน');
+const activeRefreshTypicalDuration = computed(() => {
+  const item = activeRefreshRun.value;
+  if (!item || (item.expectedSampleCount ?? 0) < 5 || !item.expectedP50Ms || !item.expectedP90Ms) return '';
+  const lower = Math.max(1, Math.round(item.expectedP50Ms / 1000));
+  const upper = Math.max(lower, Math.round(item.expectedP90Ms / 1000));
+  return `โดยปกติประมาณ ${lower.toLocaleString('th-TH')}–${upper.toLocaleString('th-TH')} วินาที`;
+});
 const failedReportLabels = computed(() => refreshFailures.value.map((failure) => reports.value.find((report) => report.reportKey === failure.reportKey)?.label ?? failure.reportKey));
 
 async function initializeOverview() {
   const context = ++generation;
   const selectedTenantId = tenantId.value;
   pageController?.abort('new-overview'); pageController = new AbortController(); stopPolling();
-  loading.value = true; refreshing.value = false; backgroundMode.value = false; backgroundRuns.value = []; error.value = ''; refreshFailures.value = []; exactRefreshLoaded.value = false;
+  loading.value = true; lookingUp.value = false; refreshing.value = false; error.value = ''; refreshFailures.value = []; exactRefreshLoaded.value = false;
   try {
     selectTenant(selectedTenantId);
     await ensureReports(selectedTenantId, true, pageController.signal);
@@ -93,14 +97,14 @@ async function initializeOverview() {
       if (isTerminal(refresh.value.status)) await loadRefreshResult(context, selectedTenantId, refreshId, pageController.signal);
       else { refreshing.value = true; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context); }
     } else {
-      await resolveOverviewCache(context, selectedTenantId, pageController.signal);
+      await loadLatestOverview(context, selectedTenantId, pageController.signal);
     }
   } catch (cause) {
     if (!isCancelled(cause) && context === generation) {
       if (cause instanceof ApiError && cause.status === 404 && route.query.refreshId !== undefined) {
         await removeRefreshReference();
         try {
-          await resolveOverviewCache(context, selectedTenantId, pageController.signal);
+          await loadLatestOverview(context, selectedTenantId, pageController.signal);
           error.value = 'ชุดข้อมูลเดิมไม่พร้อมใช้งานแล้ว กำลังแสดง Snapshot ของช่วงที่เลือกแทน';
         } catch (fallbackCause) { error.value = errorMessage(fallbackCause); }
       } else error.value = errorMessage(cause);
@@ -117,25 +121,12 @@ function overviewInput(selection: ReportPeriodSelection): DashboardRefreshInput 
   };
 }
 
-async function resolveOverviewCache(context: number, selectedTenantId: string, signal?: AbortSignal) {
-  const result = await viewerApi.revalidateOverview(selectedTenantId, overviewInput(selectedPeriod.value), signal);
+async function loadLatestOverview(context: number, selectedTenantId: string, signal?: AbortSignal) {
+  const result = await viewerApi.overview(selectedTenantId, signal);
   if (!isCurrent(context, selectedTenantId)) return;
-  applyOverviewRevalidation(result);
-  if (backgroundRuns.value.some((item) => ['QUEUED', 'CLAIMED', 'RUNNING'].includes(item.status))) {
-    backgroundMode.value = true; refreshing.value = true; pollCount = 0; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
-  } else {
-    backgroundMode.value = false; refreshing.value = false;
-  }
-  if (result.disposition === 'CIRCUIT_OPEN') error.value = `ระบบพักการอัปเดตอัตโนมัติชั่วคราวหลัง SML ตอบกลับผิดปกติ${result.retryAfter ? ` กรุณาลองใหม่ในประมาณ ${Math.ceil(result.retryAfter / 60)} นาที` : ''}`;
-}
-
-function applyOverviewRevalidation(result: OverviewRevalidation) {
-  overview.value = result.overview;
-  backgroundRuns.value = result.runs;
-  exactRefreshLoaded.value = !result.legacyFallback;
-  displayedPeriodLabel.value = result.legacyFallback
-    ? 'ข้อมูลล่าสุดแต่ละรายงาน'
-    : result.overview.items.length ? selectionLabel(selectedPeriod.value, 'SMART_OVERVIEW') : 'ยังไม่มี Snapshot สำหรับช่วงนี้';
+  overview.value = result;
+  exactRefreshLoaded.value = false;
+  displayedPeriodLabel.value = result.items.length ? 'ข้อมูลล่าสุดแต่ละรายงาน' : 'ยังไม่มี Snapshot';
 }
 
 async function startRefresh(selection: ReportPeriodSelection) {
@@ -143,7 +134,6 @@ async function startRefresh(selection: ReportPeriodSelection) {
   const context = generation;
   const selectedTenantId = tenantId.value;
   stopPolling(); refreshing.value = true; error.value = ''; pollCount = 0;
-  backgroundMode.value = false; backgroundRuns.value = [];
   const input: DashboardRefreshInput = {
     periodPreset: selection.periodPreset,
     reportKeys: reports.value.map((report) => report.reportKey),
@@ -165,19 +155,26 @@ async function startRefresh(selection: ReportPeriodSelection) {
 }
 
 async function viewOverviewPeriod(selection: ReportPeriodSelection) {
-  if (loading.value || refreshing.value) return;
+  if (loading.value || lookingUp.value || refreshing.value) return;
   const context = ++generation;
   const selectedTenantId = tenantId.value;
   pageController?.abort('new-overview-period'); pageController = new AbortController(); stopPolling();
   selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
-  loading.value = !overview.value; error.value = ''; refreshFailures.value = [];
-  try { await resolveOverviewCache(context, selectedTenantId, pageController.signal); }
+  lookingUp.value = true; error.value = ''; refreshFailures.value = [];
+  try {
+    const result = await viewerApi.exactOverview(selectedTenantId, overviewInput(selection), pageController.signal);
+    if (!isCurrent(context, selectedTenantId)) return;
+    selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
+    overview.value = result;
+    exactRefreshLoaded.value = true;
+    displayedPeriodLabel.value = result.items.length ? selectionLabel(selection, 'SMART_OVERVIEW') : 'ยังไม่มี Snapshot สำหรับช่วงนี้';
+  }
   catch (cause) { if (!isCancelled(cause) && isCurrent(context, selectedTenantId)) error.value = errorMessage(cause); }
-  finally { if (isCurrent(context, selectedTenantId)) loading.value = false; }
+  finally { if (isCurrent(context, selectedTenantId)) lookingUp.value = false; }
 }
 
 function requestRefresh(selection: ReportPeriodSelection) {
-  if (loading.value || refreshing.value || refreshConfirmOpen.value || !reports.value.length) return;
+  if (loading.value || lookingUp.value || refreshing.value || refreshConfirmOpen.value || !reports.value.length) return;
   const expectedTenantId = tenantId.value;
   const expectedGeneration = generation;
   const expectedReportCount = reports.value.length;
@@ -212,23 +209,7 @@ function schedulePoll(context: number) {
   stopPolling();
   if (document.visibilityState === 'hidden') return;
   const delay = pollCount < 15 ? 2000 : 5000;
-  pollTimer = window.setTimeout(() => void (backgroundMode.value ? pollOverviewRevalidation(context) : pollRefresh(context)), delay);
-}
-
-async function pollOverviewRevalidation(context: number) {
-  if (pollInFlight || context !== generation) return;
-  if (Date.now() >= pollDeadline) { refreshing.value = false; backgroundMode.value = false; error.value = 'การอัปเดตใช้เวลานานกว่าปกติ คุณสามารถกลับมาตรวจสอบภายหลังได้'; return; }
-  const selectedTenantId = tenantId.value;
-  pollInFlight = true; pollController = new AbortController();
-  try {
-    const result = await viewerApi.revalidateOverview(selectedTenantId, overviewInput(selectedPeriod.value), pollController.signal);
-    if (!isCurrent(context, selectedTenantId)) return;
-    applyOverviewRevalidation(result); pollCount++;
-    if (backgroundRuns.value.some((item) => ['QUEUED', 'CLAIMED', 'RUNNING'].includes(item.status))) schedulePoll(context);
-    else { refreshing.value = false; backgroundMode.value = false; }
-  } catch (cause) {
-    if (!isCancelled(cause) && context === generation) { refreshing.value = false; backgroundMode.value = false; error.value = errorMessage(cause); }
-  } finally { pollInFlight = false; pollController = undefined; }
+  pollTimer = window.setTimeout(() => void pollRefresh(context), delay);
 }
 
 async function pollRefresh(context: number) {
@@ -282,9 +263,9 @@ async function removeRefreshReference() { const query = { ...route.query }; dele
 function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; pollController?.abort('poll-stopped'); pollController = undefined; }
 function isCancelled(cause: unknown) { return cause instanceof ApiError && cause.code === 'CANCELLED'; }
 function handleVisibilityChange() {
-  if (document.visibilityState === 'visible' && refreshing.value && (refresh.value || backgroundMode.value) && !pollInFlight) {
+  if (document.visibilityState === 'visible' && refreshing.value && refresh.value && !pollInFlight) {
     if (pollTimer) window.clearTimeout(pollTimer);
-    pollTimer = undefined; void (backgroundMode.value ? pollOverviewRevalidation(generation) : pollRefresh(generation));
+    pollTimer = undefined; void pollRefresh(generation);
   }
 }
 
@@ -296,12 +277,12 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 <template>
   <AppPageHeader :title="`ภาพรวมร้าน ${tenant?.name ?? ''}`" desktop-mode="viewerCompact" />
 
-  <ReportPeriodToolbar desktop-mode="compact" mode="SMART_OVERVIEW" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" action-label="ดูภาพรวมช่วงนี้" force-action-label="ดึงใหม่จาก SML" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @apply="viewOverviewPeriod" @force="requestRefresh" />
+  <ReportPeriodToolbar desktop-mode="compact" mode="SMART_OVERVIEW" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" action-label="ดูภาพรวมช่วงนี้" force-action-label="ดึงใหม่จาก SML" :loading="lookingUp || refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @apply="viewOverviewPeriod" @force="requestRefresh" />
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="initializeOverview" /></Message>
   <Message v-if="refreshFailures.length" severity="warn" :closable="false" class="mb-4">อัปเดตไม่สำเร็จ {{ refreshFailures.length }} รายงาน: {{ failedReportLabels.join(', ') }} — ช่องดังกล่าวจะไม่ใช้ตัวเลขเดิมมาปะปน</Message>
-  <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refreshCompletedLabel }} จาก {{ refreshTotalLabel }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong><span v-if="backgroundMode && activeBackgroundRun" class="text-sm text-muted-color">{{ backgroundProgressLabel }} · {{ reports.find((item) => item.reportKey === activeBackgroundRun?.reportKey)?.label ?? activeBackgroundRun.reportKey }}<template v-if="backgroundTypicalDuration"> · {{ backgroundTypicalDuration }}</template></span></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ข้อมูลด้านล่างเป็น Snapshot ช่วงเดียวกัน ระบบไม่ใช้ตัวเลขจากช่วงอื่นมาปะปน</p></div>
-  <Message v-if="!loading && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มี Snapshot ตรงช่วงที่เลือก {{ missingReportCount }} รายงาน ระบบจะแสดงเมื่อ Query SML เสร็จและจะไม่ใช้ตัวเลขจากช่วงอื่นแทน</Message>
+  <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refreshCompletedLabel }} จาก {{ refreshTotalLabel }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong><span class="text-sm text-muted-color">{{ activeRefreshLabel }}<template v-if="activeRefreshTypicalDuration"> · {{ activeRefreshTypicalDuration }}</template></span></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ข้อมูลด้านล่างยังเป็น Snapshot เดิม ระบบจะเปลี่ยนข้อมูลทั้งชุดเมื่อการอัปเดตเสร็จ</p></div>
+  <Message v-if="!loading && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มี Snapshot {{ exactRefreshLoaded ? 'ตรงช่วงที่เลือก' : 'ล่าสุด' }} {{ missingReportCount }} รายงาน หากต้องการข้อมูลใหม่ให้กด “ดึงใหม่จาก SML”</Message>
 
   <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5"><Skeleton v-for="index in 4" :key="index" height="9rem" /></div>
   <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
@@ -311,7 +292,7 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
     <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }} · ดึงจาก SML {{ formatDateTime(item.snapshot.sourceFinishedAt ?? item.snapshot.dashboard.generatedAt) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
   </div>
-  <div v-else-if="!loading && !refreshing" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>ยังไม่มี Snapshot สำหรับช่วงนี้</h2><p>เลือกช่วงข้อมูลแล้วกด “ดูภาพรวมช่วงนี้” ระบบจะใช้ Cache ที่ตรงช่วงหรืออัปเดตจาก SML ตามนโยบายของร้าน</p></div>
+  <div v-else-if="!loading && !refreshing" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>ยังไม่มี Snapshot สำหรับช่วงนี้</h2><p>เลือกช่วงแล้วกด “ดูภาพรวมช่วงนี้” เพื่อค้นหา Cache ที่มีอยู่ หรือกด “ดึงใหม่จาก SML” เมื่อต้องการสร้างข้อมูลใหม่</p></div>
 </template>
 
 <style scoped>

@@ -2514,7 +2514,14 @@ export interface operations {
     };
     getViewerExecutiveOverview: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description When present, resolve exact-period snapshots without starting SML work. */
+                periodPreset?: "YESTERDAY" | "TODAY_TO_NOW" | "MONTH_TO_DATE" | "CUSTOM";
+                dateFrom?: string;
+                dateTo?: string;
+                /** @description Repeat once for every currently authorized report when periodPreset is present. */
+                reportKey?: components["schemas"]["ReportKey"][];
+            };
             header?: never;
             path: {
                 tenantId: components["parameters"]["TenantID"];
@@ -2523,7 +2530,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Latest compact dashboards for reports authorized to the verified viewer. */
+            /** @description Latest dashboards, or exact-period cached snapshots when period parameters are supplied. This endpoint never enqueues SML work. */
             200: {
                 headers: {
                     [name: string]: unknown;

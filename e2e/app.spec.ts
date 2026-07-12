@@ -62,10 +62,8 @@ async function mockAdminLogin(page: Page) {
 }
 
 async function mockEmptyExecutiveOverview(page: Page) {
-  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/revalidations`, (route) => route.fulfill(json({
-    disposition: 'FRESH_CACHE',
-    overview: { tenantId, timezone: 'Asia/Bangkok', items: [] },
-    runs: []
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview**`, (route) => route.fulfill(json({
+    tenantId, timezone: 'Asia/Bangkok', items: []
   })));
 }
 
@@ -426,10 +424,8 @@ test('mobile viewer switches tenants from the sidebar without showing stale topb
     if (route.request().url().includes(secondTenantId)) await new Promise((resolve) => setTimeout(resolve, 250));
     await route.fulfill(json({ data: [{ reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false }], page: { hasMore: false } }));
   });
-  await page.route(`**${api}/viewer/tenants/*/executive-overview/revalidations`, (route) => route.fulfill(json({
-    disposition: 'FRESH_CACHE',
-    overview: { tenantId: route.request().url().includes(secondTenantId) ? secondTenantId : tenantId, timezone: 'Asia/Bangkok', items: [] },
-    runs: []
+  await page.route(`**${api}/viewer/tenants/*/executive-overview`, (route) => route.fulfill(json({
+    tenantId: route.request().url().includes(secondTenantId) ? secondTenantId : tenantId, timezone: 'Asia/Bangkok', items: []
   })));
 
   await page.goto(`/app/tenant/${tenantId}`);
@@ -446,6 +442,8 @@ test('mobile viewer switches tenants from the sidebar without showing stale topb
 
 test('viewer refreshes SQL only after confirming the current tenant context', async ({ page }) => {
   let refreshRequests = 0;
+  let automaticRevalidationRequests = 0;
+  let exactCacheLookupRequests = 0;
   const refreshId = '44444444-4444-4444-8444-444444444444';
   const reports = [
     { reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false },
@@ -456,6 +454,14 @@ test('viewer refreshes SQL only after confirming the current tenant context', as
   await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'วาวา', timezone: 'Asia/Bangkok', reportKeys: reports.map((report) => report.reportKey) }], page: { hasMore: false } })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports, page: { hasMore: false } })));
   await mockEmptyExecutiveOverview(page);
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview**`, (route) => {
+    if (new URL(route.request().url()).searchParams.has('periodPreset')) exactCacheLookupRequests++;
+    return route.fulfill(json({ tenantId, timezone: 'Asia/Bangkok', items: [] }));
+  });
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/revalidations`, (route) => {
+    automaticRevalidationRequests++;
+    return route.fulfill(json({ disposition: 'FRESH_CACHE', overview: { tenantId, timezone: 'Asia/Bangkok', items: [] }, runs: [] }));
+  });
   await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/refreshes`, (route) => {
     refreshRequests++;
     expect(route.request().postDataJSON()).toEqual({ periodPreset: 'MONTH_TO_DATE', reportKeys: ['sales_goods_services', 'stock_balance'] });
@@ -463,6 +469,12 @@ test('viewer refreshes SQL only after confirming the current tenant context', as
   });
 
   await page.goto(`/app/tenant/${tenantId}`);
+  expect(automaticRevalidationRequests).toBe(0);
+  await page.getByRole('button', { name: 'เปลี่ยนช่วง' }).click();
+  await page.getByRole('button', { name: 'ดูภาพรวมช่วงนี้' }).click();
+  await expect.poll(() => exactCacheLookupRequests).toBe(1);
+  expect(refreshRequests).toBe(0);
+
   await page.getByRole('button', { name: 'เปลี่ยนช่วง' }).click();
   await page.getByRole('button', { name: 'ดึงใหม่จาก SML' }).click();
 
@@ -534,13 +546,11 @@ test('LINE mobile overview renders readable responsive charts with full table da
   await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({ recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-12T00:00:00Z' })));
   await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', reportKeys: reports.map(([key]) => key) }], page: { hasMore: false } })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports.map(([reportKey, label]) => ({ reportKey, label, version: '1.0.0', category: 'REPORT', isSensitive: false })), page: { hasMore: false } })));
-  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/revalidations`, (route) => route.fulfill(json({
-    disposition: 'FRESH_CACHE', runs: [], overview: {
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview`, (route) => route.fulfill(json({
       tenantId, timezone: 'Asia/Bangkok', items: reports.map(([reportKey], index) => ({
         runId: `${index + 1}1111111-1111-4111-8111-111111111111`, dashboard: dashboardForReport(reportKey),
         sourceFinishedAt: '2026-07-12T08:00:00+07:00', freshnessStatus: 'FRESH', detailsAvailable: false
       }))
-    }
   })));
 
   await page.goto(`/app/tenant/${tenantId}`);
@@ -573,6 +583,12 @@ test('mobile report details use stacked rows without horizontal overflow', async
     data: [{ reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false }],
     page: { hasMore: false }
   })));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports/sales_goods_services/snapshots/latest**`, (route) => route.fulfill(json({
+    runId,
+    dashboard: { ...salesDashboard(), period: { preset: 'MONTH_TO_DATE', dateFrom: '2026-07-01', dateTo: '2026-07-12' } },
+    periodFrom: '2026-07-01', periodTo: '2026-07-12', sourceFinishedAt: '2026-07-10T00:00:01Z',
+    freshnessStatus: 'FRESH', detailsAvailable: true, detailsExpiresAt: '2026-07-11T00:00:00Z'
+  })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports/sales_goods_services/runs**`, (route) => {
     if (route.request().url().includes('/rows')) {
       expect(route.request().url()).toContain('pageSize=25');
@@ -583,8 +599,8 @@ test('mobile report details use stacked rows without horizontal overflow', async
     }
     if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(salesDashboard()));
     return route.fulfill(json({
-      id: runId, tenantId, reportKey: 'sales_goods_services', status: 'SUCCEEDED', periodPreset: 'YESTERDAY',
-      dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 1, isTruncated: false,
+      id: runId, tenantId, reportKey: 'sales_goods_services', status: 'SUCCEEDED', periodPreset: 'MONTH_TO_DATE',
+      dateFrom: '2026-07-01', dateTo: '2026-07-12', rowCount: 1, isTruncated: false,
       summary: { document_count: '1', total_amount: '1250.00' }, queuedAt: '2026-07-10T00:00:00Z',
       finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z'
     }, route.request().method() === 'POST' ? 201 : 200));
@@ -805,6 +821,8 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
 });
 
 test('viewer opens all ten report routes with the shared executive layout', async ({ page }) => {
+  let createRunRequests = 0;
+  let revalidationRequests = 0;
   const reports = [
     ['sales_goods_services', 'รายงานขายสินค้าและบริการ'],
     ['purchase_goods_payables', 'รายงานซื้อสินค้าและตั้งหนี้'],
@@ -821,8 +839,21 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
   await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', reportKeys: reports.map(([key]) => key) }], page: { hasMore: false } })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports.map(([reportKey, label]) => ({ reportKey, label, version: '1.0.0', category: 'REPORT', isSensitive: false })), page: { hasMore: false } })));
   const runIds = new Map(reports.map(([key], index) => [key, `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`]));
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports/*/snapshots/latest**`, (route) => {
+    const reportKey = route.request().url().split('/reports/')[1]!.split('/')[0]!;
+    return route.fulfill(json({
+      runId: runIds.get(reportKey), dashboard: dashboardForReport(reportKey),
+      periodFrom: '2026-07-09', periodTo: '2026-07-09', sourceFinishedAt: '2026-07-10T00:00:01Z',
+      freshnessStatus: 'FRESH', detailsAvailable: true, detailsExpiresAt: '2026-07-11T00:00:00Z'
+    }));
+  });
+  await page.route(`**${api}/viewer/tenants/${tenantId}/reports/*/revalidations`, (route) => {
+    revalidationRequests++;
+    return route.fulfill(json({ disposition: 'FRESH_CACHE' }));
+  });
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports/*/runs**`, (route) => {
     const reportKey = route.request().url().split('/reports/')[1]!.split('/')[0]!;
+    if (route.request().method() === 'POST') createRunRequests++;
     if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(dashboardForReport(reportKey)));
     return route.fulfill(json({ id: runIds.get(reportKey), tenantId, reportKey, status: 'SUCCEEDED', periodPreset: reportKey.startsWith('stock_') ? 'AS_OF_RUN' : 'YESTERDAY', dateFrom: '2026-07-09', dateTo: '2026-07-09', rowCount: 0, isTruncated: false, queuedAt: '2026-07-10T00:00:00Z', finishedAt: '2026-07-10T00:00:01Z', expiresAt: '2026-07-11T00:00:00Z' }, route.request().method() === 'POST' ? 202 : 200));
   });
@@ -846,7 +877,7 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
         expect(toolbar?.height).toBeLessThanOrEqual(customPeriod ? 150 : 80);
         if (!customPeriod && reportKey !== 'stock_reorder') {
           const alignment = await page.evaluate(() => {
-            const selectors = ['.period-context-copy strong', '.period-source strong', '.period-preset-field .p-select', '.period-actions .p-button'];
+            const selectors = ['.period-context-value', '.period-preset-field .p-select', '.period-actions .p-button'];
             return selectors.map((selector) => {
               const rect = document.querySelector(selector)?.getBoundingClientRect();
               return rect ? rect.bottom : null;
@@ -862,4 +893,6 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
       expect(hasHorizontalOverflow).toBe(false);
     }
   }
+  expect(revalidationRequests).toBe(0);
+  expect(createRunRequests).toBe(0);
 });

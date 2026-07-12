@@ -42,6 +42,7 @@ const expandedMobileRows = ref(new Set<string>());
 const snapshotMode = ref(false);
 const snapshotMissing = ref(false);
 const loading = ref(false);
+const cacheLoading = ref(false);
 const backgroundRefreshing = ref(false);
 const forceConfirmOpen = ref(false);
 const loadingRows = ref(false);
@@ -82,7 +83,7 @@ const displayedColumns = computed(() => visibleReportColumns(reportKey.value, co
 const mobileSummaryColumns = computed(() => displayedColumns.value.filter((column) => column.mobilePriority >= 4).slice(0, 6));
 
 async function resolveSnapshot(selection: ReportPeriodSelection) {
-  if (!definition.value || loading.value || backgroundRefreshing.value) return;
+  if (!definition.value || loading.value || cacheLoading.value || backgroundRefreshing.value) return;
   let payload: CreateReportRunInput;
   try { payload = selectionToRunInput(periodMode.value, selection); }
   catch (cause) { error.value = errorMessage(cause); return; }
@@ -90,39 +91,32 @@ async function resolveSnapshot(selection: ReportPeriodSelection) {
   const selectedTenantId = tenantId.value;
   const selectedReportKey = reportKey.value;
   initializeController?.abort('new-period'); initializeController = new AbortController(); stopPolling(); resetRows();
-  loading.value = !dashboard.value; backgroundRefreshing.value = false; error.value = '';
+  loading.value = !dashboard.value; cacheLoading.value = true; backgroundRefreshing.value = false; error.value = '';
   try {
-    const result = await viewerApi.revalidateReport(selectedTenantId, selectedReportKey, payload, initializeController.signal);
+    const snapshot = await viewerApi.exactSnapshot(selectedTenantId, selectedReportKey, payload, initializeController.signal);
     if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
-    if (result.legacyFallback) {
-      loading.value = false;
-      await startRun(selection);
-      return;
-    }
     selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
     snapshotMode.value = false; snapshotMissing.value = false;
     expiredSnapshot.value = undefined;
-    if (result.snapshot?.freshnessStatus === 'EXPIRED') {
-      expiredSnapshot.value = result.snapshot;
+    if (snapshot.freshnessStatus === 'EXPIRED') {
+      expiredSnapshot.value = snapshot;
       dashboard.value = undefined; cachedSnapshot.value = undefined; run.value = undefined;
-    } else if (result.snapshot) {
-      applyCachedSnapshot(result.snapshot);
-      try { run.value = await viewerApi.run(selectedTenantId, selectedReportKey, result.snapshot.runId, initializeController.signal); }
+    } else {
+      applyCachedSnapshot(snapshot);
+      try { run.value = await viewerApi.run(selectedTenantId, selectedReportKey, snapshot.runId, initializeController.signal); }
       catch (cause) { if (!(cause instanceof ApiError) || cause.status !== 404) throw cause; }
-    } else {
-      dashboard.value = undefined; cachedSnapshot.value = undefined; run.value = undefined;
     }
-    if (result.run && ['QUEUED', 'CLAIMED', 'RUNNING'].includes(result.run.status)) {
-      run.value = result.run; backgroundRefreshing.value = !!dashboard.value; loading.value = !dashboard.value;
-      pollCount = 0; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
-    } else {
-      loading.value = false; backgroundRefreshing.value = false;
-    }
-    if (result.disposition === 'DISABLED' && !result.snapshot) error.value = 'การอัปเดตอัตโนมัติของรายงานนี้ถูกปิด กรุณากด “ดึงใหม่จาก SML” เมื่อต้องการข้อมูล';
-    if (result.disposition === 'CIRCUIT_OPEN') error.value = `ระบบพักการอัปเดตอัตโนมัติชั่วคราวหลัง SML ตอบกลับผิดปกติ${result.retryAfter ? ` กรุณาลองอีกครั้งในประมาณ ${Math.ceil(result.retryAfter / 60)} นาที` : ''}`;
-  } catch (cause) {
-    if (!isCancelled(cause) && isCurrent(context, selectedTenantId, selectedReportKey)) error.value = errorMessage(cause);
     loading.value = false; backgroundRefreshing.value = false;
+  } catch (cause) {
+    if (!isCancelled(cause) && isCurrent(context, selectedTenantId, selectedReportKey)) {
+      selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
+      if (cause instanceof ApiError && cause.status === 404) {
+        error.value = 'ยังไม่มี Snapshot สำหรับช่วงนี้ หากต้องการข้อมูลใหม่ให้กด “ดึงใหม่จาก SML”';
+      } else error.value = errorMessage(cause);
+    }
+    loading.value = false; backgroundRefreshing.value = false;
+  } finally {
+    if (isCurrent(context, selectedTenantId, selectedReportKey)) cacheLoading.value = false;
   }
 }
 
@@ -152,7 +146,7 @@ async function startRun(selection: ReportPeriodSelection) {
   const context = ++generation;
   const selectedTenantId = tenantId.value;
   const selectedReportKey = reportKey.value;
-  stopPolling(); rowsController?.abort('new-run'); rowsController = undefined;
+  stopPolling(); rowsController?.abort('new-run'); rowsController = undefined; cacheLoading.value = false;
   loading.value = true; error.value = ''; activeTab.value = 'overview'; pollCount = 0;
   const fingerprint = JSON.stringify([selectedTenantId, selectedReportKey, payload]);
   if (!runAction || runAction.fingerprint !== fingerprint) runAction = { fingerprint, key: newIdempotencyKey('viewer-run') };
@@ -174,7 +168,7 @@ async function startRun(selection: ReportPeriodSelection) {
 }
 
 function requestForceRefresh(selection: ReportPeriodSelection) {
-  if (forceConfirmOpen.value || active.value) return;
+  if (forceConfirmOpen.value || cacheLoading.value || active.value) return;
   const expectedTenantId = tenantId.value;
   const expectedReportKey = reportKey.value;
   const expectedGeneration = generation;
@@ -389,13 +383,13 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 <template>
   <AppPageHeader :title="definition?.label ?? 'รายงาน'" desktop-mode="viewerCompact"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action touch-action" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="cachedSnapshot" :severity="freshness.severity" :icon="freshness.icon" :value="freshness.label" /><Tag v-if="showRunStatus" :severity="statusSeverity" :value="statusLabel" /></div><Button v-if="run?.status === 'QUEUED'" icon="pi pi-times" severity="danger" outlined rounded aria-label="ยกเลิกงานที่รอคิว" @click="cancel" /><Button v-else-if="active" icon="pi pi-eye-slash" severity="secondary" outlined rounded aria-label="หยุดติดตามความคืบหน้า" @click="stopFollowing" /></div></template></AppPageHeader>
 
-  <ReportPeriodToolbar desktop-mode="compact" :mode="periodMode" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" :source-label="sourceLabel" :action-label="periodMode === 'CURRENT_ONLY' ? 'ดูสถานะล่าสุด' : 'ดูช่วงนี้'" force-action-label="ดึงใหม่จาก SML" :loading="loading" :disabled="forceConfirmOpen" @apply="resolveSnapshot" @force="requestForceRefresh" />
+  <ReportPeriodToolbar desktop-mode="compact" :mode="periodMode" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" :source-label="sourceLabel" :action-label="periodMode === 'CURRENT_ONLY' ? 'ดูสถานะล่าสุด' : 'ดูช่วงนี้'" force-action-label="ดึงใหม่จาก SML" :loading="loading || cacheLoading" :disabled="forceConfirmOpen" @apply="resolveSnapshot" @force="requestForceRefresh" />
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
   <Message v-if="expiredSnapshot && !cachedSnapshot" severity="warn" :closable="false" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลล่าสุดไม่พร้อมใช้งาน Snapshot เดิมดึงจาก SML เมื่อ {{ formatDateTime(expiredSnapshot.sourceFinishedAt) }} และจะไม่แสดงเป็น KPI หลักโดยอัตโนมัติ</span><Button label="เปิดดู Snapshot เดิม" icon="pi pi-history" size="small" severity="secondary" @click="showExpiredSnapshot" /></div></Message>
-  <Message v-if="cachedSnapshot?.freshnessStatus === 'STALE' || cachedSnapshot?.freshnessStatus === 'REFRESHING'" severity="warn" :closable="false" class="mb-4">กำลังแสดง Snapshot เดิมที่ดึงจาก SML เมื่อ {{ formatDateTime(cachedSnapshot.sourceFinishedAt) }} ระหว่างอัปเดตข้อมูลใหม่</Message>
+  <Message v-if="cachedSnapshot?.freshnessStatus === 'STALE' || cachedSnapshot?.freshnessStatus === 'REFRESHING'" severity="warn" :closable="false" class="mb-4">กำลังแสดง Snapshot ที่ดึงจาก SML เมื่อ {{ formatDateTime(cachedSnapshot.sourceFinishedAt) }}<template v-if="backgroundRefreshing"> ระหว่างดึงข้อมูลใหม่</template><template v-else> หากต้องการข้อมูลล่าสุดให้กด “ดึงใหม่จาก SML”</template></Message>
   <Message v-if="snapshotMissing && run" severity="warn" :closable="false" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลสรุปชุดนี้หมดอายุแล้ว กรุณาดึงข้อมูลใหม่จากฐานร้าน</span><Button :label="reportKey === 'stock_reorder' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงเดิมใหม่'" icon="pi pi-refresh" size="small" @click="replaySnapshot" /></div></Message>
-  <section v-if="loading || backgroundRefreshing" class="card report-panel" aria-live="polite"><div class="flex flex-col items-center text-center gap-3 py-3"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ snapshotMode ? 'กำลังเปิดข้อมูลจาก LINE' : progressLabel }}</h2><p class="text-muted-color mt-1 mb-0">{{ snapshotMode ? 'กำลังโหลด Snapshot ที่ใช้สร้างข้อความ โดยไม่ดึง SQL ใหม่' : `ใช้เวลาแล้ว ${elapsedSeconds.toLocaleString('th-TH')} วินาที` }}<span v-if="typicalDuration"> · {{ typicalDuration }}</span><span v-if="!snapshotMode && run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p><p v-if="run?.progress?.expectedP90Ms && elapsedSeconds * 1000 > run.progress.expectedP90Ms" class="text-orange-600 mt-2 mb-0">ใช้เวลานานกว่าปกติ แต่ระบบยังทำงานอยู่</p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-4" /></section>
+  <section v-if="loading || backgroundRefreshing" class="card report-panel" aria-live="polite"><div class="flex flex-col items-center text-center gap-3 py-3"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ snapshotMode ? 'กำลังเปิดข้อมูลจาก LINE' : cacheLoading ? 'กำลังค้นหา Snapshot' : progressLabel }}</h2><p class="text-muted-color mt-1 mb-0">{{ snapshotMode ? 'กำลังโหลด Snapshot ที่ใช้สร้างข้อความ โดยไม่ดึง SQL ใหม่' : cacheLoading ? 'กำลังอ่าน Cache โดยไม่ดึง SQL ใหม่' : `ใช้เวลาแล้ว ${elapsedSeconds.toLocaleString('th-TH')} วินาที` }}<span v-if="!cacheLoading && typicalDuration"> · {{ typicalDuration }}</span><span v-if="!snapshotMode && !cacheLoading && run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p><p v-if="!cacheLoading && run?.progress?.expectedP90Ms && elapsedSeconds * 1000 > run.progress.expectedP90Ms" class="text-orange-600 mt-2 mb-0">ใช้เวลานานกว่าปกติ แต่ระบบยังทำงานอยู่</p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-4" /></section>
 
   <Tabs v-if="dashboard && run" v-model:value="activeTab" class="report-tabs">
     <TabList><Tab value="overview"><i class="pi pi-chart-bar mr-2" />ภาพรวมและกราฟ</Tab><Tab value="detail"><i class="pi pi-table mr-2" />ข้อมูลรายละเอียด</Tab></TabList>

@@ -13,7 +13,7 @@ const global = {
 };
 
 describe('ReportPeriodToolbar', () => {
-  it('separates the displayed data from the period that will be fetched', () => {
+  it('keeps the desktop toolbar to one value-first row with accessible hidden labels', () => {
     const wrapper = mount(ReportPeriodToolbar, {
       props: {
         mode: 'SMART_OVERVIEW',
@@ -24,10 +24,11 @@ describe('ReportPeriodToolbar', () => {
       global
     });
 
-    expect(wrapper.text()).toContain('กำลังแสดง');
     expect(wrapper.text()).toContain('ข้อมูลล่าสุดแต่ละรายงาน');
-    expect(wrapper.text()).toContain('ช่วงข้อมูล');
     expect(wrapper.text()).toContain('อัปเดตภาพรวม');
+    expect(wrapper.text()).not.toContain('กำลังแสดง');
+    expect(wrapper.text()).not.toContain('ดึงสำเร็จ');
+    expect(wrapper.get('.period-field label').classes()).toContain('sr-only');
   });
 
   it('keeps current-only reports honest while still allowing a manual refresh', async () => {
@@ -83,7 +84,7 @@ describe('ReportPeriodToolbar', () => {
     expect(labels[0]!.attributes('for')).not.toBe(labels[1]!.attributes('for'));
   });
 
-  it('uses separate two-row context cells so source time aligns with the period control', () => {
+  it('combines the displayed period and source time without redundant headings', () => {
     const wrapper = mount(ReportPeriodToolbar, {
       props: {
         mode: 'AS_OF_DATE',
@@ -95,8 +96,8 @@ describe('ReportPeriodToolbar', () => {
       global
     });
 
-    expect(wrapper.find('.period-context-details').exists()).toBe(true);
-    expect(wrapper.get('.period-source-label').text()).toBe('ดึงสำเร็จ');
-    expect(wrapper.get('.period-source strong').text()).toBe('SML 21:33 น.');
+    expect(wrapper.get('.period-context-value').text()).toContain('ณ เวลาที่อัปเดต · 12 ก.ค. 2569');
+    expect(wrapper.get('.period-context-value').text()).toContain('SML 21:33 น.');
+    expect(wrapper.text()).not.toContain('ดึงสำเร็จ');
   });
 });

@@ -51,6 +51,7 @@ export const viewerApi = {
   tenants: () => apiRequest<DataPage<ViewerTenant>>(`${api}/viewer/tenants`),
   reports: (tenantId: string, signal?: AbortSignal) => apiRequest<DataPage<ReportDefinition>>(`${api}/viewer/tenants/${tenantId}/reports`, { signal }),
   overview: (tenantId: string, signal?: AbortSignal) => apiRequest<ExecutiveOverview>(`${api}/viewer/tenants/${tenantId}/executive-overview`, { signal }),
+  exactOverview: (tenantId: string, input: DashboardRefreshInput, signal?: AbortSignal) => apiRequest<ExecutiveOverview>(`${api}/viewer/tenants/${tenantId}/executive-overview${overviewQueryString(input)}`, { signal }),
   createDashboardRefresh: (tenantId: string, input?: DashboardRefreshInput, idempotencyKey = newIdempotencyKey('dashboard-refresh')) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes`, { method: 'POST', scope: 'viewer', idempotencyKey, body: input }),
   dashboardRefresh: (tenantId: string, refreshId: string, signal?: AbortSignal) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes/${refreshId}`, { signal }),
   dashboardRefreshResult: (tenantId: string, refreshId: string, signal?: AbortSignal) => apiRequest<DashboardRefreshResult>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes/${refreshId}/result`, { signal }),
@@ -66,3 +67,12 @@ export const viewerApi = {
 
 export * from './types';
 export { ApiError } from './client';
+
+function overviewQueryString(input?: DashboardRefreshInput): string {
+  if (!input) return '';
+  const query = new URLSearchParams({ periodPreset: input.periodPreset });
+  if (input.dateFrom) query.set('dateFrom', input.dateFrom);
+  if (input.dateTo) query.set('dateTo', input.dateTo);
+  input.reportKeys.forEach((reportKey) => query.append('reportKey', reportKey));
+  return `?${query.toString()}`;
+}
