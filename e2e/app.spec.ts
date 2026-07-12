@@ -36,6 +36,15 @@ function captureUnexpectedConsoleErrors(page: Page, allowedStatusCodes: number[]
   return errors;
 }
 
+test.beforeEach(async ({ page }) => {
+  await page.route(`**${api}/admin/tenants/*/dashboard-refresh-policy`, (route) => route.fulfill(json({
+    tenantId, fastIntervalMinutes: 5, standardIntervalMinutes: 15, heavyIntervalMinutes: 30, version: 0
+  })));
+  await page.route(`**${api}/viewer/tenants/*/reports/*/revalidations`, (route) => route.fulfill(json({
+    disposition: 'DISABLED', legacyFallback: true
+  })));
+});
+
 async function mockAdminLogin(page: Page) {
   let authenticated = false;
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
@@ -53,10 +62,10 @@ async function mockAdminLogin(page: Page) {
 }
 
 async function mockEmptyExecutiveOverview(page: Page) {
-  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview`, (route) => route.fulfill(json({
-    tenantId,
-    timezone: 'Asia/Bangkok',
-    items: []
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/revalidations`, (route) => route.fulfill(json({
+    disposition: 'FRESH_CACHE',
+    overview: { tenantId, timezone: 'Asia/Bangkok', items: [] },
+    runs: []
   })));
 }
 
@@ -416,7 +425,11 @@ test('mobile viewer switches tenants from the sidebar without showing stale topb
     if (route.request().url().includes(secondTenantId)) await new Promise((resolve) => setTimeout(resolve, 250));
     await route.fulfill(json({ data: [{ reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false }], page: { hasMore: false } }));
   });
-  await page.route(`**${api}/viewer/tenants/*/executive-overview`, (route) => route.fulfill(json({ tenantId: route.request().url().includes(secondTenantId) ? secondTenantId : tenantId, timezone: 'Asia/Bangkok', items: [] })));
+  await page.route(`**${api}/viewer/tenants/*/executive-overview/revalidations`, (route) => route.fulfill(json({
+    disposition: 'FRESH_CACHE',
+    overview: { tenantId: route.request().url().includes(secondTenantId) ? secondTenantId : tenantId, timezone: 'Asia/Bangkok', items: [] },
+    runs: []
+  })));
 
   await page.goto(`/app/tenant/${tenantId}`);
   await expect(page.getByTestId('mobile-topbar-context')).toContainText('ร้านหนึ่ง');
@@ -450,7 +463,7 @@ test('viewer refreshes SQL only after confirming the current tenant context', as
 
   await page.goto(`/app/tenant/${tenantId}`);
   await page.getByRole('button', { name: 'เปลี่ยนช่วง' }).click();
-  await page.getByRole('button', { name: 'อัปเดตภาพรวม' }).click();
+  await page.getByRole('button', { name: 'ดึงใหม่จาก SML' }).click();
 
   await expect(page.getByRole('alertdialog')).toContainText('วาวา');
   await expect(page.getByRole('alertdialog')).toContainText('2 รายงาน');
@@ -459,14 +472,14 @@ test('viewer refreshes SQL only after confirming the current tenant context', as
   expect(refreshRequests).toBe(0);
 
   await page.getByRole('button', { name: 'เปลี่ยนช่วง' }).click();
-  await page.getByRole('button', { name: 'อัปเดตภาพรวม' }).click();
+  await page.getByRole('button', { name: 'ดึงใหม่จาก SML' }).click();
   await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services`);
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
   expect(refreshRequests).toBe(0);
 
   await page.goto(`/app/tenant/${tenantId}`);
   await page.getByRole('button', { name: 'เปลี่ยนช่วง' }).click();
-  await page.getByRole('button', { name: 'อัปเดตภาพรวม' }).click();
+  await page.getByRole('button', { name: 'ดึงใหม่จาก SML' }).click();
   await page.getByRole('button', { name: 'ดึง SQL ใหม่' }).click();
   await expect.poll(() => refreshRequests).toBe(1);
 });
@@ -520,8 +533,13 @@ test('LINE mobile overview renders readable responsive charts with full table da
   await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({ recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-12T00:00:00Z' })));
   await page.route(`**${api}/viewer/tenants`, (route) => route.fulfill(json({ data: [{ id: tenantId, name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', reportKeys: reports.map(([key]) => key) }], page: { hasMore: false } })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({ data: reports.map(([reportKey, label]) => ({ reportKey, label, version: '1.0.0', category: 'REPORT', isSensitive: false })), page: { hasMore: false } })));
-  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview`, (route) => route.fulfill(json({
-    tenantId, timezone: 'Asia/Bangkok', items: reports.map(([reportKey], index) => ({ runId: `${index + 1}1111111-1111-4111-8111-111111111111`, dashboard: dashboardForReport(reportKey) }))
+  await page.route(`**${api}/viewer/tenants/${tenantId}/executive-overview/revalidations`, (route) => route.fulfill(json({
+    disposition: 'FRESH_CACHE', runs: [], overview: {
+      tenantId, timezone: 'Asia/Bangkok', items: reports.map(([reportKey], index) => ({
+        runId: `${index + 1}1111111-1111-4111-8111-111111111111`, dashboard: dashboardForReport(reportKey),
+        sourceFinishedAt: '2026-07-12T08:00:00+07:00', freshnessStatus: 'FRESH', detailsAvailable: false
+      }))
+    }
   })));
 
   await page.goto(`/app/tenant/${tenantId}`);
@@ -817,7 +835,7 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
       await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
       await expect(page.getByText('เทียบกับ 8 ก.ค. 2569')).toBeVisible();
       if (width === 390) await expect(page.getByRole('button', { name: reportKey === 'stock_reorder' ? 'รีเฟรช' : 'เปลี่ยนช่วง' })).toBeVisible();
-      else await expect(page.getByRole('button', { name: /ดึงข้อมูลช่วงนี้|ดูสถานะปัจจุบัน/ })).toBeVisible();
+		else await expect(page.getByRole('button', { name: /ดูข้อมูลช่วงนี้|ดูสถานะปัจจุบัน/ })).toBeVisible();
       await expect(page.getByLabel('ตัวกรองรายงาน')).toHaveCount(0);
       const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
       expect(hasHorizontalOverflow).toBe(false);
