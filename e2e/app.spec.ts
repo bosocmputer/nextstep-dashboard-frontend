@@ -284,6 +284,25 @@ test('tenant detail restores the editable SML URL, removes duplicate entity head
   await expect(page.getByText('เวลาไทย', { exact: true })).toHaveCount(0);
 });
 
+test('an unconfigured tenant starts with the standard SMLConfigDATA filename', async ({ page }) => {
+  const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
+  await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
+  await page.route(`**${api}/admin/tenants/${tenantId}`, (route) => route.fulfill(json({
+    id: tenantId, slug: 'new-shop', name: 'ร้านใหม่', timezone: 'Asia/Bangkok', status: 'DISABLED',
+    accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'UNCONFIGURED',
+    createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
+  })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({
+    error: { code: 'SML_CONNECTION_NOT_FOUND', message: 'SML connection is not configured.', requestId: 'e2e', retryable: false }
+  }, 404)));
+  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
+
+  await page.goto(`/admin/tenants/${tenantId}?tab=sml`);
+
+  await expect(page.getByLabel('ไฟล์ SMLConfig')).toHaveValue('SMLConfigDATA.xml');
+});
+
 test('admin manages recipient permissions on a full searchable page with optimistic versioning', async ({ page }) => {
   const recipientId = '33333333-3333-4333-8333-333333333333';
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };

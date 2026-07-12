@@ -38,7 +38,7 @@ const testSendActionKeys = new Map<string, string>();
 let scheduleLoadGeneration = 0;
 
 const tenantForm = reactive({ name: '', status: 'DISABLED' as Tenant['status'], accessEndsAt: new Date(), version: 1 });
-const smlForm = reactive({ endpointUrl: '', configFileName: 'config.xml', databaseName: '', version: 0 });
+const smlForm = reactive({ endpointUrl: '', configFileName: 'SMLConfigDATA.xml', databaseName: '', version: 0 });
 const tenantFingerprint = computed(() => JSON.stringify({ name: tenantForm.name.trim(), status: tenantForm.status, accessEndsAt: tenantForm.accessEndsAt.getTime() }));
 const smlFingerprint = computed(() => JSON.stringify({ endpointUrl: smlForm.endpointUrl.trim(), configFileName: smlForm.configFileName.trim(), databaseName: smlForm.databaseName.trim() }));
 const tenantDirty = computed(() => !!tenant.value && tenantFingerprint.value !== tenantBaseline.value);
@@ -56,7 +56,7 @@ async function load() {
     ]);
     if (smlResult.status === 'fulfilled') {
       sml.value = smlResult.value;
-      Object.assign(smlForm, { endpointUrl: sml.value.endpointUrl ?? '', configFileName: sml.value.configFileName ?? 'config.xml', databaseName: sml.value.databaseName ?? '', version: sml.value.version });
+      Object.assign(smlForm, { endpointUrl: sml.value.endpointUrl ?? '', configFileName: sml.value.configFileName ?? 'SMLConfigDATA.xml', databaseName: sml.value.databaseName ?? '', version: sml.value.version });
       smlBaseline.value = smlFingerprint.value;
       smlLoaded.value = true;
     } else if (smlResult.reason instanceof ApiError && smlResult.reason.status === 404) {
