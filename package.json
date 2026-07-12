@@ -10,7 +10,9 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
+    "test:liff-config": "node --test scripts/verify-liff-build-id.node-test.mjs",
     "test:e2e": "playwright test",
+    "liff:verify": "node scripts/verify-liff-build-id.mjs",
     "openapi:generate": "openapi-typescript ../nextstep-dashboard-backend/api/openapi.yaml -o src/api/schema.d.ts && node scripts/update-contract.mjs",
     "contract:verify": "node scripts/verify-contract.mjs"
   },

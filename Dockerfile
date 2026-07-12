@@ -8,6 +8,8 @@ COPY . .
 ARG VITE_LINE_LIFF_ID
 ENV VITE_LINE_LIFF_ID=${VITE_LINE_LIFF_ID}
 RUN test -n "$VITE_LINE_LIFF_ID" \
+    && npm run test:liff-config \
+    && npm run liff:verify \
     && npm run typecheck \
     && npm test \
     && npm run build

@@ -17,6 +17,11 @@ The Vite development server proxies `/api` to the backend so browser cookies
 remain same-origin. `VITE_LINE_LIFF_ID` is a public LIFF identifier, not a
 secret.
 
+Production images must receive the dashboard LIFF ID from the release
+configuration (`vars.VITE_LINE_LIFF_ID`). Never infer it from a compiled bundle:
+the LINE SDK contains its own internal LIFF IDs, and the build guard rejects
+those IDs before an image can be published.
+
 ## API contract
 
 The backend owns the OpenAPI contract. Regenerate the client types after an API
