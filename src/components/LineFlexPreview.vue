@@ -48,6 +48,7 @@ function generatedAtLabel(value: string) {
         <h3>{{ preview.tenantName }}</h3>
         <p class="flex-preview-period">{{ preview.periodLabel }}</p>
         <p class="flex-preview-count">{{ preview.reports.length }} รายงาน</p>
+        <p v-if="preview.contextNote" class="flex-preview-context-note">{{ preview.contextNote }}</p>
         <template v-for="(report, index) in preview.reports" :key="report.key">
           <span v-if="showCategory(index)" class="flex-preview-category">{{ report.categoryLabel }}</span>
           <section class="flex-preview-report">
@@ -118,6 +119,7 @@ function generatedAtLabel(value: string) {
 .flex-preview-body h3 { display: -webkit-box; overflow: hidden; margin: 0; font-size: 1.25rem; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .flex-preview-period { margin: 0.35rem 0 0; color: #5b6b82; font-size: 0.875rem; }
 .flex-preview-count { margin: 0.25rem 0 0; color: #94a3b8; font-size: 0.72rem; }
+.flex-preview-context-note { margin: 0.45rem 0 0; color: #5b6b82; font-size: 0.72rem; line-height: 1.4; }
 
 .flex-preview-report {
   margin-top: 0.75rem;

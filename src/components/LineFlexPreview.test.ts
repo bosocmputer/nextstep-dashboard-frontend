@@ -7,8 +7,9 @@ const preview: FlexPreview = {
   presentationVersion: 'executive-navy-v1',
   altText: 'รายงาน ร้านตัวอย่าง — ข้อมูลวันที่ 2026-07-10',
   tenantName: 'ร้านตัวอย่าง',
-  period: { preset: 'YESTERDAY', dateFrom: '2026-07-10', dateTo: '2026-07-10' },
+  period: { preset: 'TODAY_TO_NOW', dateFrom: '2026-07-10', dateTo: '2026-07-10' },
   periodLabel: 'ข้อมูลวันที่ 2026-07-10',
+  contextNote: 'วันนี้ยังไม่มีช่วงเวลาเปรียบเทียบที่เท่ากัน',
   generatedAt: '2026-07-11T01:30:00+07:00',
   actionUrl: 'https://dashboard.nextstep-soft.com/app',
   payloadBytes: 2048,
@@ -40,6 +41,7 @@ describe('LineFlexPreview', () => {
     expect(wrapper.text()).toContain('ตัวเลขสมมติเท่านั้น');
     expect(wrapper.text()).toContain('ไม่ดึงข้อมูลจาก SML');
     expect(wrapper.text()).toContain('แบบอักษรอาจต่างเล็กน้อยตาม iOS/Android');
+    expect(wrapper.text()).toContain('วันนี้ยังไม่มีช่วงเวลาเปรียบเทียบที่เท่ากัน');
     expect(wrapper.text()).toContain('รายงานขายสินค้าและบริการ');
     expect(wrapper.text()).toContain('1,234,567.89');
     expect(wrapper.text()).not.toContain('฿');
