@@ -3,7 +3,8 @@ import type {
   AdminReportCatalog, AdminSession, AuditPage, CreateReportRunInput, DataPage, DeliveryPage, Recipient, RecipientPage, ReportDefinition,
   FlexPreview, FlexPreviewInput, LineQuotaStatus, NotificationExecution, ReportKey, ReportRowPage, ReportRun, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
   SMLConnectionInput, SMLConnectionStatus, SMLConnectionTestResult, Tenant, TenantInput, TenantPage, TenantPatch,
-  DashboardRefresh, DashboardRefreshInput, DashboardRefreshResult, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant
+  DashboardRefresh, DashboardRefreshInput, DashboardRefreshResult, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant,
+  DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot
 } from './types';
 
 const api = '/api/v1';
@@ -18,6 +19,8 @@ export const adminApi = {
   createTenant: (input: TenantInput, idempotencyKey = newIdempotencyKey('tenant')) => apiRequest<Tenant>(`${api}/admin/tenants`, { method: 'POST', scope: 'admin', idempotencyKey, body: input }),
   getTenant: (tenantId: string) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`),
   updateTenant: (tenantId: string, input: TenantPatch) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`, { method: 'PATCH', scope: 'admin', body: input }),
+  getDashboardRefreshPolicy: (tenantId: string, signal?: AbortSignal) => apiRequest<DashboardRefreshPolicy>(`${api}/admin/tenants/${tenantId}/dashboard-refresh-policy`, { signal }),
+  updateDashboardRefreshPolicy: (tenantId: string, input: DashboardRefreshPolicyInput) => apiRequest<DashboardRefreshPolicy>(`${api}/admin/tenants/${tenantId}/dashboard-refresh-policy`, { method: 'PUT', scope: 'admin', body: input }),
   getSML: (tenantId: string) => apiRequest<SMLConnectionStatus>(`${api}/admin/tenants/${tenantId}/sml-connection`),
   replaceSML: (tenantId: string, input: SMLConnectionInput) => apiRequest<SMLConnectionStatus>(`${api}/admin/tenants/${tenantId}/sml-connection`, { method: 'PUT', scope: 'admin', body: input }),
   testSML: (tenantId: string) => apiRequest<SMLConnectionTestResult>(`${api}/admin/tenants/${tenantId}/sml-connection/test`, { method: 'POST', scope: 'admin', timeoutMs: 35_000 }),
@@ -51,6 +54,9 @@ export const viewerApi = {
   createDashboardRefresh: (tenantId: string, input?: DashboardRefreshInput, idempotencyKey = newIdempotencyKey('dashboard-refresh')) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes`, { method: 'POST', scope: 'viewer', idempotencyKey, body: input }),
   dashboardRefresh: (tenantId: string, refreshId: string, signal?: AbortSignal) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes/${refreshId}`, { signal }),
   dashboardRefreshResult: (tenantId: string, refreshId: string, signal?: AbortSignal) => apiRequest<DashboardRefreshResult>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes/${refreshId}/result`, { signal }),
+  revalidateOverview: (tenantId: string, input: DashboardRefreshInput, signal?: AbortSignal) => apiRequest<OverviewRevalidation>(`${api}/viewer/tenants/${tenantId}/executive-overview/revalidations`, { method: 'POST', scope: 'viewer', body: input, signal }),
+  exactSnapshot: (tenantId: string, reportKey: ReportKey, input: CreateReportRunInput, signal?: AbortSignal) => apiRequest<DashboardSnapshot>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/snapshots/latest${queryString(input)}`, { signal }),
+  revalidateReport: (tenantId: string, reportKey: ReportKey, input: CreateReportRunInput, signal?: AbortSignal) => apiRequest<ReportRevalidation>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/revalidations`, { method: 'POST', scope: 'viewer', body: input, signal }),
   createRun: (tenantId: string, reportKey: ReportKey, input: CreateReportRunInput, idempotencyKey = newIdempotencyKey('viewer-run')) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs`, { method: 'POST', scope: 'viewer', idempotencyKey, body: input }),
   run: (tenantId: string, reportKey: ReportKey, runId: string, signal?: AbortSignal) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}`, { signal }),
   dashboard: (tenantId: string, reportKey: ReportKey, runId: string, signal?: AbortSignal) => apiRequest<ReportDashboard>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/dashboard`, { signal }),

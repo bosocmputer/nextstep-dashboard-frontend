@@ -45,4 +45,23 @@ describe('ReportPeriodToolbar', () => {
     await wrapper.findAll('button').at(-1)!.trigger('click');
     expect(wrapper.emitted('apply')?.[0]).toEqual([{ periodPreset: 'MONTH_TO_DATE' }]);
   });
+
+  it('separates cache lookup from an explicit SML force refresh', async () => {
+    const wrapper = mount(ReportPeriodToolbar, {
+      props: {
+        mode: 'DATE_RANGE',
+        selection: { periodPreset: 'MONTH_TO_DATE' },
+        actionLabel: 'ดูข้อมูลช่วงนี้',
+        forceActionLabel: 'ดึงใหม่จาก SML'
+      },
+      global
+    });
+
+    const buttons = wrapper.findAll('button');
+    expect(wrapper.text()).toContain('ดูข้อมูลช่วงนี้');
+    expect(wrapper.text()).toContain('ดึงใหม่จาก SML');
+    await buttons.find((button) => button.text() === 'ดึงใหม่จาก SML')!.trigger('click');
+    expect(wrapper.emitted('force')?.[0]).toEqual([{ periodPreset: 'MONTH_TO_DATE' }]);
+    expect(wrapper.emitted('apply')).toBeUndefined();
+  });
 });

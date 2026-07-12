@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
-import { adminApi, ApiError, type Recipient, type Schedule, type SMLConnectionStatus, type Tenant } from '@/api';
+import { adminApi, ApiError, type DashboardRefreshPolicy, type DashboardRefreshPolicyInput, type Recipient, type Schedule, type SMLConnectionStatus, type Tenant } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
@@ -18,12 +18,14 @@ const tenant = ref<Tenant>();
 const sml = ref<SMLConnectionStatus>();
 const recipients = ref<Recipient[]>([]);
 const schedules = ref<Schedule[]>([]);
+const refreshPolicy = ref<DashboardRefreshPolicy>();
 const showArchived = ref(false);
 const loading = ref(true);
 const error = ref('');
 const savingTenant = ref(false);
 const testingSML = ref(false);
 const savingSML = ref(false);
+const savingRefreshPolicy = ref(false);
 const inviteOpen = ref(false);
 const inviteLabel = ref('');
 const inviteURL = ref('');
@@ -32,6 +34,7 @@ const testSendingScheduleId = ref('');
 const changingScheduleId = ref('');
 const tenantBaseline = ref('');
 const smlBaseline = ref('');
+const refreshPolicyBaseline = ref('');
 const smlLoaded = ref(false);
 let inviteActionKey = '';
 const testSendActionKeys = new Map<string, string>();
@@ -39,11 +42,17 @@ let scheduleLoadGeneration = 0;
 
 const tenantForm = reactive({ name: '', status: 'DISABLED' as Tenant['status'], accessEndsAt: new Date(), version: 1 });
 const smlForm = reactive({ endpointUrl: '', configFileName: 'SMLConfigDATA.xml', databaseName: '', version: 0 });
+const refreshPolicyForm = reactive<DashboardRefreshPolicyInput>({ fastIntervalMinutes: 5, standardIntervalMinutes: 15, heavyIntervalMinutes: 30, version: 0 });
 const tenantFingerprint = computed(() => JSON.stringify({ name: tenantForm.name.trim(), status: tenantForm.status, accessEndsAt: tenantForm.accessEndsAt.getTime() }));
 const smlFingerprint = computed(() => JSON.stringify({ endpointUrl: smlForm.endpointUrl.trim(), configFileName: smlForm.configFileName.trim(), databaseName: smlForm.databaseName.trim() }));
 const tenantDirty = computed(() => !!tenant.value && tenantFingerprint.value !== tenantBaseline.value);
 const smlDirty = computed(() => smlLoaded.value && smlFingerprint.value !== smlBaseline.value);
-const hasUnsavedChanges = computed(() => tenantDirty.value || smlDirty.value);
+const refreshPolicyFingerprint = computed(() => JSON.stringify(refreshPolicyForm));
+const refreshPolicyDirty = computed(() => !!refreshPolicy.value && refreshPolicyFingerprint.value !== refreshPolicyBaseline.value);
+const hasUnsavedChanges = computed(() => tenantDirty.value || smlDirty.value || refreshPolicyDirty.value);
+const fastIntervalOptions = [{ label: 'ปิด', value: null }, 5, 10, 15, 30, 60].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
+const standardIntervalOptions = [{ label: 'ปิด', value: null }, 15, 30, 60].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
+const heavyIntervalOptions = [{ label: 'ปิด', value: null }, 30, 60, 120].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
 
 async function load() {
   loading.value = true; error.value = '';
@@ -51,8 +60,8 @@ async function load() {
     tenant.value = await adminApi.getTenant(tenantId);
     Object.assign(tenantForm, { name: tenant.value.name, status: tenant.value.status, accessEndsAt: new Date(tenant.value.accessEndsAt), version: tenant.value.version });
     tenantBaseline.value = tenantFingerprint.value;
-    const [smlResult, recipientResult, scheduleResult] = await Promise.allSettled([
-      adminApi.getSML(tenantId), adminApi.listRecipients(tenantId), adminApi.listSchedules(tenantId, undefined, showArchived.value)
+    const [smlResult, recipientResult, scheduleResult, policyResult] = await Promise.allSettled([
+      adminApi.getSML(tenantId), adminApi.listRecipients(tenantId), adminApi.listSchedules(tenantId, undefined, showArchived.value), adminApi.getDashboardRefreshPolicy(tenantId)
     ]);
     if (smlResult.status === 'fulfilled') {
       sml.value = smlResult.value;
@@ -64,8 +73,29 @@ async function load() {
     } else throw smlResult.reason;
     recipients.value = recipientResult.status === 'fulfilled' ? recipientResult.value.data : [];
     schedules.value = scheduleResult.status === 'fulfilled' ? scheduleResult.value.data : [];
+    if (policyResult.status === 'fulfilled') {
+      refreshPolicy.value = policyResult.value;
+      Object.assign(refreshPolicyForm, policyResult.value);
+      refreshPolicyBaseline.value = refreshPolicyFingerprint.value;
+    } else throw policyResult.reason;
   } catch (cause) { error.value = errorMessage(cause); }
   finally { loading.value = false; }
+}
+
+async function saveRefreshPolicy() {
+  if (!refreshPolicy.value || savingRefreshPolicy.value || !refreshPolicyDirty.value) return;
+  savingRefreshPolicy.value = true;
+  try {
+    const updated = await adminApi.updateDashboardRefreshPolicy(tenantId, { ...refreshPolicyForm });
+    refreshPolicy.value = updated; Object.assign(refreshPolicyForm, updated); refreshPolicyBaseline.value = refreshPolicyFingerprint.value;
+    toast.add({ severity: 'success', summary: 'บันทึกรอบอัปเดต Dashboard แล้ว', life: 3000 });
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.code === 'VERSION_CONFLICT') {
+      const latest = await adminApi.getDashboardRefreshPolicy(tenantId);
+      refreshPolicy.value = latest; Object.assign(refreshPolicyForm, latest); refreshPolicyBaseline.value = refreshPolicyFingerprint.value;
+      toast.add({ severity: 'warn', summary: 'มีผู้ดูแลแก้ไขค่าก่อนหน้า', detail: 'โหลดค่าล่าสุดแล้ว กรุณาตรวจสอบอีกครั้ง', life: 5000 });
+    } else toast.add({ severity: 'error', summary: 'บันทึกรอบอัปเดตไม่ได้', detail: errorMessage(cause), life: 5000 });
+  } finally { savingRefreshPolicy.value = false; }
 }
 
 function saveTenant() {
@@ -310,10 +340,11 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
       <div class="flex flex-wrap gap-2"><Tag :severity="tenant.status === 'ACTIVE' ? 'success' : 'secondary'" :value="statusLabel(tenant.status)" /><Tag :severity="sml?.readinessStatus === 'READY' ? 'success' : 'warn'" :value="`SML ${statusLabel(sml?.readinessStatus ?? 'UNCONFIGURED')}`" /></div>
     </div>
     <div class="card"><Tabs v-model:value="activeTab">
-      <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">การเชื่อมต่อ SML</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">ตารางส่งรายงาน</Tab></TabList>
+      <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">การเชื่อมต่อ SML</Tab><Tab value="refresh">การอัปเดต Dashboard</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">ตารางส่งรายงาน</Tab></TabList>
       <TabPanels>
         <TabPanel value="overview"><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveTenant"><div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="tenantForm.name" fluid /></div><div class="grid gap-2"><label for="tenant-status">สถานะ</label><Select input-id="tenant-status" aria-label="สถานะ" v-model="tenantForm.status" :options="['ACTIVE','DISABLED','EXPIRED']" fluid /></div><div class="grid gap-2"><label for="tenant-access-end">สิ้นสุดสิทธิ์ (เวลาไทย)</label><DatePicker input-id="tenant-access-end" v-model="tenantForm.accessEndsAt" show-icon show-time hour-format="24" fluid /></div><div class="md:col-span-2 flex items-center gap-3"><Button type="submit" label="บันทึกข้อมูลร้าน" icon="pi pi-save" :loading="savingTenant" :disabled="savingTenant || !tenantDirty" /><small v-if="tenantDirty" class="text-orange-600">มีการแก้ไขที่ยังไม่บันทึก</small></div></form><Accordion class="mt-6 max-w-4xl"><AccordionPanel value="technical"><AccordionHeader>ข้อมูลทางเทคนิค</AccordionHeader><AccordionContent><div class="flex flex-wrap items-center gap-3"><div><div class="text-sm text-muted-color">รหัสระบบ</div><code>{{ tenant.slug }}</code></div><Button label="คัดลอกรหัส" icon="pi pi-copy" text @click="copySlug" /></div></AccordionContent></AccordionPanel></Accordion></TabPanel>
         <TabPanel value="sml"><Message severity="info" :closable="false" class="mb-5">กรอก Base URL ของร้านได้ ระบบจะเติม <code>/SMLJavaWebService/DotNetFrameWork</code> ให้อัตโนมัติ และจะไม่แสดงรหัสผ่านหรือ token กลับมา</Message><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveSML"><div class="grid gap-2 md:col-span-2"><label for="sml-endpoint">Java Web Service Base URL</label><InputText id="sml-endpoint" v-model="smlForm.endpointUrl" placeholder="http://shop.example.com:8092" fluid /></div><div class="grid gap-2"><label for="sml-config-file">ไฟล์ SMLConfig</label><InputText id="sml-config-file" v-model="smlForm.configFileName" placeholder="SMLConfigDATA.xml" fluid /></div><div class="grid gap-2"><label for="sml-database">ชื่อฐานข้อมูล SML</label><InputText id="sml-database" v-model="smlForm.databaseName" fluid /></div><div class="md:col-span-2 flex flex-wrap items-center gap-3"><Button type="submit" label="บันทึกการเชื่อมต่อ" icon="pi pi-save" :loading="savingSML" :disabled="savingSML || !smlDirty" /><span v-tooltip.top="smlDirty ? 'บันทึกค่าชุดล่าสุดก่อนทดสอบ' : !sml?.isConfigured ? 'ตั้งค่าและบันทึก SML ก่อนทดสอบ' : ''"><Button type="button" label="ทดสอบการเชื่อมต่อ" icon="pi pi-bolt" outlined :disabled="!sml?.isConfigured || smlDirty || savingSML" :loading="testingSML" @click="testSML" /></span><small v-if="smlDirty" class="text-orange-600">บันทึกค่าก่อนทดสอบการเชื่อมต่อ</small></div></form></TabPanel>
+        <TabPanel value="refresh"><Message severity="info" :closable="false" class="mb-5">กำหนดอายุของ Snapshot ขณะมีผู้ใช้เปิด Dashboard ค่านี้ไม่ใช่ตารางส่ง LINE และระบบจะไม่ Query SML ตลอด 24 ชั่วโมง</Message><form class="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl" @submit.prevent="saveRefreshPolicy"><div class="grid gap-2"><label for="refresh-fast">ข้อมูลเคลื่อนไหวเร็ว</label><Select input-id="refresh-fast" v-model="refreshPolicyForm.fastIntervalMinutes" :options="fastIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">ขาย · รับชำระ · รับเงิน · จ่ายเงิน</small></div><div class="grid gap-2"><label for="refresh-standard">รายงานทั่วไป</label><Select input-id="refresh-standard" v-model="refreshPolicyForm.standardIntervalMinutes" :options="standardIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">ซื้อ · กำไร · ลูกหนี้ · จุดสั่งซื้อ</small></div><div class="grid gap-2"><label for="refresh-heavy">รายงานหนัก</label><Select input-id="refresh-heavy" v-model="refreshPolicyForm.heavyIntervalMinutes" :options="heavyIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">สต็อกคงเหลือ</small></div><div class="md:col-span-3 flex flex-wrap items-center gap-3"><Button type="submit" label="บันทึกรอบอัปเดต" icon="pi pi-save" :loading="savingRefreshPolicy" :disabled="savingRefreshPolicy || !refreshPolicyDirty" /><small v-if="refreshPolicyDirty" class="text-orange-600">มีค่าที่ยังไม่ได้บันทึก</small></div></form></TabPanel>
         <TabPanel value="recipients"><Toolbar class="mb-5 border-0 p-0"><template #start><div><h2 class="text-lg font-semibold m-0">ผู้รับและสิทธิ์รายงาน</h2><p class="text-muted-color mt-1 mb-0">ผู้รับต้องยืนยันผ่าน LINE ก่อนจึงจะส่งรายงานได้</p></div></template><template #end><Button label="เชิญผู้รับ" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''" /></template></Toolbar><DataTable :value="recipients" data-key="id" striped-rows scrollable><Column field="displayName" header="ชื่อ" /><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template></Column><Column header="สิทธิ์"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template></Column><Column field="verifiedAt" header="ยืนยันเมื่อ"><template #body="{ data }">{{ formatDateTime(data.verifiedAt) }}</template></Column><Column header=""><template #body="{ data }"><Button label="กำหนดสิทธิ์" icon="pi pi-lock" text class="touch-action" @click="editPermissions(data)" /></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ กด “เชิญผู้รับ” เพื่อเริ่มต้น</div></template></DataTable></TabPanel>
         <TabPanel value="schedules">
           <Toolbar class="mb-5 border-0 p-0">

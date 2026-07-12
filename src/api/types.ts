@@ -45,6 +45,11 @@ export type DashboardRefresh = components['schemas']['DashboardRefresh'];
 export type DashboardRefreshInput = components['schemas']['DashboardRefreshInput'];
 export type DashboardRefreshFailure = components['schemas']['DashboardRefreshFailure'];
 export type DashboardRefreshResult = components['schemas']['DashboardRefreshResult'];
+export type DashboardRefreshPolicy = components['schemas']['DashboardRefreshPolicy'];
+export type DashboardRefreshPolicyInput = components['schemas']['DashboardRefreshPolicyInput'];
+export type ReportRevalidation = components['schemas']['ReportRevalidation'];
+export type OverviewRevalidation = components['schemas']['OverviewRevalidation'];
+export type FreshnessStatus = NonNullable<DashboardSnapshot['freshnessStatus']>;
 
 export interface DataPage<T> {
   data: T[];

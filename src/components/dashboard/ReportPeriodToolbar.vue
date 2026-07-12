@@ -15,6 +15,7 @@ const props = withDefaults(defineProps<{
   selection: ReportPeriodSelection;
   displayedLabel?: string;
   actionLabel?: string;
+  forceActionLabel?: string;
   loading?: boolean;
   disabled?: boolean;
 }>(), {
@@ -24,7 +25,7 @@ const props = withDefaults(defineProps<{
   disabled: false
 });
 
-const emit = defineEmits<{ apply: [selection: ReportPeriodSelection] }>();
+const emit = defineEmits<{ apply: [selection: ReportPeriodSelection]; force: [selection: ReportPeriodSelection] }>();
 const draft = ref<ReportPeriodSelection>({ ...props.selection });
 const dateFrom = ref<Date | null>(null);
 const dateTo = ref<Date | null>(null);
@@ -92,6 +93,12 @@ function apply() {
   emit('apply', { ...draft.value });
   expanded.value = false;
 }
+
+function force() {
+  if (applyDisabled.value) return;
+  emit('force', { ...draft.value });
+  expanded.value = false;
+}
 </script>
 
 <template>
@@ -148,6 +155,7 @@ function apply() {
         </div>
       </template>
       <Button :label="actionLabel" icon="pi pi-refresh" :loading="loading" :disabled="applyDisabled" @click="apply" />
+      <Button v-if="forceActionLabel" :label="forceActionLabel" icon="pi pi-database" severity="secondary" outlined :disabled="applyDisabled" @click="force" />
     </div>
 
     <Message v-if="mode !== 'CURRENT_ONLY' && validation.message" severity="error" :closable="false" class="period-message">{{ validation.message }}</Message>
@@ -162,10 +170,10 @@ function apply() {
 .period-context span { color: var(--text-color-secondary); font-size: .75rem; }
 .period-context strong { overflow-wrap: anywhere; font-size: .9rem; }
 .period-context-arrow { color: var(--text-color-secondary); font-size: .75rem; }
-.period-controls { display: grid; grid-template-columns: minmax(12rem, 14rem) minmax(11rem, 1fr) minmax(11rem, 1fr) auto; align-items: end; gap: .75rem; padding-top: 1rem; border-top: 1px solid var(--surface-border); }
+.period-controls { display: grid; grid-template-columns: minmax(12rem, 14rem) minmax(11rem, 1fr) minmax(11rem, 1fr) auto auto; align-items: end; gap: .75rem; padding-top: 1rem; border-top: 1px solid var(--surface-border); }
 .period-field { display: grid; gap: .4rem; }
 .period-field label { font-size: .8rem; font-weight: 600; }
-.current-only-copy { grid-column: 1 / -2; display: flex; align-items: center; gap: .75rem; min-height: 2.75rem; }
+.current-only-copy { grid-column: 1 / -3; display: flex; align-items: center; gap: .75rem; min-height: 2.75rem; }
 .current-only-copy > i { color: var(--primary-color); font-size: 1.1rem; }
 .current-only-copy > div { display: grid; gap: .15rem; }
 .current-only-copy span { color: var(--text-color-secondary); font-size: .75rem; }

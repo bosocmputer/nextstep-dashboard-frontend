@@ -168,6 +168,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/tenants/{tenantId}/dashboard-refresh-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        get: operations["getDashboardRefreshPolicy"];
+        put: operations["replaceDashboardRefreshPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/tenants/{tenantId}/sml-connection/test": {
         parameters: {
             query?: never;
@@ -532,6 +550,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/viewer/tenants/{tenantId}/executive-overview/revalidations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["revalidateViewerExecutiveOverview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/viewer/tenants/{tenantId}/executive-overview/refreshes/{refreshId}": {
         parameters: {
             query?: never;
@@ -574,6 +608,38 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["createViewerReportRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/viewer/tenants/{tenantId}/reports/{reportKey}/snapshots/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getLatestExactViewerSnapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/viewer/tenants/{tenantId}/reports/{reportKey}/revalidations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["revalidateViewerReport"];
         delete?: never;
         options?: never;
         head?: never;
@@ -739,6 +805,26 @@ export interface components {
         TenantPage: {
             data: components["schemas"]["Tenant"][];
             page: components["schemas"]["PageInfo"];
+        };
+        DashboardRefreshPolicy: {
+            /** Format: uuid */
+            tenantId: string;
+            /** @enum {integer|null} */
+            fastIntervalMinutes?: 5 | 10 | 15 | 30 | 60 | null;
+            /** @enum {integer|null} */
+            standardIntervalMinutes?: 15 | 30 | 60 | null;
+            /** @enum {integer|null} */
+            heavyIntervalMinutes?: 30 | 60 | 120 | null;
+            version: number;
+        };
+        DashboardRefreshPolicyInput: {
+            /** @enum {integer|null} */
+            fastIntervalMinutes: 5 | 10 | 15 | 30 | 60 | null;
+            /** @enum {integer|null} */
+            standardIntervalMinutes: 15 | 30 | 60 | null;
+            /** @enum {integer|null} */
+            heavyIntervalMinutes: 30 | 60 | 120 | null;
+            version: number;
         };
         SMLConnectionInput: {
             /**
@@ -977,6 +1063,8 @@ export interface components {
             tenantName?: string;
             reportKey: components["schemas"]["ReportKey"];
             status: components["schemas"]["ReportRunStatus"];
+            /** @enum {string} */
+            resultKind?: "SUMMARY" | "DETAIL";
             periodPreset: string;
             /** Format: date */
             dateFrom?: string | null;
@@ -1001,6 +1089,21 @@ export interface components {
             finishedAt?: string | null;
             /** Format: date-time */
             expiresAt: string;
+            progress?: components["schemas"]["ReportRunProgress"];
+        };
+        ReportRunProgress: {
+            /** @enum {string} */
+            phase: "QUEUED" | "CONNECTING" | "QUERYING_CURRENT" | "QUERYING_COMPARISON" | "BUILDING_DASHBOARD" | "SAVING_RESULT" | "WAITING_RETRY" | "COMPLETED";
+            phaseSequence: number;
+            completedSteps: number;
+            totalSteps: number;
+            attempt: number;
+            /** Format: date-time */
+            updatedAt?: string | null;
+            expectedP50Ms?: number | null;
+            expectedP90Ms?: number | null;
+            sampleCount: number;
+            elapsedMs: number;
         };
         ReportRunPage: {
             data: components["schemas"]["ReportRun"][];
@@ -1079,6 +1182,25 @@ export interface components {
             /** Format: uuid */
             runId: string;
             dashboard: components["schemas"]["ReportDashboard"];
+            /** Format: date */
+            periodFrom?: string;
+            /** Format: date */
+            periodTo?: string;
+            /** Format: date-time */
+            sourceStartedAt?: string | null;
+            /** Format: date-time */
+            sourceFinishedAt?: string | null;
+            /** Format: date-time */
+            freshUntil?: string | null;
+            /** Format: date-time */
+            staleUntil?: string | null;
+            /** @enum {string} */
+            freshnessStatus?: "FRESH" | "STALE" | "EXPIRED" | "MISSING" | "REFRESHING" | "REFRESH_FAILED";
+            reportDefinitionVersion?: string;
+            dataSourceVersion?: number;
+            detailsAvailable?: boolean;
+            /** Format: date-time */
+            detailsExpiresAt?: string | null;
         };
         ExecutiveOverview: {
             /** Format: uuid */
@@ -1092,6 +1214,13 @@ export interface components {
             /** Format: uuid */
             runId: string;
             status: components["schemas"]["ReportRunStatus"];
+            /** @enum {string} */
+            progressPhase?: "QUEUED" | "CONNECTING" | "QUERYING_CURRENT" | "QUERYING_COMPARISON" | "BUILDING_DASHBOARD" | "SAVING_RESULT" | "WAITING_RETRY" | "COMPLETED";
+            /** Format: date-time */
+            progressUpdatedAt?: string | null;
+            expectedP50Ms?: number;
+            expectedP90Ms?: number;
+            expectedSampleCount?: number;
         };
         DashboardRefresh: {
             /** Format: uuid */
@@ -1132,6 +1261,24 @@ export interface components {
             status: "PARTIAL" | "SUCCEEDED" | "FAILED";
             items: components["schemas"]["DashboardSnapshot"][];
             failures: components["schemas"]["DashboardRefreshFailure"][];
+        };
+        /** @enum {string} */
+        RevalidationDisposition: "FRESH_CACHE" | "STALE_REFRESHING" | "MISSING_REFRESHING" | "JOINED" | "DISABLED" | "CIRCUIT_OPEN";
+        ReportRevalidation: {
+            disposition: components["schemas"]["RevalidationDisposition"];
+            snapshot?: components["schemas"]["DashboardSnapshot"];
+            run?: components["schemas"]["ReportRun"];
+            retryAfter: number;
+            /** @default false */
+            legacyFallback: boolean;
+        };
+        OverviewRevalidation: {
+            disposition: components["schemas"]["RevalidationDisposition"];
+            overview: components["schemas"]["ExecutiveOverview"];
+            runs: components["schemas"]["ReportRun"][];
+            retryAfter: number;
+            /** @default false */
+            legacyFallback: boolean;
         };
         LineSessionInput: {
             idToken: string;
@@ -1682,6 +1829,59 @@ export interface operations {
                     "application/json": components["schemas"]["SMLConnectionStatus"];
                 };
             };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getDashboardRefreshPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective per-tenant refresh intervals. Null disables the corresponding class. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardRefreshPolicy"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    replaceDashboardRefreshPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DashboardRefreshPolicyInput"];
+            };
+        };
+        responses: {
+            /** @description Refresh policy replaced with optimistic concurrency. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardRefreshPolicy"];
+                };
+            };
+            409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
         };
     };
@@ -2368,6 +2568,37 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    revalidateViewerExecutiveOverview: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DashboardRefreshInput"];
+            };
+        };
+        responses: {
+            /** @description Exact-period cache resolution and tenant-scoped background runs for due reports. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverviewRevalidation"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     getViewerDashboardRefresh: {
         parameters: {
             query?: never;
@@ -2451,6 +2682,66 @@ export interface operations {
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    getLatestExactViewerSnapshot: {
+        parameters: {
+            query: {
+                periodPreset: "YESTERDAY" | "TODAY_TO_NOW" | "MONTH_TO_DATE" | "AS_OF_RUN" | "CUSTOM";
+                dateFrom?: string;
+                dateTo?: string;
+            };
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                reportKey: components["parameters"]["ReportKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact-period snapshot matching current report and SML connection versions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardSnapshot"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    revalidateViewerReport: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                reportKey: components["parameters"]["ReportKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateReportRunInput"];
+            };
+        };
+        responses: {
+            /** @description Cache resolution and optional tenant-scoped background run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRevalidation"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     getViewerReportRun: {

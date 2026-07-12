@@ -5,11 +5,12 @@ import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
 import ReportPeriodToolbar from '@/components/dashboard/ReportPeriodToolbar.vue';
-import { ApiError, viewerApi, type DashboardRefresh, type DashboardRefreshInput, type DashboardRefreshResult, type DashboardSnapshot, type ExecutiveOverview, type ReportKey } from '@/api';
+import { ApiError, viewerApi, type DashboardRefresh, type DashboardRefreshInput, type DashboardRefreshResult, type DashboardSnapshot, type ExecutiveOverview, type OverviewRevalidation, type ReportKey, type ReportRun } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { buildExecutiveKpis, comparisonPeriodText, executiveFeaturedVisualizationKeys, formatDashboardValue, formatPeriodRange, snapshotForReport } from '@/utils/dashboard';
 import { errorMessage, formatDateTime } from '@/utils/format';
+import { freshnessPresentation, progressPresentation, typicalDurationText } from '@/utils/freshness';
 import { selectionFromReportPeriod, selectionLabel, type ReportPeriodSelection } from '@/utils/reportPeriod';
 
 const route = useRoute();
@@ -23,6 +24,8 @@ const refreshFailures = ref<DashboardRefreshResult['failures']>([]);
 const selectedPeriod = ref<ReportPeriodSelection>({ periodPreset: 'MONTH_TO_DATE' });
 const displayedPeriodLabel = ref('ข้อมูลล่าสุดแต่ละรายงาน');
 const exactRefreshLoaded = ref(false);
+const backgroundMode = ref(false);
+const backgroundRuns = ref<ReportRun[]>([]);
 const loading = ref(true);
 const refreshing = ref(false);
 const refreshConfirmOpen = ref(false);
@@ -42,7 +45,10 @@ const reports = computed(() => state.reportsByTenant[tenantId.value] ?? []);
 const snapshots = computed(() => overview.value?.items ?? []);
 const kpis = computed(() => buildExecutiveKpis(snapshots.value));
 const missingReportCount = computed(() => Math.max(0, reports.value.length - new Set(snapshots.value.map((item) => item.dashboard.reportKey)).size));
-const newestGeneratedAt = computed(() => snapshots.value.reduce<string | undefined>((latest, item) => !latest || Date.parse(item.dashboard.generatedAt) > Date.parse(latest) ? item.dashboard.generatedAt : latest, undefined));
+const newestGeneratedAt = computed(() => snapshots.value.reduce<string | undefined>((latest, item) => {
+  const candidate = item.sourceFinishedAt ?? item.dashboard.generatedAt;
+  return !latest || Date.parse(candidate) > Date.parse(latest) ? candidate : latest;
+}, undefined));
 const featuredCharts = computed(() => {
   const choices = Object.entries(executiveFeaturedVisualizationKeys) as Array<[ReportKey, string]>;
   const selected: { snapshot: DashboardSnapshot; visualization: DashboardSnapshot['dashboard']['visualizations'][number] }[] = [];
@@ -60,14 +66,22 @@ const featuredCharts = computed(() => {
   }
   return selected.slice(0, 4);
 });
-const refreshPercent = computed(() => refresh.value?.total ? Math.round(((refresh.value.completed + refresh.value.failed) / refresh.value.total) * 100) : 0);
+const backgroundCompleted = computed(() => snapshots.value.filter((item) => item.freshnessStatus === 'FRESH').length + backgroundRuns.value.filter((item) => ['FAILED', 'CANCELLED', 'EXPIRED'].includes(item.status)).length);
+const refreshPercent = computed(() => backgroundMode.value
+  ? (reports.value.length ? Math.min(100, Math.round((backgroundCompleted.value / reports.value.length) * 100)) : 0)
+  : refresh.value?.total ? Math.round(((refresh.value.completed + refresh.value.failed) / refresh.value.total) * 100) : 0);
+const refreshCompletedLabel = computed(() => backgroundMode.value ? backgroundCompleted.value : refresh.value?.completed ?? 0);
+const refreshTotalLabel = computed(() => backgroundMode.value ? reports.value.length : refresh.value?.total ?? reports.value.length);
+const activeBackgroundRun = computed(() => backgroundRuns.value.find((item) => ['CLAIMED', 'RUNNING'].includes(item.status)) ?? backgroundRuns.value.find((item) => item.status === 'QUEUED'));
+const backgroundProgressLabel = computed(() => progressPresentation(activeBackgroundRun.value?.progress?.phase));
+const backgroundTypicalDuration = computed(() => typicalDurationText(activeBackgroundRun.value?.progress));
 const failedReportLabels = computed(() => refreshFailures.value.map((failure) => reports.value.find((report) => report.reportKey === failure.reportKey)?.label ?? failure.reportKey));
 
 async function initializeOverview() {
   const context = ++generation;
   const selectedTenantId = tenantId.value;
   pageController?.abort('new-overview'); pageController = new AbortController(); stopPolling();
-  loading.value = true; refreshing.value = false; error.value = ''; refreshFailures.value = []; exactRefreshLoaded.value = false;
+  loading.value = true; refreshing.value = false; backgroundMode.value = false; backgroundRuns.value = []; error.value = ''; refreshFailures.value = []; exactRefreshLoaded.value = false;
   try {
     selectTenant(selectedTenantId);
     await ensureReports(selectedTenantId, true, pageController.signal);
@@ -83,17 +97,15 @@ async function initializeOverview() {
       if (isTerminal(refresh.value.status)) await loadRefreshResult(context, selectedTenantId, refreshId, pageController.signal);
       else { refreshing.value = true; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context); }
     } else {
-      overview.value = await viewerApi.overview(selectedTenantId, pageController.signal);
-      displayedPeriodLabel.value = 'ข้อมูลล่าสุดแต่ละรายงาน';
+      await resolveOverviewCache(context, selectedTenantId, pageController.signal);
     }
   } catch (cause) {
     if (!isCancelled(cause) && context === generation) {
       if (cause instanceof ApiError && cause.status === 404 && route.query.refreshId !== undefined) {
         await removeRefreshReference();
         try {
-          overview.value = await viewerApi.overview(selectedTenantId, pageController.signal);
-          displayedPeriodLabel.value = 'ข้อมูลล่าสุดแต่ละรายงาน';
-          error.value = 'ชุดข้อมูลเดิมไม่พร้อมใช้งานแล้ว กำลังแสดงข้อมูลล่าสุดแทน';
+          await resolveOverviewCache(context, selectedTenantId, pageController.signal);
+          error.value = 'ชุดข้อมูลเดิมไม่พร้อมใช้งานแล้ว กำลังแสดง Snapshot ของช่วงที่เลือกแทน';
         } catch (fallbackCause) { error.value = errorMessage(fallbackCause); }
       } else error.value = errorMessage(cause);
     }
@@ -101,11 +113,39 @@ async function initializeOverview() {
   finally { if (context === generation) loading.value = false; }
 }
 
+function overviewInput(selection: ReportPeriodSelection): DashboardRefreshInput {
+  return {
+    periodPreset: selection.periodPreset,
+    reportKeys: reports.value.map((report) => report.reportKey),
+    ...(selection.periodPreset === 'CUSTOM' ? { dateFrom: selection.dateFrom, dateTo: selection.dateTo } : {})
+  };
+}
+
+async function resolveOverviewCache(context: number, selectedTenantId: string, signal?: AbortSignal) {
+  const result = await viewerApi.revalidateOverview(selectedTenantId, overviewInput(selectedPeriod.value), signal);
+  if (!isCurrent(context, selectedTenantId)) return;
+  applyOverviewRevalidation(result);
+  if (backgroundRuns.value.some((item) => ['QUEUED', 'CLAIMED', 'RUNNING'].includes(item.status))) {
+    backgroundMode.value = true; refreshing.value = true; pollCount = 0; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
+  } else {
+    backgroundMode.value = false; refreshing.value = false;
+  }
+  if (result.disposition === 'CIRCUIT_OPEN') error.value = `ระบบพักการอัปเดตอัตโนมัติชั่วคราวหลัง SML ตอบกลับผิดปกติ${result.retryAfter ? ` กรุณาลองใหม่ในประมาณ ${Math.ceil(result.retryAfter / 60)} นาที` : ''}`;
+}
+
+function applyOverviewRevalidation(result: OverviewRevalidation) {
+  overview.value = result.overview;
+  backgroundRuns.value = result.runs;
+  exactRefreshLoaded.value = !result.legacyFallback;
+  displayedPeriodLabel.value = result.legacyFallback ? 'ข้อมูลล่าสุดแต่ละรายงาน' : selectionLabel(selectedPeriod.value, 'SMART_OVERVIEW');
+}
+
 async function startRefresh(selection: ReportPeriodSelection) {
   if (refreshing.value) return;
   const context = generation;
   const selectedTenantId = tenantId.value;
   stopPolling(); refreshing.value = true; error.value = ''; pollCount = 0;
+  backgroundMode.value = false; backgroundRuns.value = [];
   const input: DashboardRefreshInput = {
     periodPreset: selection.periodPreset,
     reportKeys: reports.value.map((report) => report.reportKey),
@@ -124,6 +164,18 @@ async function startRefresh(selection: ReportPeriodSelection) {
     if (!isCancelled(cause) && context === generation) { refreshing.value = false; error.value = errorMessage(cause); }
     if (!(cause instanceof ApiError) || !cause.retryable) refreshAction = undefined;
   }
+}
+
+async function viewOverviewPeriod(selection: ReportPeriodSelection) {
+  if (loading.value || refreshing.value) return;
+  const context = ++generation;
+  const selectedTenantId = tenantId.value;
+  pageController?.abort('new-overview-period'); pageController = new AbortController(); stopPolling();
+  selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
+  loading.value = !overview.value; error.value = ''; refreshFailures.value = [];
+  try { await resolveOverviewCache(context, selectedTenantId, pageController.signal); }
+  catch (cause) { if (!isCancelled(cause) && isCurrent(context, selectedTenantId)) error.value = errorMessage(cause); }
+  finally { if (isCurrent(context, selectedTenantId)) loading.value = false; }
 }
 
 function requestRefresh(selection: ReportPeriodSelection) {
@@ -160,8 +212,25 @@ function requestRefresh(selection: ReportPeriodSelection) {
 
 function schedulePoll(context: number) {
   stopPolling();
-  const delay = document.visibilityState === 'hidden' ? 5000 : Math.min(1500 + pollCount * 150, 3500);
-  pollTimer = window.setTimeout(() => void pollRefresh(context), delay);
+  if (document.visibilityState === 'hidden') return;
+  const delay = pollCount < 15 ? 2000 : 5000;
+  pollTimer = window.setTimeout(() => void (backgroundMode.value ? pollOverviewRevalidation(context) : pollRefresh(context)), delay);
+}
+
+async function pollOverviewRevalidation(context: number) {
+  if (pollInFlight || context !== generation) return;
+  if (Date.now() >= pollDeadline) { refreshing.value = false; backgroundMode.value = false; error.value = 'การอัปเดตใช้เวลานานกว่าปกติ คุณสามารถกลับมาตรวจสอบภายหลังได้'; return; }
+  const selectedTenantId = tenantId.value;
+  pollInFlight = true; pollController = new AbortController();
+  try {
+    const result = await viewerApi.revalidateOverview(selectedTenantId, overviewInput(selectedPeriod.value), pollController.signal);
+    if (!isCurrent(context, selectedTenantId)) return;
+    applyOverviewRevalidation(result); pollCount++;
+    if (backgroundRuns.value.some((item) => ['QUEUED', 'CLAIMED', 'RUNNING'].includes(item.status))) schedulePoll(context);
+    else { refreshing.value = false; backgroundMode.value = false; }
+  } catch (cause) {
+    if (!isCancelled(cause) && context === generation) { refreshing.value = false; backgroundMode.value = false; error.value = errorMessage(cause); }
+  } finally { pollInFlight = false; pollController = undefined; }
 }
 
 async function pollRefresh(context: number) {
@@ -207,6 +276,7 @@ function openReport(reportKey: ReportKey) {
   const snapshot = exactRefreshLoaded.value ? snapshotForReport(snapshots.value, reportKey) : undefined;
   void router.push({ path: `/app/tenant/${tenantId.value}/report/${reportKey}`, query: snapshot ? { runId: snapshot.runId } : undefined });
 }
+function snapshotFreshness(snapshot: DashboardSnapshot) { return freshnessPresentation(snapshot.freshnessStatus); }
 function isTerminal(status: DashboardRefresh['status']) { return status === 'SUCCEEDED' || status === 'PARTIAL' || status === 'FAILED'; }
 function isCurrent(context: number, selectedTenantId: string) { return context === generation && selectedTenantId === tenantId.value; }
 function validUUID(value: unknown): string | undefined { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : undefined; }
@@ -214,9 +284,9 @@ async function removeRefreshReference() { const query = { ...route.query }; dele
 function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; pollController?.abort('poll-stopped'); pollController = undefined; }
 function isCancelled(cause: unknown) { return cause instanceof ApiError && cause.code === 'CANCELLED'; }
 function handleVisibilityChange() {
-  if (document.visibilityState === 'visible' && refreshing.value && refresh.value && !pollInFlight) {
+  if (document.visibilityState === 'visible' && refreshing.value && (refresh.value || backgroundMode.value) && !pollInFlight) {
     if (pollTimer) window.clearTimeout(pollTimer);
-    pollTimer = undefined; void pollRefresh(generation);
+    pollTimer = undefined; void (backgroundMode.value ? pollOverviewRevalidation(generation) : pollRefresh(generation));
   }
 }
 
@@ -228,20 +298,20 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 <template>
   <AppPageHeader :title="`ภาพรวม ${tenant?.name ?? ''}`" subtitle="ตัวเลขสำคัญ 4 ด้าน · เวลาไทย"><template #actions><span v-if="newestGeneratedAt" class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />อัปเดต {{ formatDateTime(newestGeneratedAt) }}</span></template></AppPageHeader>
 
-  <ReportPeriodToolbar mode="SMART_OVERVIEW" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" action-label="อัปเดตภาพรวม" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @apply="requestRefresh" />
+  <ReportPeriodToolbar mode="SMART_OVERVIEW" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" action-label="ดูภาพรวมช่วงนี้" force-action-label="ดึงใหม่จาก SML" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @apply="viewOverviewPeriod" @force="requestRefresh" />
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="initializeOverview" /></Message>
   <Message v-if="refreshFailures.length" severity="warn" :closable="false" class="mb-4">อัปเดตไม่สำเร็จ {{ refreshFailures.length }} รายงาน: {{ failedReportLabels.join(', ') }} — ช่องดังกล่าวจะไม่ใช้ตัวเลขเดิมมาปะปน</Message>
-  <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refresh?.completed ?? 0 }} จาก {{ refresh?.total ?? reports.length }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ข้อมูลด้านล่างยังเป็นชุดเดิมจนกว่าการอัปเดตจะเสร็จ ระบบรันทีละรายงานเพื่อลดภาระฐานข้อมูลของร้าน</p></div>
-  <Message v-if="!loading && !exactRefreshLoaded && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มีข้อมูลล่าสุด {{ missingReportCount }} รายงาน — เลือกช่วงข้อมูลแล้วกด “อัปเดตภาพรวม” เพื่อดึงจาก SQL ของร้าน</Message>
+  <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refreshCompletedLabel }} จาก {{ refreshTotalLabel }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong><span v-if="backgroundMode && activeBackgroundRun" class="text-sm text-muted-color">{{ backgroundProgressLabel }} · {{ reports.find((item) => item.reportKey === activeBackgroundRun?.reportKey)?.label ?? activeBackgroundRun.reportKey }}<template v-if="backgroundTypicalDuration"> · {{ backgroundTypicalDuration }}</template></span></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ข้อมูลด้านล่างเป็น Snapshot ช่วงเดียวกัน ระบบไม่ใช้ตัวเลขจากช่วงอื่นมาปะปน</p></div>
+  <Message v-if="!loading && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มี Snapshot ตรงช่วงที่เลือก {{ missingReportCount }} รายงาน ระบบจะแสดงเมื่อ Query SML เสร็จและจะไม่ใช้ตัวเลขจากช่วงอื่นแทน</Message>
 
   <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5"><Skeleton v-for="index in 4" :key="index" height="9rem" /></div>
   <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-    <button v-for="item in kpis" :key="item.key" type="button" class="card executive-kpi" :title="formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB')" @click="openReport(item.reportKey)"><span class="kpi-icon"><i :class="item.icon" /></span><span class="kpi-copy"><span class="kpi-label">{{ item.label }}</span><span v-if="item.period" class="kpi-period">ข้อมูล {{ formatPeriodRange(item.period) }}</span><strong class="kpi-value">{{ formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB') }}</strong><span v-if="item.metric?.comparison.availability === 'AVAILABLE'" class="kpi-comparison"><span><i :class="item.metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : item.metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(item.metric.comparison.delta, item.metric.unit) }}</span><span>{{ comparisonPeriodText(item.comparisonPeriod) }}</span></span><span v-else class="kpi-comparison">{{ item.metric ? 'ไม่มีข้อมูลเทียบช่วงเวลาเดียวกัน' : 'รอการอัปเดตข้อมูล' }}</span></span><i class="pi pi-chevron-right kpi-link" /></button>
+    <button v-for="item in kpis" :key="item.key" type="button" class="card executive-kpi" :title="formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB')" @click="openReport(item.reportKey)"><span class="kpi-icon"><i :class="item.icon" /></span><span class="kpi-copy"><span class="kpi-label">{{ item.label }}</span><span v-if="item.period" class="kpi-period">ข้อมูล {{ formatPeriodRange(item.period) }}</span><Tag v-if="snapshotForReport(snapshots, item.reportKey)?.freshnessStatus" :severity="snapshotFreshness(snapshotForReport(snapshots, item.reportKey)!).severity" :value="snapshotFreshness(snapshotForReport(snapshots, item.reportKey)!).label" class="kpi-freshness" /><strong class="kpi-value">{{ formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB') }}</strong><span v-if="item.metric?.comparison.availability === 'AVAILABLE'" class="kpi-comparison"><span><i :class="item.metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : item.metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(item.metric.comparison.delta, item.metric.unit) }}</span><span>{{ comparisonPeriodText(item.comparisonPeriod) }}</span></span><span v-else class="kpi-comparison">{{ item.metric ? 'ไม่มีข้อมูลเทียบช่วงเวลาเดียวกัน' : 'รอการอัปเดตข้อมูล' }}</span><span v-if="snapshotForReport(snapshots, item.reportKey)?.sourceFinishedAt" class="kpi-source-time">ดึงจาก SML {{ formatDateTime(snapshotForReport(snapshots, item.reportKey)?.sourceFinishedAt) }}</span></span><i class="pi pi-chevron-right kpi-link" /></button>
   </div>
 
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
-    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
+    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }} · ดึงจาก SML {{ formatDateTime(item.snapshot.sourceFinishedAt ?? item.snapshot.dashboard.generatedAt) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
   </div>
   <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>เลือกช่วงข้อมูลด้านบน แล้วกด “อัปเดตภาพรวม” เพื่อดึง SQL ตามสิทธิ์ของคุณ</p></div>
 </template>
@@ -256,8 +326,10 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 .kpi-copy { display: grid; gap: .3rem; min-width: 0; }
 .kpi-label { color: var(--text-color-secondary); font-size: .8rem; font-weight: 600; }
 .kpi-period { color: var(--text-color-secondary); font-size: .7rem; }
+.kpi-freshness { justify-self: start; font-size: .65rem; }
 .kpi-value { font-size: clamp(1.05rem, 1.75vw, 1.65rem); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: -.02em; }
 .kpi-comparison { display: grid; gap: .15rem; color: var(--text-color-secondary); font-size: .72rem; }
+.kpi-source-time { color: var(--text-color-secondary); font-size: .65rem; line-height: 1.35; }
 .kpi-link { position: absolute; top: 1.2rem; right: 1rem; color: var(--text-color-secondary); font-size: .75rem; }
 .chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }
 .chart-heading h2 { margin: 0; font-size: 1.05rem; }

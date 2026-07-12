@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
 import ReportPeriodToolbar from '@/components/dashboard/ReportPeriodToolbar.vue';
-import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, type ReportDashboard, type ReportKey, type ReportRun } from '@/api';
+import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, type DashboardSnapshot, type ReportDashboard, type ReportKey, type ReportRun } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { comparisonPeriodText, formatDashboardValue, formatPeriodRange, periodLabel } from '@/utils/dashboard';
@@ -12,9 +13,11 @@ import { errorMessage, formatDateTime, formatMetric } from '@/utils/format';
 import { periodModeForReport, selectionForMode, selectionFromReportPeriod, selectionToRunInput, type ReportPeriodSelection } from '@/utils/reportPeriod';
 import { presentationFor, visibleReportColumns, type ReportColumnDefinition } from '@/utils/reportPresentation';
 import { cleanViewerQuery, validSnapshotRunId, validViewerRunId } from '@/utils/viewerSnapshot';
+import { freshnessPresentation, progressPresentation, typicalDurationText } from '@/utils/freshness';
 
 const route = useRoute();
 const router = useRouter();
+const confirm = useConfirm();
 const toast = useToast();
 const { state, selectTenant, ensureReports, periodSelection, setPeriodSelection } = useViewerSession();
 const tenantId = computed(() => String(route.params.tenantId));
@@ -25,6 +28,8 @@ const tenant = computed(() => state.tenants.find((item) => item.id === tenantId.
 const selectedPeriod = ref<ReportPeriodSelection>({ periodPreset: 'MONTH_TO_DATE' });
 const run = ref<ReportRun>();
 const dashboard = ref<ReportDashboard>();
+const cachedSnapshot = ref<DashboardSnapshot>();
+const expiredSnapshot = ref<DashboardSnapshot>();
 const rows = ref<Record<string, unknown>[]>([]);
 const columns = ref<string[]>([]);
 const nextCursor = ref<string>();
@@ -37,10 +42,11 @@ const expandedMobileRows = ref(new Set<string>());
 const snapshotMode = ref(false);
 const snapshotMissing = ref(false);
 const loading = ref(false);
+const backgroundRefreshing = ref(false);
+const forceConfirmOpen = ref(false);
 const loadingRows = ref(false);
 const error = ref('');
 let pollTimer: number | undefined;
-let autoRunTimer: number | undefined;
 let pollCount = 0;
 let generation = 0;
 let pollDeadline = 0;
@@ -59,11 +65,83 @@ const statusLabel = computed(() => {
   return run.value ? labels[run.value.status] ?? run.value.status : '';
 });
 const statusSeverity = computed(() => snapshotMode.value && dashboard.value ? 'success' : run.value?.status === 'SUCCEEDED' ? 'success' : run.value?.status === 'FAILED' ? 'danger' : active.value ? 'info' : 'secondary');
-const detailRowsUnavailable = computed(() => rowsUnavailable.value || run.value?.status === 'EXPIRED');
+const detailRowsUnavailable = computed(() => rowsUnavailable.value || run.value?.status === 'EXPIRED' || cachedSnapshot.value?.detailsAvailable === false);
+const freshness = computed(() => freshnessPresentation(cachedSnapshot.value?.freshnessStatus));
+const progressLabel = computed(() => progressPresentation(run.value?.progress?.phase));
+const typicalDuration = computed(() => typicalDurationText(run.value?.progress));
+const elapsedSeconds = computed(() => {
+  if (!run.value) return 0;
+  const end = run.value.finishedAt ? Date.parse(run.value.finishedAt) : Date.now();
+  return Math.max(0, Math.round((end - Date.parse(run.value.queuedAt)) / 1000));
+});
+const sourceFinishedAt = computed(() => cachedSnapshot.value?.sourceFinishedAt ?? run.value?.finishedAt ?? dashboard.value?.generatedAt);
 const displayedPeriodLabel = computed(() => dashboard.value ? `${periodLabel(dashboard.value.period.preset)} · ${formatPeriodRange(dashboard.value.period)}` : run.value?.dateFrom && run.value.dateTo ? formatPeriodRange({ preset: run.value.periodPreset as ReportDashboard['period']['preset'], dateFrom: run.value.dateFrom, dateTo: run.value.dateTo }) : 'ยังไม่มีข้อมูล');
 const columnOptions = computed(() => presentationFor(reportKey.value, columns.value));
 const displayedColumns = computed(() => visibleReportColumns(reportKey.value, columns.value, selectedColumnKeys.value));
 const mobileSummaryColumns = computed(() => displayedColumns.value.filter((column) => column.mobilePriority >= 4).slice(0, 6));
+
+async function resolveSnapshot(selection: ReportPeriodSelection) {
+  if (!definition.value || loading.value || backgroundRefreshing.value) return;
+  let payload: CreateReportRunInput;
+  try { payload = selectionToRunInput(periodMode.value, selection); }
+  catch (cause) { error.value = errorMessage(cause); return; }
+  const context = ++generation;
+  const selectedTenantId = tenantId.value;
+  const selectedReportKey = reportKey.value;
+  initializeController?.abort('new-period'); initializeController = new AbortController(); stopPolling(); resetRows();
+  loading.value = !dashboard.value; backgroundRefreshing.value = false; error.value = '';
+  try {
+    const result = await viewerApi.revalidateReport(selectedTenantId, selectedReportKey, payload, initializeController.signal);
+    if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
+    if (result.legacyFallback) {
+      loading.value = false;
+      await startRun(selection);
+      return;
+    }
+    selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
+    snapshotMode.value = false; snapshotMissing.value = false;
+    expiredSnapshot.value = undefined;
+    if (result.snapshot?.freshnessStatus === 'EXPIRED') {
+      expiredSnapshot.value = result.snapshot;
+      dashboard.value = undefined; cachedSnapshot.value = undefined; run.value = undefined;
+    } else if (result.snapshot) {
+      applyCachedSnapshot(result.snapshot);
+      try { run.value = await viewerApi.run(selectedTenantId, selectedReportKey, result.snapshot.runId, initializeController.signal); }
+      catch (cause) { if (!(cause instanceof ApiError) || cause.status !== 404) throw cause; }
+    } else {
+      dashboard.value = undefined; cachedSnapshot.value = undefined; run.value = undefined;
+    }
+    if (result.run && ['QUEUED', 'CLAIMED', 'RUNNING'].includes(result.run.status)) {
+      run.value = result.run; backgroundRefreshing.value = !!dashboard.value; loading.value = !dashboard.value;
+      pollCount = 0; pollDeadline = Date.now() + 12 * 60_000; schedulePoll(context);
+    } else {
+      loading.value = false; backgroundRefreshing.value = false;
+    }
+    if (result.disposition === 'DISABLED' && !result.snapshot) error.value = 'การอัปเดตอัตโนมัติของรายงานนี้ถูกปิด กรุณากด “ดึงใหม่จาก SML” เมื่อต้องการข้อมูล';
+    if (result.disposition === 'CIRCUIT_OPEN') error.value = `ระบบพักการอัปเดตอัตโนมัติชั่วคราวหลัง SML ตอบกลับผิดปกติ${result.retryAfter ? ` กรุณาลองอีกครั้งในประมาณ ${Math.ceil(result.retryAfter / 60)} นาที` : ''}`;
+  } catch (cause) {
+    if (!isCancelled(cause) && isCurrent(context, selectedTenantId, selectedReportKey)) error.value = errorMessage(cause);
+    loading.value = false; backgroundRefreshing.value = false;
+  }
+}
+
+function applyCachedSnapshot(snapshot: DashboardSnapshot) {
+	expiredSnapshot.value = undefined;
+  cachedSnapshot.value = snapshot;
+  dashboard.value = snapshot.dashboard;
+  selectedPeriod.value = selectionFromReportPeriod(periodMode.value, snapshot.dashboard.period);
+}
+
+async function showExpiredSnapshot() {
+  const snapshot = expiredSnapshot.value;
+  if (!snapshot) return;
+  applyCachedSnapshot(snapshot);
+  if (!run.value || !['QUEUED', 'CLAIMED', 'RUNNING'].includes(run.value.status)) {
+    try { run.value = await viewerApi.run(tenantId.value, reportKey.value, snapshot.runId, initializeController?.signal); }
+    catch (cause) { error.value = errorMessage(cause); }
+  }
+}
+
 async function startRun(selection: ReportPeriodSelection) {
   if (loading.value) return;
   if (!definition.value) { error.value = 'ไม่พบรายงานหรือคุณไม่มีสิทธิ์เปิดรายงานนี้'; return; }
@@ -81,7 +159,8 @@ async function startRun(selection: ReportPeriodSelection) {
     const created = await viewerApi.createRun(selectedTenantId, selectedReportKey, payload, runAction.key);
     if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
     selectedPeriod.value = { ...selection }; setPeriodSelection(selectedTenantId, selection);
-    snapshotMode.value = false; snapshotMissing.value = false; dashboard.value = undefined; run.value = created; resetRows(); runAction = undefined;
+    snapshotMode.value = false; snapshotMissing.value = false; run.value = created; resetRows(); runAction = undefined;
+    backgroundRefreshing.value = !!dashboard.value;
     const query = cleanViewerQuery(route.query); delete query.snapshotRunId; query.runId = created.id;
     await router.replace({ path: route.path, query, hash: route.hash });
     if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
@@ -93,6 +172,30 @@ async function startRun(selection: ReportPeriodSelection) {
   }
 }
 
+function requestForceRefresh(selection: ReportPeriodSelection) {
+  if (forceConfirmOpen.value || active.value) return;
+  const expectedTenantId = tenantId.value;
+  const expectedReportKey = reportKey.value;
+  const expectedGeneration = generation;
+  forceConfirmOpen.value = true;
+  confirm.require({
+    header: `ดึงข้อมูลใหม่จาก ${tenant.value?.name ?? 'ร้านนี้'}`,
+    message: `ระบบจะ Query SML ใหม่สำหรับ “${definition.value?.label ?? expectedReportKey}” และอาจใช้เวลานาน โดยเฉพาะรายงานสต็อก`,
+    icon: 'pi pi-database', defaultFocus: 'reject', rejectLabel: 'ยกเลิก', acceptLabel: 'ดึงใหม่จาก SML',
+    rejectProps: { severity: 'secondary', text: true },
+    accept: () => {
+      forceConfirmOpen.value = false;
+      if (expectedGeneration !== generation || expectedTenantId !== tenantId.value || expectedReportKey !== reportKey.value) {
+        toast.add({ severity: 'warn', summary: 'หน้ารายงานเปลี่ยนแล้ว', detail: 'กรุณาตรวจสอบช่วงข้อมูลและลองใหม่', life: 3500 });
+        return;
+      }
+      void startRun(selection);
+    },
+    reject: () => { forceConfirmOpen.value = false; },
+    onHide: () => { forceConfirmOpen.value = false; }
+  });
+}
+
 function applyRunPeriod(item: ReportRun) {
   if (!item.dateFrom || !item.dateTo) return;
   selectedPeriod.value = selectionFromReportPeriod(periodMode.value, { preset: item.periodPreset, dateFrom: item.dateFrom, dateTo: item.dateTo });
@@ -101,7 +204,7 @@ function applyRunPeriod(item: ReportRun) {
 async function loadExistingRun(context: number, selectedTenantId: string, selectedReportKey: ReportKey, selectedRunId: string, fromLine: boolean) {
   snapshotMode.value = fromLine; snapshotMissing.value = false; loading.value = true;
   pollCount = 0;
-  dashboard.value = undefined; run.value = undefined; activeTab.value = 'overview'; error.value = '';
+  dashboard.value = undefined; cachedSnapshot.value = undefined; expiredSnapshot.value = undefined; run.value = undefined; activeTab.value = 'overview'; error.value = '';
   resetRows();
   const runResult = await viewerApi.run(selectedTenantId, selectedReportKey, selectedRunId, initializeController?.signal);
   if (!isCurrent(context, selectedTenantId, selectedReportKey)) return;
@@ -115,6 +218,13 @@ async function loadExistingRun(context: number, selectedTenantId: string, select
       if (fromLine && cause instanceof ApiError && cause.status === 404) snapshotMissing.value = true;
       else throw cause;
     }
+    if (dashboard.value) cachedSnapshot.value = {
+      runId: runResult.id, dashboard: dashboard.value,
+      periodFrom: runResult.dateFrom ?? undefined, periodTo: runResult.dateTo ?? undefined,
+      sourceStartedAt: runResult.startedAt, sourceFinishedAt: runResult.finishedAt,
+      freshnessStatus: 'FRESH', detailsAvailable: runResult.resultKind !== 'SUMMARY' && runResult.status !== 'EXPIRED',
+      detailsExpiresAt: runResult.expiresAt
+    };
     loading.value = false; return;
   }
   loading.value = false; error.value = runResult.safeErrorMessage || 'สร้างรายงานไม่สำเร็จ กรุณาลองใหม่';
@@ -127,7 +237,8 @@ async function replaySnapshot() {
 
 function schedulePoll(context: number) {
   stopPolling();
-  const delay = document.visibilityState === 'hidden' ? 5000 : Math.min(1200 + pollCount * 100, 3000);
+  if (document.visibilityState === 'hidden') return;
+  const delay = pollCount < 15 ? 2000 : 5000;
   pollTimer = window.setTimeout(() => void poll(context), delay);
 }
 
@@ -142,12 +253,32 @@ async function poll(context: number) {
     const latest = await viewerApi.run(selectedTenantId, selectedReportKey, selectedRunId, pollController.signal);
     if (!isCurrent(context, selectedTenantId, selectedReportKey) || run.value?.id !== selectedRunId) return;
     run.value = latest; pollCount++;
-    if (run.value.status === 'SUCCEEDED') { await loadDashboard(); loading.value = false; return; }
-    if (['FAILED', 'CANCELLED', 'EXPIRED'].includes(run.value.status)) { loading.value = false; error.value = run.value.safeErrorMessage || 'สร้างรายงานไม่สำเร็จ กรุณาลองใหม่'; return; }
+    if (run.value.status === 'SUCCEEDED') {
+      await loadDashboard(); await refreshCachedMetadata(); loading.value = false; backgroundRefreshing.value = false; return;
+    }
+    if (['FAILED', 'CANCELLED', 'EXPIRED'].includes(run.value.status)) {
+      loading.value = false; backgroundRefreshing.value = false;
+      if (cachedSnapshot.value && dashboard.value) {
+        cachedSnapshot.value = { ...cachedSnapshot.value, freshnessStatus: 'REFRESH_FAILED' };
+        error.value = 'อัปเดตไม่สำเร็จ กำลังแสดง Snapshot เดิมพร้อมเวลาที่ดึงจาก SML';
+      } else error.value = run.value.safeErrorMessage || 'สร้างรายงานไม่สำเร็จ กรุณาลองใหม่';
+      return;
+    }
     schedulePoll(context);
   } catch (cause) {
     if (!isCancelled(cause) && isCurrent(context, selectedTenantId, selectedReportKey)) { loading.value = false; error.value = errorMessage(cause); }
   } finally { pollInFlight = false; pollController = undefined; }
+}
+
+async function refreshCachedMetadata() {
+  if (!run.value) return;
+  const payload = selectionToRunInput(periodMode.value, selectedPeriod.value);
+  try {
+    const snapshot = await viewerApi.exactSnapshot(tenantId.value, reportKey.value, payload, pollController?.signal);
+    if (run.value && snapshot.runId === run.value.id) applyCachedSnapshot(snapshot);
+  } catch (cause) {
+    if (!isCancelled(cause)) cachedSnapshot.value = undefined;
+  }
 }
 
 async function loadDashboard() {
@@ -188,13 +319,18 @@ async function loadRows(reset = false) {
 }
 
 async function cancel() {
-  if (!run.value) return;
+  if (!run.value || run.value.status !== 'QUEUED') return;
   try { run.value = await viewerApi.cancelRun(tenantId.value, reportKey.value, run.value.id); loading.value = false; stopPolling(); toast.add({ severity: 'info', summary: 'ยกเลิกการสร้างรายงานแล้ว', life: 2500 }); }
   catch (cause) { error.value = errorMessage(cause); }
 }
 
+function stopFollowing() {
+  stopPolling(); loading.value = false; backgroundRefreshing.value = false;
+  toast.add({ severity: 'info', summary: 'หยุดติดตามแล้ว', detail: 'Query ที่เริ่มทำงานอาจยังทำต่อใน SML คุณกลับมาตรวจสอบภายหลังได้', life: 4500 });
+}
+
 function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; pollController?.abort('poll-stopped'); pollController = undefined; }
-function stopLifecycle() { generation++; if (autoRunTimer) window.clearTimeout(autoRunTimer); autoRunTimer = undefined; stopPolling(); initializeController?.abort('route-changed'); rowsController?.abort('route-changed'); initializeController = undefined; rowsController = undefined; pollInFlight = false; }
+function stopLifecycle() { generation++; stopPolling(); initializeController?.abort('route-changed'); rowsController?.abort('route-changed'); initializeController = undefined; rowsController = undefined; pollInFlight = false; backgroundRefreshing.value = false; }
 function isCancelled(cause: unknown) { return cause instanceof ApiError && cause.code === 'CANCELLED'; }
 function isCurrent(context: number, selectedTenantId: string, selectedReportKey: ReportKey) { return context === generation && tenantId.value === selectedTenantId && reportKey.value === selectedReportKey; }
 function handleVisibilityChange() {
@@ -238,10 +374,7 @@ async function initialize() {
     else if (viewerRunId.value) await loadExistingRun(context, selectedTenantId, selectedReportKey, viewerRunId.value, false);
     else {
       snapshotMode.value = false; snapshotMissing.value = false; loading.value = false;
-      autoRunTimer = window.setTimeout(() => {
-        autoRunTimer = undefined;
-        if (isCurrent(context, selectedTenantId, selectedReportKey)) void startRun(selectedPeriod.value);
-      }, 300);
+      if (isCurrent(context, selectedTenantId, selectedReportKey)) void resolveSnapshot(selectedPeriod.value);
     }
   } catch (cause) { if (!isCancelled(cause) && context === generation) { error.value = errorMessage(cause); loading.value = false; } }
 }
@@ -249,24 +382,26 @@ async function initialize() {
 watch(activeTab, (value) => { if (value === 'detail' && run.value?.status === 'SUCCEEDED' && !rowsLoaded.value && !rowsUnavailable.value) void loadRows(true); });
 watch([tenantId, reportKey, () => route.query.runId, () => route.query.snapshotRunId], () => void initialize());
 onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void initialize(); });
-onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleVisibilityChange); stopLifecycle(); });
+onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleVisibilityChange); forceConfirmOpen.value = false; confirm.close(); stopLifecycle(); });
 </script>
 
 <template>
-  <AppPageHeader :title="definition?.label ?? 'รายงาน'" :subtitle="`${tenant?.name ?? ''} · เวลาไทย`"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action -ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div><Button v-if="active" icon="pi pi-stop" severity="danger" outlined rounded aria-label="ยกเลิกการสร้างรายงาน" @click="cancel" /></div></template></AppPageHeader>
+  <AppPageHeader :title="definition?.label ?? 'รายงาน'" :subtitle="`${tenant?.name ?? ''} · เวลาไทย`"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action -ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="cachedSnapshot" :severity="freshness.severity" :icon="freshness.icon" :value="freshness.label" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div><Button v-if="run?.status === 'QUEUED'" icon="pi pi-times" severity="danger" outlined rounded aria-label="ยกเลิกงานที่รอคิว" @click="cancel" /><Button v-else-if="active" icon="pi pi-eye-slash" severity="secondary" outlined rounded aria-label="หยุดติดตามความคืบหน้า" @click="stopFollowing" /></div></template></AppPageHeader>
 
-  <ReportPeriodToolbar :mode="periodMode" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" :action-label="periodMode === 'CURRENT_ONLY' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงนี้'" :loading="loading" @apply="startRun" />
+  <ReportPeriodToolbar :mode="periodMode" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" :action-label="periodMode === 'CURRENT_ONLY' ? 'ดูสถานะปัจจุบัน' : 'ดูข้อมูลช่วงนี้'" force-action-label="ดึงใหม่จาก SML" :loading="loading" :disabled="forceConfirmOpen" @apply="resolveSnapshot" @force="requestForceRefresh" />
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
+  <Message v-if="expiredSnapshot && !cachedSnapshot" severity="warn" :closable="false" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลล่าสุดไม่พร้อมใช้งาน Snapshot เดิมดึงจาก SML เมื่อ {{ formatDateTime(expiredSnapshot.sourceFinishedAt) }} และจะไม่แสดงเป็น KPI หลักโดยอัตโนมัติ</span><Button label="เปิดดู Snapshot เดิม" icon="pi pi-history" size="small" severity="secondary" @click="showExpiredSnapshot" /></div></Message>
+  <Message v-if="cachedSnapshot?.freshnessStatus === 'STALE' || cachedSnapshot?.freshnessStatus === 'REFRESHING'" severity="warn" :closable="false" class="mb-4">กำลังแสดง Snapshot เดิมที่ดึงจาก SML เมื่อ {{ formatDateTime(cachedSnapshot.sourceFinishedAt) }} ระหว่างอัปเดตข้อมูลใหม่</Message>
   <Message v-if="snapshotMissing && run" severity="warn" :closable="false" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลสรุปชุดนี้หมดอายุแล้ว กรุณาดึงข้อมูลใหม่จากฐานร้าน</span><Button :label="reportKey === 'stock_reorder' ? 'ดูสถานะปัจจุบัน' : 'ดึงข้อมูลช่วงเดิมใหม่'" icon="pi pi-refresh" size="small" @click="replaySnapshot" /></div></Message>
-  <section v-if="loading" class="card report-panel" aria-live="polite"><div class="flex flex-col items-center text-center gap-3 py-3"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ snapshotMode ? 'กำลังเปิดข้อมูลจาก LINE' : statusLabel || 'กำลังส่งคำขอ' }}</h2><p class="text-muted-color mt-1 mb-0">{{ snapshotMode ? 'กำลังโหลด Snapshot ที่ใช้สร้างข้อความ โดยไม่ดึง SQL ใหม่' : `กำลังดึงข้อมูลจาก SML ของ ${tenant?.name ?? ''}` }}<span v-if="!snapshotMode && run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-4" /></section>
+  <section v-if="loading || backgroundRefreshing" class="card report-panel" aria-live="polite"><div class="flex flex-col items-center text-center gap-3 py-3"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="6" /><div><h2 class="text-lg m-0">{{ snapshotMode ? 'กำลังเปิดข้อมูลจาก LINE' : progressLabel }}</h2><p class="text-muted-color mt-1 mb-0">{{ snapshotMode ? 'กำลังโหลด Snapshot ที่ใช้สร้างข้อความ โดยไม่ดึง SQL ใหม่' : `ใช้เวลาแล้ว ${elapsedSeconds.toLocaleString('th-TH')} วินาที` }}<span v-if="typicalDuration"> · {{ typicalDuration }}</span><span v-if="!snapshotMode && run?.queuePosition"> · ลำดับคิว {{ run.queuePosition }}</span></p><p v-if="run?.progress?.expectedP90Ms && elapsedSeconds * 1000 > run.progress.expectedP90Ms" class="text-orange-600 mt-2 mb-0">ใช้เวลานานกว่าปกติ แต่ระบบยังทำงานอยู่</p></div></div><ProgressBar mode="indeterminate" style="height: .35rem" class="mt-4" /></section>
 
   <Tabs v-if="dashboard && run" v-model:value="activeTab" class="report-tabs">
     <TabList><Tab value="overview"><i class="pi pi-chart-bar mr-2" />ภาพรวมและกราฟ</Tab><Tab value="detail"><i class="pi pi-table mr-2" />ข้อมูลรายละเอียด</Tab></TabList>
     <TabPanels>
       <TabPanel value="overview">
         <Message v-if="dashboard.quality.status === 'WARNING'" severity="warn" :closable="false" class="mb-4">ข้อมูลหลักพร้อมใช้งาน แต่ไม่มีช่วงเปรียบเทียบบางส่วน</Message>
-        <section class="report-summary-bar" aria-label="ช่วงข้อมูลที่กำลังแสดง"><div><span>ข้อมูลที่กำลังแสดง</span><strong>{{ periodLabel(dashboard.period.preset) }} · {{ formatPeriodRange(dashboard.period) }}</strong></div><span><i class="pi pi-clock mr-2" />สร้าง {{ formatDateTime(dashboard.generatedAt) }}</span></section>
+        <section class="report-summary-bar" aria-label="ช่วงข้อมูลที่กำลังแสดง"><div><span>ข้อมูลที่กำลังแสดง</span><strong>{{ periodLabel(dashboard.period.preset) }} · {{ formatPeriodRange(dashboard.period) }}</strong></div><span><i class="pi pi-database mr-2" />ดึงจาก SML สำเร็จเมื่อ {{ formatDateTime(sourceFinishedAt) }} เวลาไทย</span></section>
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
           <article v-for="metric in dashboard.kpis" :key="metric.key" class="card dashboard-card report-kpi"><span class="text-sm text-muted-color">{{ metric.label }}</span><strong>{{ formatDashboardValue(metric.value, metric.unit) }}</strong><span v-if="metric.comparison.availability === 'AVAILABLE'" class="metric-comparison"><span><i :class="metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(metric.comparison.delta, metric.unit) }}</span><span>{{ comparisonPeriodText(dashboard.comparisonPeriod) }}</span></span><span v-else class="metric-comparison"><span>ไม่มีข้อมูลเปรียบเทียบที่เทียบช่วงเวลาเดียวกันได้</span></span></article>
         </div>
