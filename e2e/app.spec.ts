@@ -640,7 +640,7 @@ test('LINE deep link opens the exact snapshot without creating a new SQL run', a
 
   await expect(page).toHaveURL(new RegExp(`snapshotRunId=${runId}$`));
   await expect(page.getByText('ข้อมูลจาก LINE')).toBeVisible();
-  await expect(page.getByText('Snapshot พร้อมใช้งาน')).toBeVisible();
+  await expect(page.getByText('ข้อมูลล่าสุด')).toBeVisible();
   await expect(page.getByText('฿1,250')).toBeVisible();
   expect(createRunRequests).toBe(0);
   await page.getByRole('tab', { name: 'ข้อมูลรายละเอียด' }).click();
@@ -836,7 +836,14 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
       await expect(page.getByRole('tab', { name: 'ภาพรวมและกราฟ' })).toBeVisible();
       await expect(page.getByText('เทียบกับ 8 ก.ค. 2569')).toBeVisible();
       if (width === 390) await expect(page.getByRole('button', { name: reportKey === 'stock_reorder' ? 'รีเฟรช' : 'เปลี่ยนช่วง' })).toBeVisible();
-		else await expect(page.getByRole('button', { name: /ดูข้อมูลช่วงนี้|ดูสถานะปัจจุบัน/ })).toBeVisible();
+      else await expect(page.getByRole('button', { name: /ดูช่วงนี้|ดูสถานะล่าสุด/ })).toBeVisible();
+      await expect(page.locator('.report-summary-bar')).toHaveCount(0);
+      if (width === 1440) {
+        const header = await page.locator('.page-header').boundingBox();
+        const toolbar = await page.locator('.period-toolbar').boundingBox();
+        expect(header?.height).toBeLessThanOrEqual(64);
+        expect(toolbar?.height).toBeLessThanOrEqual(80);
+      }
       await expect(page.getByLabel('ตัวกรองรายงาน')).toHaveCount(0);
       const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
       expect(hasHorizontalOverflow).toBe(false);

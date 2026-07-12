@@ -24,7 +24,7 @@ export default defineConfig({
       'primevue/multiselect', 'primevue/password', 'primevue/progressbar',
       'primevue/progressspinner', 'primevue/select', 'primevue/skeleton', 'primevue/tab',
       'primevue/tablist', 'primevue/tabpanel', 'primevue/tabpanels', 'primevue/tabs',
-      'primevue/tag', 'primevue/toast', 'primevue/toastservice', 'primevue/tooltip', 'primevue/usetoast'
+      'primevue/tag', 'primevue/toast', 'primevue/toastservice', 'primevue/toolbar', 'primevue/tooltip', 'primevue/usetoast'
     ]
   },
   server: {

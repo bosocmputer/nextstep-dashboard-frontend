@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorMessage, formatDateOnly, formatMetric, metricLabel } from './format';
+import { errorMessage, formatDateOnly, formatMetric, formatTime, metricLabel } from './format';
 
 describe('format utilities', () => {
   it('preserves the local calendar date instead of converting through UTC', () => {
@@ -21,5 +21,16 @@ describe('format utilities', () => {
   it('turns known API error codes into actionable Thai messages', () => {
     expect(errorMessage({ code: 'REPORT_CONCURRENCY_LIMIT', message: 'English provider text' })).toContain('กำลังสร้างรายงาน');
     expect(errorMessage({ code: 'FUTURE_ERROR', message: 'ข้อความสำรอง' })).toBe('ข้อความสำรอง');
+  });
+});
+
+describe('formatTime', () => {
+  it('formats UTC timestamps as Thailand time', () => {
+    expect(formatTime('2026-07-12T13:24:00Z')).toBe('20:24');
+  });
+
+  it('returns a safe placeholder for invalid values', () => {
+    expect(formatTime('not-a-date')).toBe('—');
+    expect(formatTime()).toBe('—');
   });
 });

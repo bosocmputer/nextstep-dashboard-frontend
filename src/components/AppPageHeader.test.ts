@@ -20,4 +20,16 @@ describe('AppPageHeader', () => {
     expect(wrapper.text()).toContain('กลับ');
     expect(wrapper.text()).toContain('ใช้งาน');
   });
+
+  it('applies compact desktop density without changing the default header contract', () => {
+    const wrapper = mount(AppPageHeader, {
+      props: { title: 'รายงานสต็อกคงเหลือ', desktopMode: 'viewerCompact' },
+      slots: { back: '<button>ภาพรวมร้าน</button>', actions: '<span>ข้อมูลล่าสุด</span>' }
+    });
+
+    expect(wrapper.get('.page-header').classes()).toContain('page-header-viewer-compact');
+    expect(wrapper.get('h1').text()).toBe('รายงานสต็อกคงเหลือ');
+    expect(wrapper.text()).toContain('ภาพรวมร้าน');
+    expect(wrapper.text()).toContain('ข้อมูลล่าสุด');
+  });
 });

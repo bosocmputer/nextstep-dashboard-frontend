@@ -5,6 +5,18 @@ export function formatDateTime(value?: string | null): string {
   return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' }).format(date);
 }
 
+export function formatTime(value?: string | null): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('th-TH', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    timeZone: 'Asia/Bangkok'
+  }).format(date);
+}
+
 export function formatDate(value?: string | null): string {
   if (!value) return '—';
   const date = new Date(value);

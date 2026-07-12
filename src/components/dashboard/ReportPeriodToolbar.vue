@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, useId, watch } from 'vue';
 import { formatDateOnly } from '@/utils/format';
 import {
   bangkokToday,
-  selectionLabel,
   validatePeriodSelection,
   type ReportPeriodMode,
   type ReportPeriodSelection,
@@ -14,15 +13,18 @@ const props = withDefaults(defineProps<{
   mode: ReportPeriodMode | 'SMART_OVERVIEW';
   selection: ReportPeriodSelection;
   displayedLabel?: string;
+  sourceLabel?: string;
   actionLabel?: string;
   forceActionLabel?: string;
   loading?: boolean;
   disabled?: boolean;
+  desktopMode?: 'default' | 'compact';
 }>(), {
   displayedLabel: 'ยังไม่มีข้อมูล',
   actionLabel: 'ดึงข้อมูลช่วงนี้',
   loading: false,
-  disabled: false
+  disabled: false,
+  desktopMode: 'default'
 });
 
 const emit = defineEmits<{ apply: [selection: ReportPeriodSelection]; force: [selection: ReportPeriodSelection] }>();
@@ -30,6 +32,10 @@ const draft = ref<ReportPeriodSelection>({ ...props.selection });
 const dateFrom = ref<Date | null>(null);
 const dateTo = ref<Date | null>(null);
 const expanded = ref(false);
+const fieldId = useId();
+const presetId = `${fieldId}-preset`;
+const fromId = `${fieldId}-from`;
+const toId = `${fieldId}-to`;
 const maxDate = computed(() => new Date(`${bangkokToday()}T00:00:00`));
 const presetOptions = computed(() => props.mode === 'AS_OF_DATE'
   ? [
@@ -44,7 +50,6 @@ const presetOptions = computed(() => props.mode === 'AS_OF_DATE'
       { label: 'กำหนดช่วงเอง', value: 'CUSTOM' }
     ]);
 const validation = computed(() => validatePeriodSelection(draft.value));
-const pendingLabel = computed(() => selectionLabel(draft.value, props.mode));
 const applyDisabled = computed(() => props.disabled || props.loading || (props.mode !== 'CURRENT_ONLY' && !validation.value.valid));
 const mobileToggleLabel = computed(() => props.mode === 'CURRENT_ONLY'
   ? (expanded.value ? 'ปิด' : 'รีเฟรช')
@@ -102,61 +107,68 @@ function force() {
 </script>
 
 <template>
-  <section class="card period-toolbar" aria-label="เลือกช่วงข้อมูลรายงาน">
-    <div class="period-context">
-      <div>
-        <span>ข้อมูลที่กำลังแสดง</span>
-        <strong>{{ displayedLabel }}</strong>
-      </div>
-      <i class="pi pi-arrow-right period-context-arrow" aria-hidden="true" />
-      <div>
-        <span>ช่วงที่จะดึง</span>
-        <strong>{{ pendingLabel }}</strong>
-      </div>
-      <Button
-        class="period-mobile-toggle"
-        :label="mobileToggleLabel"
-        :icon="expanded ? 'pi pi-angle-up' : 'pi pi-calendar'"
-        severity="secondary"
-        text
-        size="small"
-        :aria-expanded="expanded"
-        @click="expanded = !expanded"
-      />
-    </div>
-
-    <div :class="['period-controls', { 'is-expanded': expanded }]">
-      <template v-if="mode === 'CURRENT_ONLY'">
-        <div class="current-only-copy">
-          <i class="pi pi-bolt" aria-hidden="true" />
-          <div><strong>รายงานนี้ใช้สถานะปัจจุบัน</strong><span>ฐานข้อมูลไม่รองรับการดูย้อนหลังตามวันที่</span></div>
-        </div>
-      </template>
-      <template v-else>
-        <div class="period-field">
-          <label for="shared-period-preset">ช่วงข้อมูล</label>
-          <Select
-            input-id="shared-period-preset"
-            :model-value="draft.periodPreset"
-            :options="presetOptions"
-            option-label="label"
-            option-value="value"
-            fluid
-            @update:model-value="selectPreset"
+  <section :class="['period-toolbar-shell', { 'period-toolbar-compact': desktopMode === 'compact' }]" aria-label="เลือกช่วงข้อมูลรายงาน">
+    <Toolbar :class="['period-toolbar', { 'is-expanded': expanded }]">
+      <template #start>
+        <div class="period-context">
+          <div class="period-context-copy">
+            <span>กำลังแสดง</span>
+            <strong>{{ displayedLabel }}</strong>
+            <small v-if="sourceLabel">{{ sourceLabel }}</small>
+          </div>
+          <Button
+            class="period-mobile-toggle"
+            :label="mobileToggleLabel"
+            :icon="expanded ? 'pi pi-angle-up' : 'pi pi-calendar'"
+            severity="secondary"
+            text
+            size="small"
+            :aria-expanded="expanded"
+            @click="expanded = !expanded"
           />
         </div>
-        <div v-if="draft.periodPreset === 'CUSTOM'" class="period-field">
-          <label for="shared-period-from">{{ mode === 'AS_OF_DATE' ? 'วันที่' : 'จากวันที่' }}</label>
-          <DatePicker input-id="shared-period-from" v-model="dateFrom" date-format="dd/mm/yy" :max-date="maxDate" show-icon fluid />
-        </div>
-        <div v-if="draft.periodPreset === 'CUSTOM' && mode !== 'AS_OF_DATE'" class="period-field">
-          <label for="shared-period-to">ถึงวันที่</label>
-          <DatePicker input-id="shared-period-to" v-model="dateTo" date-format="dd/mm/yy" :max-date="maxDate" show-icon fluid />
+      </template>
+
+      <template #center>
+        <div class="period-controls">
+          <template v-if="mode === 'CURRENT_ONLY'">
+            <div class="current-only-copy">
+              <i class="pi pi-bolt" aria-hidden="true" />
+              <div><strong>สถานะปัจจุบัน</strong><span>ไม่รองรับข้อมูลย้อนหลัง</span></div>
+            </div>
+          </template>
+          <template v-else>
+            <div class="period-field period-preset-field">
+              <label :for="presetId">ช่วงข้อมูล</label>
+              <Select
+                :input-id="presetId"
+                :model-value="draft.periodPreset"
+                :options="presetOptions"
+                option-label="label"
+                option-value="value"
+                fluid
+                @update:model-value="selectPreset"
+              />
+            </div>
+            <div v-if="draft.periodPreset === 'CUSTOM'" class="period-field">
+              <label :for="fromId">{{ mode === 'AS_OF_DATE' ? 'วันที่' : 'จากวันที่' }}</label>
+              <DatePicker :input-id="fromId" v-model="dateFrom" date-format="dd/mm/yy" :max-date="maxDate" show-icon fluid />
+            </div>
+            <div v-if="draft.periodPreset === 'CUSTOM' && mode !== 'AS_OF_DATE'" class="period-field">
+              <label :for="toId">ถึงวันที่</label>
+              <DatePicker :input-id="toId" v-model="dateTo" date-format="dd/mm/yy" :max-date="maxDate" show-icon fluid />
+            </div>
+          </template>
         </div>
       </template>
-      <Button :label="actionLabel" icon="pi pi-refresh" :loading="loading" :disabled="applyDisabled" @click="apply" />
-      <Button v-if="forceActionLabel" :label="forceActionLabel" icon="pi pi-database" severity="secondary" outlined :disabled="applyDisabled" @click="force" />
-    </div>
+
+      <template #end>
+        <div class="period-actions">
+          <Button :label="actionLabel" icon="pi pi-refresh" :loading="loading" :disabled="applyDisabled" @click="apply" />
+          <Button v-if="forceActionLabel" :label="forceActionLabel" icon="pi pi-database" severity="secondary" outlined :disabled="applyDisabled" @click="force" />
+        </div>
+      </template>
+    </Toolbar>
 
     <Message v-if="mode !== 'CURRENT_ONLY' && validation.message" severity="error" :closable="false" class="period-message">{{ validation.message }}</Message>
     <Message v-else-if="mode !== 'CURRENT_ONLY' && validation.warning" severity="warn" :closable="false" class="period-message">{{ validation.warning }}</Message>
@@ -164,29 +176,39 @@ function force() {
 </template>
 
 <style scoped>
-.period-toolbar { display: grid; gap: 1rem; margin-bottom: 1rem; padding: 1rem 1.25rem; }
-.period-context { display: flex; align-items: center; gap: 1rem; min-width: 0; }
-.period-context > div { display: grid; gap: .2rem; min-width: 0; }
-.period-context span { color: var(--text-color-secondary); font-size: .75rem; }
+.period-toolbar-shell { container-type: inline-size; display: grid; gap: .75rem; margin-bottom: 1rem; }
+.period-toolbar { display: grid; grid-template-columns: minmax(12rem, 1fr) auto auto; align-items: center; gap: 1rem; padding: .75rem 1rem; border-radius: var(--content-border-radius); }
+.period-toolbar :deep(.p-toolbar-start), .period-toolbar :deep(.p-toolbar-center), .period-toolbar :deep(.p-toolbar-end) { min-width: 0; }
+.period-context { display: flex; align-items: center; gap: .75rem; min-width: 0; }
+.period-context-copy { display: grid; gap: .1rem; min-width: 0; }
+.period-context span, .period-context small { color: var(--text-color-secondary); font-size: .75rem; }
 .period-context strong { overflow-wrap: anywhere; font-size: .9rem; }
-.period-context-arrow { color: var(--text-color-secondary); font-size: .75rem; }
-.period-controls { display: grid; grid-template-columns: minmax(12rem, 14rem) minmax(11rem, 1fr) minmax(11rem, 1fr) auto auto; align-items: end; gap: .75rem; padding-top: 1rem; border-top: 1px solid var(--surface-border); }
+.period-controls { display: flex; align-items: end; gap: .75rem; min-width: 0; }
 .period-field { display: grid; gap: .4rem; }
 .period-field label { font-size: .8rem; font-weight: 600; }
-.current-only-copy { grid-column: 1 / -3; display: flex; align-items: center; gap: .75rem; min-height: 2.75rem; }
+.period-preset-field { width: 12rem; }
+.period-actions { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; }
+.period-actions .p-button { min-height: 2.75rem; width: max-content; max-width: 14rem; }
+.current-only-copy { display: flex; align-items: center; gap: .75rem; min-height: 2.75rem; }
 .current-only-copy > i { color: var(--primary-color); font-size: 1.1rem; }
 .current-only-copy > div { display: grid; gap: .15rem; }
 .current-only-copy span { color: var(--text-color-secondary); font-size: .75rem; }
 .period-message { margin: 0; }
 .period-mobile-toggle { display: none; margin-left: auto; }
+@container (max-width: 859px) {
+  .period-toolbar { grid-template-columns: minmax(0, 1fr) auto; gap: .75rem 1rem; }
+  .period-toolbar :deep(.p-toolbar-start) { grid-column: 1 / -1; }
+  .period-toolbar :deep(.p-toolbar-center) { grid-column: 1; }
+  .period-toolbar :deep(.p-toolbar-end) { grid-column: 2; }
+}
 @media (max-width: 767px) {
-  .period-toolbar { gap: .75rem; padding: 1rem; }
-  .period-context { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .65rem; }
-  .period-context > div:nth-of-type(2), .period-context-arrow { display: none; }
+  .period-toolbar { display: grid; grid-template-columns: 1fr; gap: .75rem; padding: 1rem; }
+  .period-toolbar :deep(.p-toolbar-start), .period-toolbar :deep(.p-toolbar-center), .period-toolbar :deep(.p-toolbar-end) { grid-column: 1; width: 100%; }
+  .period-context { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .65rem; width: 100%; }
   .period-mobile-toggle { display: inline-flex; }
-  .period-controls { display: none; grid-template-columns: 1fr; align-items: stretch; padding-top: .75rem; }
-  .period-controls.is-expanded { display: grid; }
-  .current-only-copy { grid-column: auto; }
-  .period-controls > .p-button { width: 100%; }
+  .period-toolbar:not(.is-expanded) :deep(.p-toolbar-center), .period-toolbar:not(.is-expanded) :deep(.p-toolbar-end) { display: none; }
+  .period-controls, .period-actions { display: grid; grid-template-columns: 1fr; align-items: stretch; width: 100%; padding-top: .75rem; border-top: 1px solid var(--surface-border); }
+  .period-field, .period-preset-field { width: 100%; }
+  .period-actions .p-button { width: 100%; max-width: none; }
 }
 </style>

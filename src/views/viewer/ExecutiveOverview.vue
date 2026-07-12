@@ -45,10 +45,6 @@ const reports = computed(() => state.reportsByTenant[tenantId.value] ?? []);
 const snapshots = computed(() => overview.value?.items ?? []);
 const kpis = computed(() => buildExecutiveKpis(snapshots.value));
 const missingReportCount = computed(() => Math.max(0, reports.value.length - new Set(snapshots.value.map((item) => item.dashboard.reportKey)).size));
-const newestGeneratedAt = computed(() => snapshots.value.reduce<string | undefined>((latest, item) => {
-  const candidate = item.sourceFinishedAt ?? item.dashboard.generatedAt;
-  return !latest || Date.parse(candidate) > Date.parse(latest) ? candidate : latest;
-}, undefined));
 const featuredCharts = computed(() => {
   const choices = Object.entries(executiveFeaturedVisualizationKeys) as Array<[ReportKey, string]>;
   const selected: { snapshot: DashboardSnapshot; visualization: DashboardSnapshot['dashboard']['visualizations'][number] }[] = [];
@@ -298,9 +294,9 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 </script>
 
 <template>
-  <AppPageHeader :title="`ภาพรวม ${tenant?.name ?? ''}`" subtitle="ตัวเลขสำคัญ 4 ด้าน · เวลาไทย"><template #actions><span v-if="newestGeneratedAt" class="text-sm text-muted-color"><i class="pi pi-clock mr-2" />อัปเดต {{ formatDateTime(newestGeneratedAt) }}</span></template></AppPageHeader>
+  <AppPageHeader :title="`ภาพรวมร้าน ${tenant?.name ?? ''}`" desktop-mode="viewerCompact" />
 
-  <ReportPeriodToolbar mode="SMART_OVERVIEW" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" action-label="ดูภาพรวมช่วงนี้" force-action-label="ดึงใหม่จาก SML" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @apply="viewOverviewPeriod" @force="requestRefresh" />
+  <ReportPeriodToolbar desktop-mode="compact" mode="SMART_OVERVIEW" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" action-label="ดูภาพรวมช่วงนี้" force-action-label="ดึงใหม่จาก SML" :loading="refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @apply="viewOverviewPeriod" @force="requestRefresh" />
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="initializeOverview" /></Message>
   <Message v-if="refreshFailures.length" severity="warn" :closable="false" class="mb-4">อัปเดตไม่สำเร็จ {{ refreshFailures.length }} รายงาน: {{ failedReportLabels.join(', ') }} — ช่องดังกล่าวจะไม่ใช้ตัวเลขเดิมมาปะปน</Message>
@@ -319,7 +315,6 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 </template>
 
 <style scoped>
-.overview-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .75rem; }
 .executive-panel { border-radius: var(--content-border-radius); }
 .dashboard-card { margin-bottom: 0; }
 .executive-kpi { position: relative; display: flex; align-items: flex-start; gap: 1rem; min-height: 8.5rem; margin-bottom: 0; color: inherit; border: 0; text-align: left; cursor: pointer; transition: transform .2s; }
@@ -344,8 +339,6 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 .empty-overview p { max-width: 34rem; margin: 0 0 1.25rem; color: var(--text-color-secondary); }
 @media (prefers-reduced-motion: reduce) { .executive-kpi { transition: none; } }
 @media (max-width: 767px) {
-  .overview-header-actions { width: 100%; justify-content: space-between; gap: .5rem; }
-  .overview-header-actions > span { font-size: .75rem; }
   .executive-kpi { min-height: 7rem; padding: 1.25rem; }
   .executive-panel.dashboard-card { padding: 1.25rem; }
 }

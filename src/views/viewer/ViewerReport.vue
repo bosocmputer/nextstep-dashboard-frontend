@@ -9,7 +9,7 @@ import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, 
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { comparisonPeriodText, formatDashboardValue, formatPeriodRange, periodLabel } from '@/utils/dashboard';
-import { errorMessage, formatDateTime, formatMetric } from '@/utils/format';
+import { errorMessage, formatDateTime, formatMetric, formatTime } from '@/utils/format';
 import { periodModeForReport, selectionForMode, selectionFromReportPeriod, selectionToRunInput, type ReportPeriodSelection } from '@/utils/reportPeriod';
 import { presentationFor, visibleReportColumns, type ReportColumnDefinition } from '@/utils/reportPresentation';
 import { cleanViewerQuery, validSnapshotRunId, validViewerRunId } from '@/utils/viewerSnapshot';
@@ -60,11 +60,11 @@ const active = computed(() => !!run.value && ['QUEUED', 'CLAIMED', 'RUNNING'].in
 const snapshotRunId = computed(() => validSnapshotRunId(route.query.snapshotRunId));
 const viewerRunId = computed(() => validViewerRunId(route.query.runId));
 const statusLabel = computed(() => {
-  if (snapshotMode.value && dashboard.value) return 'Snapshot พร้อมใช้งาน';
   const labels: Record<string, string> = { QUEUED: 'รอคิว', CLAIMED: 'กำลังเตรียม', RUNNING: 'กำลังดึงข้อมูล', SUCCEEDED: 'พร้อมใช้งาน', FAILED: 'ไม่สำเร็จ', CANCELLED: 'ยกเลิกแล้ว', EXPIRED: 'หมดอายุ' };
   return run.value ? labels[run.value.status] ?? run.value.status : '';
 });
-const statusSeverity = computed(() => snapshotMode.value && dashboard.value ? 'success' : run.value?.status === 'SUCCEEDED' ? 'success' : run.value?.status === 'FAILED' ? 'danger' : active.value ? 'info' : 'secondary');
+const showRunStatus = computed(() => !!run.value && run.value.status !== 'SUCCEEDED' && !(snapshotMode.value && !!dashboard.value));
+const statusSeverity = computed(() => run.value?.status === 'FAILED' ? 'danger' : active.value ? 'info' : 'secondary');
 const detailRowsUnavailable = computed(() => rowsUnavailable.value || run.value?.status === 'EXPIRED' || cachedSnapshot.value?.detailsAvailable === false);
 const freshness = computed(() => freshnessPresentation(cachedSnapshot.value?.freshnessStatus));
 const progressLabel = computed(() => progressPresentation(run.value?.progress?.phase));
@@ -75,6 +75,7 @@ const elapsedSeconds = computed(() => {
   return Math.max(0, Math.round((end - Date.parse(run.value.queuedAt)) / 1000));
 });
 const sourceFinishedAt = computed(() => cachedSnapshot.value?.sourceFinishedAt ?? run.value?.finishedAt ?? dashboard.value?.generatedAt);
+const sourceLabel = computed(() => sourceFinishedAt.value ? `SML ${formatTime(sourceFinishedAt.value)} น.` : undefined);
 const displayedPeriodLabel = computed(() => dashboard.value ? `${periodLabel(dashboard.value.period.preset)} · ${formatPeriodRange(dashboard.value.period)}` : run.value?.dateFrom && run.value.dateTo ? formatPeriodRange({ preset: run.value.periodPreset as ReportDashboard['period']['preset'], dateFrom: run.value.dateFrom, dateTo: run.value.dateTo }) : 'ยังไม่มีข้อมูล');
 const columnOptions = computed(() => presentationFor(reportKey.value, columns.value));
 const displayedColumns = computed(() => visibleReportColumns(reportKey.value, columns.value, selectedColumnKeys.value));
@@ -386,9 +387,9 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 </script>
 
 <template>
-  <AppPageHeader :title="definition?.label ?? 'รายงาน'" :subtitle="`${tenant?.name ?? ''} · เวลาไทย`"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action -ml-3 mb-2" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="cachedSnapshot" :severity="freshness.severity" :icon="freshness.icon" :value="freshness.label" /><Tag v-if="run" :severity="statusSeverity" :value="statusLabel" /></div><Button v-if="run?.status === 'QUEUED'" icon="pi pi-times" severity="danger" outlined rounded aria-label="ยกเลิกงานที่รอคิว" @click="cancel" /><Button v-else-if="active" icon="pi pi-eye-slash" severity="secondary" outlined rounded aria-label="หยุดติดตามความคืบหน้า" @click="stopFollowing" /></div></template></AppPageHeader>
+  <AppPageHeader :title="definition?.label ?? 'รายงาน'" desktop-mode="viewerCompact"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action touch-action" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="cachedSnapshot" :severity="freshness.severity" :icon="freshness.icon" :value="freshness.label" /><Tag v-if="showRunStatus" :severity="statusSeverity" :value="statusLabel" /></div><Button v-if="run?.status === 'QUEUED'" icon="pi pi-times" severity="danger" outlined rounded aria-label="ยกเลิกงานที่รอคิว" @click="cancel" /><Button v-else-if="active" icon="pi pi-eye-slash" severity="secondary" outlined rounded aria-label="หยุดติดตามความคืบหน้า" @click="stopFollowing" /></div></template></AppPageHeader>
 
-  <ReportPeriodToolbar :mode="periodMode" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" :action-label="periodMode === 'CURRENT_ONLY' ? 'ดูสถานะปัจจุบัน' : 'ดูข้อมูลช่วงนี้'" force-action-label="ดึงใหม่จาก SML" :loading="loading" :disabled="forceConfirmOpen" @apply="resolveSnapshot" @force="requestForceRefresh" />
+  <ReportPeriodToolbar desktop-mode="compact" :mode="periodMode" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" :source-label="sourceLabel" :action-label="periodMode === 'CURRENT_ONLY' ? 'ดูสถานะล่าสุด' : 'ดูช่วงนี้'" force-action-label="ดึงใหม่จาก SML" :loading="loading" :disabled="forceConfirmOpen" @apply="resolveSnapshot" @force="requestForceRefresh" />
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
   <Message v-if="expiredSnapshot && !cachedSnapshot" severity="warn" :closable="false" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลล่าสุดไม่พร้อมใช้งาน Snapshot เดิมดึงจาก SML เมื่อ {{ formatDateTime(expiredSnapshot.sourceFinishedAt) }} และจะไม่แสดงเป็น KPI หลักโดยอัตโนมัติ</span><Button label="เปิดดู Snapshot เดิม" icon="pi pi-history" size="small" severity="secondary" @click="showExpiredSnapshot" /></div></Message>
@@ -401,7 +402,6 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
     <TabPanels>
       <TabPanel value="overview">
         <Message v-if="dashboard.quality.status === 'WARNING'" severity="warn" :closable="false" class="mb-4">ข้อมูลหลักพร้อมใช้งาน แต่ไม่มีช่วงเปรียบเทียบบางส่วน</Message>
-        <section class="report-summary-bar" aria-label="ช่วงข้อมูลที่กำลังแสดง"><div><span>ข้อมูลที่กำลังแสดง</span><strong>{{ periodLabel(dashboard.period.preset) }} · {{ formatPeriodRange(dashboard.period) }}</strong></div><span><i class="pi pi-database mr-2" />ดึงจาก SML สำเร็จเมื่อ {{ formatDateTime(sourceFinishedAt) }} เวลาไทย</span></section>
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
           <article v-for="metric in dashboard.kpis" :key="metric.key" class="card dashboard-card report-kpi"><span class="text-sm text-muted-color">{{ metric.label }}</span><strong>{{ formatDashboardValue(metric.value, metric.unit) }}</strong><span v-if="metric.comparison.availability === 'AVAILABLE'" class="metric-comparison"><span><i :class="metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(metric.comparison.delta, metric.unit) }}</span><span>{{ comparisonPeriodText(dashboard.comparisonPeriod) }}</span></span><span v-else class="metric-comparison"><span>ไม่มีข้อมูลเปรียบเทียบที่เทียบช่วงเวลาเดียวกันได้</span></span></article>
         </div>
@@ -422,9 +422,6 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
 .report-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; }
 .dashboard-card { margin-bottom: 0; }
 .report-tabs :deep(.p-tabpanels) { padding: 1.25rem 0 0; background: transparent; }
-.report-summary-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding-bottom: .9rem; border-bottom: 1px solid var(--surface-border); }
-.report-summary-bar > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: .4rem .7rem; }
-.report-summary-bar > div > span, .report-summary-bar > span { color: var(--text-color-secondary); font-size: .8rem; }
 .report-kpi { display: grid; gap: .55rem; min-height: 7.5rem; padding: 1.15rem; border-radius: var(--content-border-radius); }
 .report-kpi strong { font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .metric-comparison { display: grid; gap: .2rem; color: var(--text-color-secondary); font-size: .75rem; }
@@ -437,6 +434,5 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
   .report-back-action { display: none; }
   .report-heading-actions { width: 100%; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
   .report-heading-actions .p-button { width: auto; }
-  .report-summary-bar { align-items: flex-start; flex-direction: column; gap: .45rem; }
 }
 </style>
