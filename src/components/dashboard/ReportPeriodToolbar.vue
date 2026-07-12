@@ -108,13 +108,18 @@ function force() {
 
 <template>
   <section :class="['period-toolbar-shell', { 'period-toolbar-compact': desktopMode === 'compact' }]" aria-label="เลือกช่วงข้อมูลรายงาน">
-    <Toolbar :class="['period-toolbar', { 'is-expanded': expanded }]">
+    <Toolbar :class="['period-toolbar', { 'is-expanded': expanded, 'has-custom-period': draft.periodPreset === 'CUSTOM' && mode !== 'CURRENT_ONLY' }]">
       <template #start>
         <div class="period-context">
-          <div class="period-context-copy">
-            <span>กำลังแสดง</span>
-            <strong>{{ displayedLabel }}</strong>
-            <small v-if="sourceLabel">{{ sourceLabel }}</small>
+          <div class="period-context-details">
+            <div class="period-context-copy">
+              <span>กำลังแสดง</span>
+              <strong>{{ displayedLabel }}</strong>
+            </div>
+            <div v-if="sourceLabel" class="period-source">
+              <span class="period-source-label">ดึงสำเร็จ</span>
+              <strong>{{ sourceLabel }}</strong>
+            </div>
           </div>
           <Button
             class="period-mobile-toggle"
@@ -177,16 +182,20 @@ function force() {
 
 <style scoped>
 .period-toolbar-shell { container-type: inline-size; display: grid; gap: .75rem; margin-bottom: 1rem; }
-.period-toolbar { display: grid; grid-template-columns: minmax(12rem, 1fr) auto auto; align-items: center; gap: 1rem; padding: .75rem 1rem; border-radius: var(--content-border-radius); }
-.period-toolbar :deep(.p-toolbar-start), .period-toolbar :deep(.p-toolbar-center), .period-toolbar :deep(.p-toolbar-end) { min-width: 0; }
-.period-context { display: flex; align-items: center; gap: .75rem; min-width: 0; }
-.period-context-copy { display: grid; gap: .1rem; min-width: 0; }
-.period-context span, .period-context small { color: var(--text-color-secondary); font-size: .75rem; }
-.period-context strong { overflow-wrap: anywhere; font-size: .9rem; }
-.period-controls { display: flex; align-items: end; gap: .75rem; min-width: 0; }
+.period-toolbar { display: grid; grid-template-columns: minmax(18rem, 1fr) minmax(11rem, 14rem) auto; align-items: end; gap: 1rem; padding: .75rem 1rem; border-radius: var(--content-border-radius); }
+.period-toolbar :deep(.p-toolbar-start), .period-toolbar :deep(.p-toolbar-center), .period-toolbar :deep(.p-toolbar-end) { align-self: end; min-width: 0; }
+.period-toolbar :deep(.p-toolbar-start), .period-toolbar :deep(.p-toolbar-center) { width: 100%; }
+.period-context { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: .75rem; min-width: 0; width: 100%; }
+.period-context-details { display: grid; grid-template-columns: minmax(0, 1fr) minmax(7.5rem, auto); align-items: end; gap: 1rem; min-width: 0; }
+.period-context-copy, .period-source { display: grid; grid-template-rows: auto minmax(2.75rem, auto); align-items: end; gap: .15rem; min-width: 0; }
+.period-context span { color: var(--text-color-secondary); font-size: .75rem; line-height: 1.25; }
+.period-context strong { display: flex; align-items: center; min-height: 2.75rem; overflow-wrap: anywhere; font-size: .9rem; line-height: 1.35; }
+.period-source { padding-left: 1rem; border-left: 1px solid var(--surface-border); }
+.period-source strong { white-space: nowrap; }
+.period-controls { display: flex; align-items: end; gap: .75rem; min-width: 0; width: 100%; }
 .period-field { display: grid; gap: .4rem; }
 .period-field label { font-size: .8rem; font-weight: 600; }
-.period-preset-field { width: 12rem; }
+.period-preset-field { width: 100%; }
 .period-actions { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; }
 .period-actions .p-button { min-height: 2.75rem; width: max-content; max-width: 14rem; }
 .current-only-copy { display: flex; align-items: center; gap: .75rem; min-height: 2.75rem; }
@@ -195,19 +204,31 @@ function force() {
 .current-only-copy span { color: var(--text-color-secondary); font-size: .75rem; }
 .period-message { margin: 0; }
 .period-mobile-toggle { display: none; margin-left: auto; }
-@container (max-width: 859px) {
+.period-toolbar.has-custom-period { grid-template-columns: minmax(18rem, 1fr) auto; }
+.period-toolbar.has-custom-period :deep(.p-toolbar-start) { grid-column: 1; grid-row: 1; }
+.period-toolbar.has-custom-period :deep(.p-toolbar-end) { grid-column: 2; grid-row: 1; }
+.period-toolbar.has-custom-period :deep(.p-toolbar-center) { grid-column: 1 / -1; grid-row: 2; }
+.period-toolbar.has-custom-period .period-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@container (max-width: 899px) {
   .period-toolbar { grid-template-columns: minmax(0, 1fr) auto; gap: .75rem 1rem; }
-  .period-toolbar :deep(.p-toolbar-start) { grid-column: 1 / -1; }
-  .period-toolbar :deep(.p-toolbar-center) { grid-column: 1; }
-  .period-toolbar :deep(.p-toolbar-end) { grid-column: 2; }
+  .period-toolbar :deep(.p-toolbar-start), .period-toolbar.has-custom-period :deep(.p-toolbar-start) { grid-column: 1 / -1; grid-row: 1; }
+  .period-toolbar :deep(.p-toolbar-center), .period-toolbar.has-custom-period :deep(.p-toolbar-center) { grid-column: 1; grid-row: 2; }
+  .period-toolbar :deep(.p-toolbar-end), .period-toolbar.has-custom-period :deep(.p-toolbar-end) { grid-column: 2; grid-row: 2; }
+  .period-toolbar.has-custom-period .period-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 767px) {
   .period-toolbar { display: grid; grid-template-columns: 1fr; gap: .75rem; padding: 1rem; }
-  .period-toolbar :deep(.p-toolbar-start), .period-toolbar :deep(.p-toolbar-center), .period-toolbar :deep(.p-toolbar-end) { grid-column: 1; width: 100%; }
+  .period-toolbar :deep(.p-toolbar-start), .period-toolbar :deep(.p-toolbar-center), .period-toolbar :deep(.p-toolbar-end), .period-toolbar.has-custom-period :deep(.p-toolbar-start), .period-toolbar.has-custom-period :deep(.p-toolbar-center), .period-toolbar.has-custom-period :deep(.p-toolbar-end) { grid-column: 1; grid-row: auto; width: 100%; }
   .period-context { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .65rem; width: 100%; }
+  .period-context-details { display: grid; grid-template-columns: 1fr; gap: .1rem; }
+  .period-context-copy, .period-source { display: grid; grid-template-rows: auto; gap: .1rem; }
+  .period-context strong { min-height: 0; }
+  .period-source { padding-left: 0; border-left: 0; }
+  .period-source-label { display: none; }
+  .period-source strong { min-height: 0; color: var(--text-color-secondary); font-size: .75rem; font-weight: 400; }
   .period-mobile-toggle { display: inline-flex; }
   .period-toolbar:not(.is-expanded) :deep(.p-toolbar-center), .period-toolbar:not(.is-expanded) :deep(.p-toolbar-end) { display: none; }
-  .period-controls, .period-actions { display: grid; grid-template-columns: 1fr; align-items: stretch; width: 100%; padding-top: .75rem; border-top: 1px solid var(--surface-border); }
+  .period-controls, .period-toolbar.has-custom-period .period-controls, .period-actions { display: grid; grid-template-columns: 1fr; align-items: stretch; width: 100%; padding-top: .75rem; border-top: 1px solid var(--surface-border); }
   .period-field, .period-preset-field { width: 100%; }
   .period-actions .p-button { width: 100%; max-width: none; }
 }

@@ -82,4 +82,21 @@ describe('ReportPeriodToolbar', () => {
     expect(toolbars[0]!.text()).toContain('SML 20:24 น.');
     expect(labels[0]!.attributes('for')).not.toBe(labels[1]!.attributes('for'));
   });
+
+  it('uses separate two-row context cells so source time aligns with the period control', () => {
+    const wrapper = mount(ReportPeriodToolbar, {
+      props: {
+        mode: 'AS_OF_DATE',
+        selection: { periodPreset: 'TODAY_TO_NOW' },
+        displayedLabel: 'ณ เวลาที่อัปเดต · 12 ก.ค. 2569',
+        sourceLabel: 'SML 21:33 น.',
+        desktopMode: 'compact'
+      },
+      global
+    });
+
+    expect(wrapper.find('.period-context-details').exists()).toBe(true);
+    expect(wrapper.get('.period-source-label').text()).toBe('ดึงสำเร็จ');
+    expect(wrapper.get('.period-source strong').text()).toBe('SML 21:33 น.');
+  });
 });

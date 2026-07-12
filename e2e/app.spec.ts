@@ -841,8 +841,21 @@ test('viewer opens all ten report routes with the shared executive layout', asyn
       if (width === 1440) {
         const header = await page.locator('.page-header').boundingBox();
         const toolbar = await page.locator('.period-toolbar').boundingBox();
+        const customPeriod = await page.locator('.period-toolbar').getAttribute('class').then((value) => value?.includes('has-custom-period') ?? false);
         expect(header?.height).toBeLessThanOrEqual(64);
-        expect(toolbar?.height).toBeLessThanOrEqual(80);
+        expect(toolbar?.height).toBeLessThanOrEqual(customPeriod ? 150 : 80);
+        if (!customPeriod && reportKey !== 'stock_reorder') {
+          const alignment = await page.evaluate(() => {
+            const selectors = ['.period-context-copy strong', '.period-source strong', '.period-preset-field .p-select', '.period-actions .p-button'];
+            return selectors.map((selector) => {
+              const rect = document.querySelector(selector)?.getBoundingClientRect();
+              return rect ? rect.bottom : null;
+            });
+          });
+          expect(alignment.every((value) => value !== null)).toBe(true);
+          const bottoms = alignment.filter((value): value is number => value !== null);
+          expect(Math.max(...bottoms) - Math.min(...bottoms)).toBeLessThanOrEqual(4);
+        }
       }
       await expect(page.getByLabel('ตัวกรองรายงาน')).toHaveCount(0);
       const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
