@@ -137,7 +137,9 @@ function applyOverviewRevalidation(result: OverviewRevalidation) {
   overview.value = result.overview;
   backgroundRuns.value = result.runs;
   exactRefreshLoaded.value = !result.legacyFallback;
-  displayedPeriodLabel.value = result.legacyFallback ? 'ข้อมูลล่าสุดแต่ละรายงาน' : selectionLabel(selectedPeriod.value, 'SMART_OVERVIEW');
+  displayedPeriodLabel.value = result.legacyFallback
+    ? 'ข้อมูลล่าสุดแต่ละรายงาน'
+    : result.overview.items.length ? selectionLabel(selectedPeriod.value, 'SMART_OVERVIEW') : 'ยังไม่มี Snapshot สำหรับช่วงนี้';
 }
 
 async function startRefresh(selection: ReportPeriodSelection) {
@@ -313,7 +315,7 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
     <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }} · ดึงจาก SML {{ formatDateTime(item.snapshot.sourceFinishedAt ?? item.snapshot.dashboard.generatedAt) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
   </div>
-  <div v-else-if="!loading" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>พร้อมสร้างภาพรวมผู้บริหาร</h2><p>เลือกช่วงข้อมูลด้านบน แล้วกด “อัปเดตภาพรวม” เพื่อดึง SQL ตามสิทธิ์ของคุณ</p></div>
+  <div v-else-if="!loading && !refreshing" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>ยังไม่มี Snapshot สำหรับช่วงนี้</h2><p>เลือกช่วงข้อมูลแล้วกด “ดูภาพรวมช่วงนี้” ระบบจะใช้ Cache ที่ตรงช่วงหรืออัปเดตจาก SML ตามนโยบายของร้าน</p></div>
 </template>
 
 <style scoped>

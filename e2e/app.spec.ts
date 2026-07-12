@@ -392,6 +392,7 @@ test('mobile viewer renders only reports returned by permission API', async ({ p
   await expect(page).toHaveURL(`/app/tenant/${tenantId}`);
   await expect(page.getByTestId('mobile-topbar-context')).toContainText('ร้านตัวอย่าง');
   await expect(page.getByTestId('mobile-topbar-context')).toContainText('ภาพรวม');
+  await expect(page.getByRole('heading', { name: 'ยังไม่มี Snapshot สำหรับช่วงนี้' })).toBeVisible();
   const hiddenPageHeading = await page.getByRole('heading', { name: 'ภาพรวม ร้านตัวอย่าง' }).boundingBox();
   expect(hiddenPageHeading?.width).toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: 'เปิดหรือปิดเมนู' }).click();
