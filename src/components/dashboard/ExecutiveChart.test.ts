@@ -143,9 +143,10 @@ describe('ExecutiveChart responsive presentation', () => {
     await wrapper.vm.$nextTick();
 
     const chart = wrapper.getComponent({ name: 'Chart' });
-    const options = chart.props('options') as { interaction: { axis?: string; intersect: boolean; mode: string } };
+    const options = chart.props('options') as { interaction: { axis?: string; intersect: boolean; mode: string }; resizeDelay?: number };
 
     expect(options.interaction).toEqual({ mode: 'index', axis: 'y', intersect: false });
+    expect(options.resizeDelay).toBeUndefined();
   });
 
   it('keeps trend tooltip hit testing on the horizontal time axis', async () => {

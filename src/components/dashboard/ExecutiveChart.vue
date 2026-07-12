@@ -85,7 +85,6 @@ function setChartOptions() {
   chartOptions.value = {
     responsive: true,
     maintainAspectRatio: false,
-    resizeDelay: 100,
     indexAxis: horizontal ? 'y' : 'x',
     animation: isNarrow.value || reducedMotion.value ? false : { duration: 200 },
     interaction: { mode: 'index', axis: horizontal ? 'y' : 'x', intersect: false },
