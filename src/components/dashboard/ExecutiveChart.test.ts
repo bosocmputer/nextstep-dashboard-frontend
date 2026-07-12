@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils';
+import { defineComponent, watch } from 'vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DashboardVisualization } from '@/api';
 import ExecutiveChart from './ExecutiveChart.vue';
@@ -43,6 +44,32 @@ function installResizeObserver(width: number) {
   return disconnect;
 }
 
+function installControlledResizeObserver(initialWidth: number) {
+  let callback: ResizeObserverCallback | undefined;
+  let observedTarget: Element | undefined;
+  class MockResizeObserver {
+    constructor(nextCallback: ResizeObserverCallback) { callback = nextCallback; }
+    observe(target: Element) {
+      observedTarget = target;
+      callback?.([{ target, contentRect: { width: initialWidth } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+    }
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal('ResizeObserver', MockResizeObserver);
+  vi.stubGlobal('requestAnimationFrame', (nextCallback: FrameRequestCallback) => {
+    queueMicrotask(() => nextCallback(0));
+    return 1;
+  });
+  vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  return {
+    resize(width: number) {
+      if (!callback || !observedTarget) throw new Error('ResizeObserver was not connected');
+      callback([{ target: observedTarget, contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver);
+    }
+  };
+}
+
 const chartStub = { name: 'Chart', props: ['type', 'data', 'options'], template: '<div data-testid="chart-canvas" />' };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -68,6 +95,28 @@ describe('ExecutiveChart responsive presentation', () => {
 
     expect(wrapper.find('[data-testid="chart-canvas"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="mobile-ranking"]').exists()).toBe(false);
+  });
+
+  it('does not update Chart.js props while replacing the canvas with the mobile presentation', async () => {
+    const observer = installControlledResizeObserver(768);
+    const optionUpdates = vi.fn();
+    const guardedChartStub = defineComponent({
+      name: 'GuardedChartStub',
+      props: ['type', 'data', 'options'],
+      setup(chartProps) { watch(() => chartProps.options, optionUpdates); },
+      template: '<div data-testid="chart-canvas" />'
+    });
+    const wrapper = mount(ExecutiveChart, { props: { visualization: ranking() }, global: { stubs: { Chart: guardedChartStub } } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const updatesBeforeResize = optionUpdates.mock.calls.length;
+
+    observer.resize(390);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="chart-canvas"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="mobile-ranking"]').exists()).toBe(true);
+    expect(optionUpdates).toHaveBeenCalledTimes(updatesBeforeResize);
   });
 
   it('uses the category axis for tooltip hit testing on horizontal bars', async () => {

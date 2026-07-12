@@ -17,6 +17,7 @@ const reducedMotion = ref(false);
 let resizeObserver: ResizeObserver | undefined;
 let resizeFrame = 0;
 let motionQuery: MediaQueryList | undefined;
+let disposed = false;
 
 const model = computed(() => buildChartPresentation(props.visualization));
 const type = computed(() => chartTypeFor(props.visualization));
@@ -115,9 +116,12 @@ function applyWidth(width: number) {
 }
 
 function updateWidth(width: number) {
-  if (width <= 0) return;
+  if (disposed || width <= 0) return;
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(() => { applyWidth(width); resizeFrame = 0; });
+  resizeFrame = requestAnimationFrame(() => {
+    if (!disposed) applyWidth(width);
+    resizeFrame = 0;
+  });
 }
 
 function updateMotionPreference(event?: MediaQueryListEvent) {
@@ -135,14 +139,19 @@ onMounted(() => {
   motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   updateMotionPreference();
   motionQuery.addEventListener('change', updateMotionPreference);
-  setChartOptions();
+  if (!mobileSemanticMode.value) setChartOptions();
 });
 onBeforeUnmount(() => {
+  disposed = true;
   resizeObserver?.disconnect();
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
   motionQuery?.removeEventListener('change', updateMotionPreference);
 });
-watch([model, () => layoutConfig.primary, () => layoutConfig.surface, isDarkTheme, isNarrow, reducedMotion, horizontalCanvas], setChartOptions, { deep: true });
+watch([model, () => layoutConfig.primary, () => layoutConfig.surface, isDarkTheme, isNarrow, reducedMotion, horizontalCanvas], () => {
+  // Do not update Chart.js props in the same render cycle that removes its
+  // canvas. PrimeVue otherwise schedules an update after the canvas is gone.
+  if (!disposed && !mobileSemanticMode.value) setChartOptions();
+}, { deep: true });
 </script>
 
 <template>
