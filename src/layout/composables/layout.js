@@ -1,8 +1,9 @@
 import { computed, reactive } from 'vue';
+import { DEFAULT_PRIMARY_COLOR } from '@/constants/themeConstants';
 
 const layoutConfig = reactive({
     preset: 'Aura',
-    primary: 'emerald',
+    primary: DEFAULT_PRIMARY_COLOR,
     surface: null,
     darkTheme: false,
     menuMode: 'static'

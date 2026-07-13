@@ -1,5 +1,4 @@
 import { createApp } from 'vue';
-import Aura from '@primeuix/themes/aura';
 import PrimeVue from 'primevue/config';
 import ConfirmationService from 'primevue/confirmationservice';
 import ToastService from 'primevue/toastservice';
@@ -7,6 +6,7 @@ import Tooltip from 'primevue/tooltip';
 
 import App from './App.vue';
 import router from './router';
+import { APP_THEME_PRESET } from '@/constants/themeConstants';
 import '@/assets/tailwind.css';
 import '@/assets/styles.scss';
 
@@ -22,7 +22,7 @@ app.use(PrimeVue, {
     strong: 'รหัสผ่านปลอดภัยมาก'
   },
   theme: {
-    preset: Aura,
+    preset: APP_THEME_PRESET,
     options: { darkModeSelector: '.app-dark', cssLayer: false }
   }
 });

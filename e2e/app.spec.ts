@@ -161,6 +161,24 @@ test('admin can sign in and sees API readiness', async ({ page }) => {
   expect(consoleErrors).toEqual([]);
 });
 
+test('application uses the shared blue primary tokens in light and dark modes', async ({ page }) => {
+  const consoleErrors = captureUnexpectedConsoleErrors(page);
+  await mockAdminLogin(page);
+  await page.goto('/admin/login');
+  await page.getByLabel('รหัสผ่าน').fill('local-e2e-password');
+  await page.getByRole('button', { name: 'เข้าสู่ระบบ' }).click();
+
+  await expect(page.getByRole('heading', { name: 'ภาพรวมระบบ' })).toBeVisible();
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--p-primary-color').trim())).toBe('#3b82f6');
+  await expect(page.getByRole('button', { name: 'สลับโหมดสี' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'สลับโหมดสี' }).click();
+
+  await expect(page.locator('html')).toHaveClass(/app-dark/);
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--p-primary-color').trim())).toBe('#60a5fa');
+  expect(consoleErrors).toEqual([]);
+});
+
 test('mobile admin topbar shows the current route instead of duplicating the brand', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockAdminLogin(page);
