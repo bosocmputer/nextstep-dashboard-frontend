@@ -29,6 +29,12 @@ button, input, textarea, select { font: inherit; }
 .page-title { margin: 0; font-size: 1.65rem; font-weight: 700; letter-spacing: -0.02em; }
 .page-subtitle { margin: 0.35rem 0 0; color: var(--text-color-secondary); }
 .metric-value { font-variant-numeric: tabular-nums; }
+.table-number-column { text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.table-number-column .p-datatable-column-header-content { justify-content: flex-end; }
+.table-select-column { text-align: center !important; }
+.table-select-column .p-datatable-column-header-content { justify-content: center; }
+.table-action-column { text-align: right !important; }
+.table-action-column .p-datatable-column-header-content { justify-content: flex-end; }
 .safe-wrap { overflow-wrap: anywhere; }
 .content-stack { display: grid; gap: 1rem; }
 .technical-detail { font-size: .75rem; color: var(--text-color-secondary); overflow-wrap: anywhere; }

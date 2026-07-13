@@ -4,17 +4,17 @@ const api = '/api/v1';
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const adminReportCatalog = {
   data: [
-    ['sales_goods_services', 'รายงานขายสินค้าและบริการ', 'SALES', 'ขาย'],
-    ['purchase_goods_payables', 'รายงานซื้อสินค้าและตั้งหนี้', 'PURCHASE', 'ซื้อ'],
-    ['gross_profit_by_product', 'กำไรขั้นต้นตามสินค้า', 'GROSS_PROFIT', 'กำไรขั้นต้น'],
-    ['gross_profit_by_ar_customer', 'กำไรขั้นต้นตามลูกหนี้', 'GROSS_PROFIT', 'กำไรขั้นต้น'],
-    ['stock_balance', 'รายงานสต็อกคงเหลือ', 'INVENTORY', 'สินค้าคงคลัง'],
-    ['stock_reorder', 'รายงานสินค้าถึงจุดสั่งซื้อ', 'INVENTORY', 'สินค้าคงคลัง'],
-    ['ar_customer_movement', 'รายงานความเคลื่อนไหวลูกหนี้', 'AR', 'ลูกหนี้'],
-    ['ar_debt_receipt', 'รายงานรับชำระหนี้', 'AR', 'ลูกหนี้'],
-    ['cash_bank_receipts', 'รายงานรับเงิน', 'CASH_BANK', 'เงินสดและธนาคาร'],
-    ['cash_bank_payments', 'รายงานจ่ายเงิน', 'CASH_BANK', 'เงินสดและธนาคาร']
-  ].map(([reportKey, label, category, categoryLabel]) => ({ reportKey, label, category, categoryLabel, version: '1.0.0', status: 'ACTIVE' })),
+    ['sales_goods_services', 'รายงานขายสินค้าและบริการ', 'SALES', 'ขาย', 'DATE_RANGE'],
+    ['purchase_goods_payables', 'รายงานซื้อสินค้าและตั้งหนี้', 'PURCHASE', 'ซื้อ', 'DATE_RANGE'],
+    ['gross_profit_by_product', 'กำไรขั้นต้นตามสินค้า', 'GROSS_PROFIT', 'กำไรขั้นต้น', 'DATE_RANGE'],
+    ['gross_profit_by_ar_customer', 'กำไรขั้นต้นตามลูกหนี้', 'GROSS_PROFIT', 'กำไรขั้นต้น', 'DATE_RANGE'],
+    ['stock_balance', 'รายงานสต็อกคงเหลือ', 'INVENTORY', 'สินค้าคงคลัง', 'AS_OF_DATE'],
+    ['stock_reorder', 'รายงานสินค้าถึงจุดสั่งซื้อ', 'INVENTORY', 'สินค้าคงคลัง', 'CURRENT_ONLY'],
+    ['ar_customer_movement', 'รายงานความเคลื่อนไหวลูกหนี้', 'AR', 'ลูกหนี้', 'AS_OF_DATE'],
+    ['ar_debt_receipt', 'รายงานรับชำระหนี้', 'AR', 'ลูกหนี้', 'DATE_RANGE'],
+    ['cash_bank_receipts', 'รายงานรับเงิน', 'CASH_BANK', 'เงินสดและธนาคาร', 'DATE_RANGE'],
+    ['cash_bank_payments', 'รายงานจ่ายเงิน', 'CASH_BANK', 'เงินสดและธนาคาร', 'DATE_RANGE']
+  ].map(([reportKey, label, category, categoryLabel, periodMode]) => ({ reportKey, label, category, categoryLabel, periodMode, version: '1.0.0', status: 'ACTIVE' })),
   limits: { maxScheduleReports: 10, maxFlexPayloadBytes: 30720 }
 };
 
@@ -720,14 +720,17 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, async (route) => {
     if (route.request().url().endsWith('/preview')) {
       previewRequests++;
-      expect(route.request().postDataJSON()).toEqual({ periodPreset: 'YESTERDAY', reportKeys: ['sales_goods_services'] });
+      expect(route.request().postDataJSON()).toEqual({
+        daysOfWeek: [1, 2, 3, 4, 5], localTime: '09:00', timezone: 'Asia/Bangkok',
+        periodPreset: 'YESTERDAY', reportKeys: ['sales_goods_services']
+      });
       await route.fulfill(json({
-        presentationVersion: 'executive-navy-v1',
+        presentationVersion: 'executive-navy-v2', exampleScheduledFor: '2026-07-13T09:00:00+07:00', mixedPeriods: false,
         altText: 'รายงาน ร้านตัวอย่าง — ข้อมูลวันที่ 2026-07-10', tenantName: 'ร้านตัวอย่าง',
         period: { preset: 'YESTERDAY', dateFrom: '2026-07-10', dateTo: '2026-07-10' },
         periodLabel: 'ข้อมูลวันที่ 2026-07-10', generatedAt: '2026-07-11T01:30:00+07:00',
         actionUrl: 'https://dashboard.nextstep-soft.com/app', payloadBytes: 2048, message: {},
-        reports: [{ key: 'sales_goods_services', label: 'รายงานขายสินค้าและบริการ', categoryLabel: 'ขาย', dataState: 'DATA',
+        reports: [{ key: 'sales_goods_services', label: 'รายงานขายสินค้าและบริการ', categoryLabel: 'ขาย', periodLabel: 'ข้อมูลวันที่ 2026-07-10', dataState: 'DATA',
           primary: { label: 'ยอดขาย', value: '1,234,567.89' }, supporting: [{ label: 'จำนวนเอกสาร', value: '128' }], metrics: [
           { label: 'เอกสาร', value: '128' }, { label: 'ยอดขาย', value: '1,234,567.89' }
         ] }]
@@ -796,7 +799,7 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   await expect(page.getByText('ตัวเลขสมมติเท่านั้น')).toBeVisible();
   await expect(page.getByText('1,234,567.89')).toBeVisible();
   await expect(page.getByText('ดูภาพรวมร้าน')).toBeVisible();
-  await expect(page.locator('.flex-preview-card')).toHaveAttribute('data-presentation-version', 'executive-navy-v1');
+  await expect(page.locator('.flex-preview-card')).toHaveAttribute('data-presentation-version', 'executive-navy-v2');
   await expect(page.getByText('1 LINE Card · 1/10 รายงาน · 2.0 KB / 30 KB')).toBeVisible();
   expect(previewRequests).toBe(1);
   await page.getByRole('button', { name: 'ตารางส่งรายงาน' }).click();

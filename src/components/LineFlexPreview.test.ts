@@ -13,6 +13,8 @@ const preview: FlexPreview = {
   generatedAt: '2026-07-11T01:30:00+07:00',
   actionUrl: 'https://dashboard.nextstep-soft.com/app',
   payloadBytes: 2048,
+  exampleScheduledFor: '2026-07-11T01:00:00Z',
+  mixedPeriods: false,
   message: {},
   reports: [
     {
@@ -24,6 +26,7 @@ const preview: FlexPreview = {
       comparison: { text: '↓ 7.82% จากช่วงก่อน', direction: 'DOWN' },
       attention: { severity: 'WARNING', text: 'ตัวอย่างสถานะที่ต้องตรวจสอบ' },
       actionUrl: 'https://dashboard.nextstep-soft.com/app/tenant/t/report/sales_goods_services',
+      periodLabel: 'ข้อมูล ณ 11 ก.ค. 2569',
       metrics: [{ label: 'เอกสาร', value: '128' }, { label: 'ยอดขาย', value: '1,234,567.89' }]
     }
   ]
@@ -84,10 +87,16 @@ describe('LineFlexPreview', () => {
   });
 
   it('warns instead of claiming an exact preview for unsupported versions', () => {
-    const unsupportedPreview: FlexPreview = { ...preview, presentationVersion: 'executive-navy-v2' };
+    const unsupportedPreview: FlexPreview = { ...preview, presentationVersion: 'executive-navy-v3' };
     const wrapper = mountPreview(unsupportedPreview);
 
     expect(wrapper.find('.flex-preview-version-warning').text()).toContain('ตัวอย่างอาจไม่ตรงกับข้อความจริง');
     expect(wrapper.find('.flex-preview-card').classes()).toContain('is-legacy');
+  });
+
+  it('shows each backend-resolved period for mixed-period cards', () => {
+    const wrapper = mountPreview({ ...preview, presentationVersion: 'executive-navy-v2', mixedPeriods: true, periodLabel: 'ช่วงข้อมูลแตกต่างตามรายงาน' });
+    expect(wrapper.text()).toContain('ข้อมูล ณ 11 ก.ค. 2569');
+    expect(wrapper.find('.flex-preview-report-period').exists()).toBe(true);
   });
 });

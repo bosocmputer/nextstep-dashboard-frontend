@@ -8,6 +8,8 @@ export interface ReportColumnDefinition {
   mobilePriority: number;
   technical?: boolean;
   frozen?: boolean;
+  dataType: 'TEXT' | 'IDENTIFIER' | 'DATE' | 'TIME' | 'NUMBER';
+  numberFormat?: 'AMOUNT' | 'DECIMAL' | 'INTEGER' | 'PERCENT';
 }
 
 export interface ReportPresentationDefinition {
@@ -15,8 +17,55 @@ export interface ReportPresentationDefinition {
   columns: ReportColumnDefinition[];
 }
 
-const business = (key: string, label = metricLabel(key), mobilePriority = 3, frozen = false): ReportColumnDefinition => ({ key, label, defaultVisible: true, mobilePriority, frozen });
-const optional = (key: string, label = metricLabel(key), technical = false): ReportColumnDefinition => ({ key, label, defaultVisible: false, mobilePriority: 0, technical });
+const dateKeys = new Set(['doc_date', 'billing_date']);
+const timeKeys = new Set(['doc_time']);
+const integerKeys = new Set(['credit_day', 'doc_sort', 'roworder', 'ref_row', 'line_number']);
+const decimalKeys = new Set(['qty', 'qty_sale', 'qty_sale_return', 'balance_qty', 'qty_in', 'qty_out', 'purchase_point', 'purchase_balance_qty']);
+const amountKeys = new Set([
+  'sum_amount', 'total_amount', 'price', 'amount_sale', 'cost_sale', 'amount_sale_return', 'cost_sale_return',
+  'balance_amount', 'average_cost_end', 'average_cost', 'amount_in', 'amount_out', 'average_cost_in', 'average_cost_out',
+  'amount', 'total_net_value', 'cash_amount', 'transfer_amount', 'card_amount', 'chq_amount', 'coupon_amount', 'petty_cash_amount'
+]);
+const identifierKeys = new Set([
+  'doc_no', 'tax_doc_no', 'doc_ref', 'cust_code', 'item_code', 'code', 'ar_code', 'ic_code', 'ap_ar_code',
+  'branch_code', 'wh_code', 'shelf_code', 'unit_code', 'ic_unit_code', 'trans_flag_code', 'barcode'
+]);
+
+function semanticType(key: string): Pick<ReportColumnDefinition, 'dataType' | 'numberFormat'> {
+  if (dateKeys.has(key)) return { dataType: 'DATE' };
+  if (timeKeys.has(key)) return { dataType: 'TIME' };
+  if (integerKeys.has(key)) return { dataType: 'NUMBER', numberFormat: 'INTEGER' };
+  if (decimalKeys.has(key)) return { dataType: 'NUMBER', numberFormat: 'DECIMAL' };
+  if (amountKeys.has(key)) return { dataType: 'NUMBER', numberFormat: 'AMOUNT' };
+  if (identifierKeys.has(key) || key.endsWith('_code')) return { dataType: 'IDENTIFIER' };
+  return { dataType: 'TEXT' };
+}
+
+const business = (key: string, label = metricLabel(key), mobilePriority = 3, frozen = false): ReportColumnDefinition => ({ key, label, defaultVisible: true, mobilePriority, frozen, ...semanticType(key) });
+const optional = (key: string, label = metricLabel(key), technical = false): ReportColumnDefinition => ({ key, label, defaultVisible: false, mobilePriority: 0, technical, ...semanticType(key) });
+
+const numberFormatters: Record<NonNullable<ReportColumnDefinition['numberFormat']>, Intl.NumberFormat> = {
+  AMOUNT: new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+  DECIMAL: new Intl.NumberFormat('th-TH', { maximumFractionDigits: 4 }),
+  INTEGER: new Intl.NumberFormat('th-TH', { maximumFractionDigits: 0 }),
+  PERCENT: new Intl.NumberFormat('th-TH', { maximumFractionDigits: 2 })
+};
+
+export function formatReportCell(value: unknown, definition: ReportColumnDefinition): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const text = String(value);
+  if (definition.dataType !== 'NUMBER' || !definition.numberFormat) return text;
+  const normalized = text.replaceAll(',', '').trim();
+  if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(normalized)) return text;
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) return text;
+  const formatted = numberFormatters[definition.numberFormat].format(numeric);
+  return definition.numberFormat === 'PERCENT' ? `${formatted}%` : formatted;
+}
+
+export function reportColumnClass(definition: ReportColumnDefinition): string | undefined {
+  return definition.dataType === 'NUMBER' ? 'table-number-column' : undefined;
+}
 
 export const reportPresentations: Record<ReportKey, ReportPresentationDefinition> = {
   sales_goods_services: { reportKey: 'sales_goods_services', columns: [business('doc_date', 'วันที่', 5, true), business('doc_no', 'เลขที่เอกสาร', 5, true), business('cust_name', 'ลูกค้า', 4), business('item_name', 'สินค้า', 4), business('qty', 'จำนวน', 3), business('sum_amount', 'มูลค่ารายการ', 5), business('total_amount', 'ยอดขาย', 5), optional('cust_code'), optional('item_code'), optional('branch_code'), optional('wh_code'), optional('shelf_code'), optional('unit_code'), optional('price'), optional('discount'), optional('vat_type', 'ประเภทภาษี', true), optional('tax_type', 'รหัสภาษี', true), optional('last_status', 'สถานะภายใน', true), optional('ref_row', 'แถวอ้างอิง', true), optional('line_number', 'ลำดับรายการ', true)] },

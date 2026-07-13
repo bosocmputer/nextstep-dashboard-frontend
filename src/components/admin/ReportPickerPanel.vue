@@ -96,7 +96,7 @@ function move(index: number, direction: -1 | 1) {
     <Message v-if="limitMessage" severity="warn" :closable="false">{{ limitMessage }}</Message>
     <div class="grid grid-cols-1 gap-5" :class="ordered ? 'xl:grid-cols-[minmax(0,1fr)_22rem]' : ''">
       <DataTable :value="filtered" data-key="reportKey" paginator :rows="25" :rows-per-page-options="[25, 50, 100]" striped-rows responsive-layout="scroll">
-        <Column header="เลือก" style="width: 5rem">
+        <Column header="เลือก" style="width: 5rem" header-class="table-select-column" body-class="table-select-column">
           <template #body="{ data }"><Checkbox :model-value="selectedSet.has(data.reportKey)" binary :disabled="disabled || (data.status === 'DEPRECATED' && !selectedSet.has(data.reportKey))" :aria-label="`เลือก ${data.label}`" @update:model-value="toggle(data, $event)" /></template>
         </Column>
         <Column field="label" header="รายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span><Tag v-if="data.status === 'DEPRECATED'" value="เลิกใช้" severity="warn" class="ml-2" /></template></Column>

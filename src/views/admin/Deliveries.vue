@@ -23,10 +23,10 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
       <Column field="tenantName" header="ร้านค้า" frozen><template #body="{ data }"><span class="font-semibold">{{ data.tenantName }}</span></template></Column>
       <Column field="recipientDisplayName" header="ผู้รับ"><template #body="{ data }"><span class="font-medium">{{ data.recipientDisplayName }}</span></template></Column>
       <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="severity(data.status)" :value="statusLabel(data.status)" /></template></Column>
-      <Column field="attempt" header="ครั้งที่ส่ง" />
+      <Column field="attempt" header="ครั้งที่ส่ง" header-class="table-number-column" body-class="table-number-column" />
       <Column field="createdAt" header="เริ่มส่งเมื่อ"><template #body="{ data }">{{ formatDateTime(data.createdAt) }}</template></Column>
       <Column field="acceptedAt" header="LINE รับเมื่อ"><template #body="{ data }">{{ formatDateTime(data.acceptedAt) }}</template></Column>
-      <Column header=""><template #body="{ data }"><Button icon="pi pi-info-circle" text rounded class="touch-action" aria-label="ดูรายละเอียดทางเทคนิค" v-tooltip.top="'รายละเอียดทางเทคนิค'" @click="selected = data" /></template></Column>
+      <Column header="" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button icon="pi pi-info-circle" text rounded class="touch-action" aria-label="ดูรายละเอียดทางเทคนิค" v-tooltip.top="'รายละเอียดทางเทคนิค'" @click="selected = data" /></template></Column>
       <template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีประวัติการส่ง LINE</div></template>
     </DataTable>
     <div v-if="hasMore" class="table-footer text-center"><Button label="โหลดเพิ่มเติม" outlined :loading="loading" @click="load(false)" /></div>

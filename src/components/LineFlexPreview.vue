@@ -4,9 +4,9 @@ import type { FlexPreview } from '@/api';
 import { formatDateTime } from '@/utils/format';
 
 const props = defineProps<{ preview: FlexPreview }>();
-const supportedPresentationVersion = 'executive-navy-v1';
+const supportedPresentationVersions = new Set(['executive-navy-v1', 'executive-navy-v2']);
 const payloadSize = computed(() => `${(props.preview.payloadBytes / 1024).toFixed(1)} KB`);
-const isExecutiveNavy = computed(() => props.preview.presentationVersion === supportedPresentationVersion);
+const isExecutiveNavy = computed(() => !!props.preview.presentationVersion && supportedPresentationVersions.has(props.preview.presentationVersion));
 const isUnsupportedVersion = computed(() => !!props.preview.presentationVersion && !isExecutiveNavy.value);
 type PreviewReport = FlexPreview['reports'][number];
 function primaryFor(report: PreviewReport) { return report.primary ?? report.metrics[1] ?? report.metrics[0]; }
@@ -53,6 +53,7 @@ function generatedAtLabel(value: string) {
           <span v-if="showCategory(index)" class="flex-preview-category">{{ report.categoryLabel }}</span>
           <section class="flex-preview-report">
             <h4>{{ report.label }} <i class="pi pi-angle-right" /></h4>
+            <p v-if="preview.mixedPeriods && report.periodLabel" class="flex-preview-report-period">{{ report.periodLabel }}</p>
             <p v-if="isZero(report)" class="flex-preview-state">{{ report.stateText }}</p>
             <div v-else-if="primaryFor(report)" class="flex-preview-metric primary">
               <span>{{ primaryFor(report)?.label }}</span>
@@ -133,6 +134,7 @@ function generatedAtLabel(value: string) {
 .flex-preview-category { display: block; margin: 0.8rem 0 -0.3rem; color: #5b6b82; font-size: 0.68rem; font-weight: 700; }
 .flex-preview-report h4 { display: flex; justify-content: space-between; gap: 0.5rem; margin: 0 0 0.55rem; color: #123b6d; font-size: 0.9rem; line-height: 1.35; }
 .flex-preview-report h4 i { flex: 0 0 auto; color: #94a3b8; }
+.flex-preview-report-period { margin: -0.25rem 0 0.5rem; color: #5b6b82; font-size: 0.68rem; }
 .flex-preview-metric { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.5rem; align-items: baseline; margin-top: 0.35rem; font-size: 0.78rem; }
 .flex-preview-metric.primary { grid-template-columns: minmax(0, 40%) minmax(0, 60%); }
 .flex-preview-metric span { min-width: 0; color: #5b6b82; overflow-wrap: anywhere; }

@@ -914,6 +914,8 @@ export interface components {
             categoryLabel: string;
             /** @enum {string} */
             status: "ACTIVE" | "DEPRECATED";
+            /** @enum {string} */
+            periodMode: "DATE_RANGE" | "AS_OF_DATE" | "CURRENT_ONLY";
         };
         AdminReportCatalog: {
             data: components["schemas"]["AdminReportDefinition"][];
@@ -970,6 +972,10 @@ export interface components {
         FlexPreviewInput: {
             periodPreset: components["schemas"]["PeriodPreset"];
             reportKeys: components["schemas"]["ReportKey"][];
+            daysOfWeek?: number[];
+            localTime?: string;
+            /** @enum {string} */
+            timezone?: "Asia/Bangkok";
         };
         FlexPreviewMetric: {
             label: string;
@@ -1002,6 +1008,7 @@ export interface components {
             dataState?: "DATA" | "ZERO";
             /** @description Backend-approved Thai state text when dataState is ZERO. */
             stateText?: string;
+            periodLabel: string;
             /** Format: uri */
             actionUrl?: string;
         };
@@ -1026,6 +1033,9 @@ export interface components {
             actionUrl: string;
             reports: components["schemas"]["FlexPreviewReport"][];
             payloadBytes: number;
+            /** Format: date-time */
+            exampleScheduledFor: string;
+            mixedPeriods: boolean;
             /** @description Exact LINE Messaging API Flex message object produced by the backend renderer. */
             message: {
                 [key: string]: unknown;

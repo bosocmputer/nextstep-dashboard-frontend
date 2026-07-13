@@ -193,8 +193,8 @@ watch([model, () => layoutConfig.primary, () => layoutConfig.surface, isDarkThem
       <summary class="chart-table-summary">{{ tableLabel }}</summary>
       <div class="overflow-x-auto mt-3">
         <table>
-          <thead><tr><th>รายการ</th><th v-for="series in model.series" :key="series.key">{{ series.label }}</th></tr></thead>
-          <tbody><tr v-for="(category, categoryIndex) in model.labels" :key="`${category}-${categoryIndex}`"><td>{{ category }}</td><td v-for="series in model.series" :key="series.key" class="metric-value">{{ formatDashboardValue(series.rawValues[categoryIndex], visualization.unit) }}</td></tr></tbody>
+          <thead><tr><th>รายการ</th><th v-for="series in model.series" :key="series.key" class="table-number-column">{{ series.label }}</th></tr></thead>
+          <tbody><tr v-for="(category, categoryIndex) in model.labels" :key="`${category}-${categoryIndex}`"><td>{{ category }}</td><td v-for="series in model.series" :key="series.key" class="metric-value table-number-column">{{ formatDashboardValue(series.rawValues[categoryIndex], visualization.unit) }}</td></tr></tbody>
         </table>
       </div>
     </details>
