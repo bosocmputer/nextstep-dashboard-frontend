@@ -246,7 +246,8 @@ export interface paths {
         get: operations["getTenantRecipient"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** @description Revokes the recipient membership for this tenant while retaining audit and delivery history. */
+        delete: operations["revokeTenantRecipient"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2020,6 +2021,31 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    revokeTenantRecipient: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                recipientId: components["parameters"]["RecipientID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recipient membership revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     listSchedules: {

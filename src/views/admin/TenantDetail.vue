@@ -30,6 +30,7 @@ const inviteOpen = ref(false);
 const inviteLabel = ref('');
 const inviteURL = ref('');
 const inviting = ref(false);
+const revokingRecipientId = ref('');
 const testSendingScheduleId = ref('');
 const changingScheduleId = ref('');
 const tenantBaseline = ref('');
@@ -190,6 +191,52 @@ async function copyInvite() {
 }
 
 function editPermissions(item: Recipient) { void router.push({ name: 'admin-recipient-permissions', params: { tenantId, recipientId: item.id } }); }
+
+async function revokeRecipient(item: Recipient) {
+  if (revokingRecipientId.value) return;
+  revokingRecipientId.value = item.id;
+  try {
+    await adminApi.revokeRecipient(tenantId, item.id);
+    recipients.value = recipients.value.filter((recipient) => recipient.id !== item.id);
+    toast.add({
+      severity: 'success',
+      summary: item.status === 'PENDING' ? 'ยกเลิกคำเชิญแล้ว' : 'ลบผู้รับแล้ว',
+      detail: item.status === 'PENDING' ? 'ลิงก์เชิญเดิมใช้งานไม่ได้แล้ว' : 'เพิกถอนสิทธิ์ Dashboard และการรับ LINE ของร้านนี้แล้ว',
+      life: 4000
+    });
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.code === 'RECIPIENT_IN_USE') {
+      const schedules = cause.fieldErrors?.map((item) => item.message).filter(Boolean) ?? [];
+      toast.add({
+        severity: 'warn',
+        summary: 'ยังลบผู้รับไม่ได้',
+        detail: schedules.length
+          ? `ผู้รับยังอยู่ในตารางที่ใช้งาน: ${schedules.join(', ')} กรุณาพักหรือแก้ตารางก่อน`
+          : 'ผู้รับยังอยู่ในตารางส่งรายงานที่ใช้งาน กรุณาพักหรือแก้ตารางก่อน',
+        life: 7000
+      });
+    } else {
+      toast.add({ severity: 'error', summary: 'ลบผู้รับไม่สำเร็จ', detail: errorMessage(cause), life: 6000 });
+    }
+  } finally {
+    if (revokingRecipientId.value === item.id) revokingRecipientId.value = '';
+  }
+}
+
+function confirmRevokeRecipient(item: Recipient) {
+  if (revokingRecipientId.value) return;
+  confirm.require({
+    header: item.status === 'PENDING' ? 'ยกเลิกคำเชิญผู้รับ' : 'ยืนยันลบผู้รับ',
+    message: item.status === 'PENDING'
+      ? `ยกเลิกคำเชิญ “${item.displayName}” และทำให้ลิงก์เดิมใช้งานไม่ได้ทันที?`
+      : `ลบ “${item.displayName}” ออกจากร้าน ${tenant.value?.name ?? ''}? ผู้รับจะเปิด Dashboard และรับ LINE ของร้านนี้ไม่ได้ แต่ประวัติการส่งและ Audit เดิมยังคงอยู่`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: item.status === 'PENDING' ? 'ยกเลิกคำเชิญ' : 'ลบผู้รับ',
+    rejectLabel: 'กลับ',
+    acceptClass: 'p-button-danger',
+    accept: () => revokeRecipient(item)
+  });
+}
 function openSchedule(item?: Schedule) { void router.push(item ? { name: 'admin-schedule-edit', params: { tenantId, scheduleId: item.id } } : { name: 'admin-schedule-new', params: { tenantId } }); }
 
 async function copySlug() {
@@ -345,7 +392,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
         <TabPanel value="overview"><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveTenant"><div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="tenantForm.name" fluid /></div><div class="grid gap-2"><label for="tenant-status">สถานะ</label><Select input-id="tenant-status" aria-label="สถานะ" v-model="tenantForm.status" :options="['ACTIVE','DISABLED','EXPIRED']" fluid /></div><div class="grid gap-2"><label for="tenant-access-end">สิ้นสุดสิทธิ์ (เวลาไทย)</label><DatePicker input-id="tenant-access-end" v-model="tenantForm.accessEndsAt" show-icon show-time hour-format="24" fluid /></div><div class="md:col-span-2 flex items-center gap-3"><Button type="submit" label="บันทึกข้อมูลร้าน" icon="pi pi-save" :loading="savingTenant" :disabled="savingTenant || !tenantDirty" /><small v-if="tenantDirty" class="text-orange-600">มีการแก้ไขที่ยังไม่บันทึก</small></div></form><Accordion class="mt-6 max-w-4xl"><AccordionPanel value="technical"><AccordionHeader>ข้อมูลทางเทคนิค</AccordionHeader><AccordionContent><div class="flex flex-wrap items-center gap-3"><div><div class="text-sm text-muted-color">รหัสระบบ</div><code>{{ tenant.slug }}</code></div><Button label="คัดลอกรหัส" icon="pi pi-copy" text @click="copySlug" /></div></AccordionContent></AccordionPanel></Accordion></TabPanel>
         <TabPanel value="sml"><Message severity="info" :closable="false" class="mb-5">กรอก Base URL ของร้านได้ ระบบจะเติม <code>/SMLJavaWebService/DotNetFrameWork</code> ให้อัตโนมัติ และจะไม่แสดงรหัสผ่านหรือ token กลับมา</Message><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveSML"><div class="grid gap-2 md:col-span-2"><label for="sml-endpoint">Java Web Service Base URL</label><InputText id="sml-endpoint" v-model="smlForm.endpointUrl" placeholder="http://shop.example.com:8092" fluid /></div><div class="grid gap-2"><label for="sml-config-file">ไฟล์ SMLConfig</label><InputText id="sml-config-file" v-model="smlForm.configFileName" placeholder="SMLConfigDATA.xml" fluid /></div><div class="grid gap-2"><label for="sml-database">ชื่อฐานข้อมูล SML</label><InputText id="sml-database" v-model="smlForm.databaseName" fluid /></div><div class="md:col-span-2 flex flex-wrap items-center gap-3"><Button type="submit" label="บันทึกการเชื่อมต่อ" icon="pi pi-save" :loading="savingSML" :disabled="savingSML || !smlDirty" /><span v-tooltip.top="smlDirty ? 'บันทึกค่าชุดล่าสุดก่อนทดสอบ' : !sml?.isConfigured ? 'ตั้งค่าและบันทึก SML ก่อนทดสอบ' : ''"><Button type="button" label="ทดสอบการเชื่อมต่อ" icon="pi pi-bolt" outlined :disabled="!sml?.isConfigured || smlDirty || savingSML" :loading="testingSML" @click="testSML" /></span><small v-if="smlDirty" class="text-orange-600">บันทึกค่าก่อนทดสอบการเชื่อมต่อ</small></div></form></TabPanel>
         <TabPanel value="refresh"><Message severity="info" :closable="false" class="mb-5">กำหนดอายุของ Snapshot ขณะมีผู้ใช้เปิด Dashboard ค่านี้ไม่ใช่ตารางส่ง LINE และระบบจะไม่ Query SML ตลอด 24 ชั่วโมง</Message><form class="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl" @submit.prevent="saveRefreshPolicy"><div class="grid gap-2"><label for="refresh-fast">ข้อมูลเคลื่อนไหวเร็ว</label><Select input-id="refresh-fast" v-model="refreshPolicyForm.fastIntervalMinutes" :options="fastIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">ขาย · รับชำระ · รับเงิน · จ่ายเงิน</small></div><div class="grid gap-2"><label for="refresh-standard">รายงานทั่วไป</label><Select input-id="refresh-standard" v-model="refreshPolicyForm.standardIntervalMinutes" :options="standardIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">ซื้อ · กำไร · ลูกหนี้ · จุดสั่งซื้อ</small></div><div class="grid gap-2"><label for="refresh-heavy">รายงานหนัก</label><Select input-id="refresh-heavy" v-model="refreshPolicyForm.heavyIntervalMinutes" :options="heavyIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">สต็อกคงเหลือ</small></div><div class="md:col-span-3 flex flex-wrap items-center gap-3"><Button type="submit" label="บันทึกรอบอัปเดต" icon="pi pi-save" :loading="savingRefreshPolicy" :disabled="savingRefreshPolicy || !refreshPolicyDirty" /><small v-if="refreshPolicyDirty" class="text-orange-600">มีค่าที่ยังไม่ได้บันทึก</small></div></form></TabPanel>
-        <TabPanel value="recipients"><Toolbar class="mb-5 border-0 p-0"><template #start><div><h2 class="text-lg font-semibold m-0">ผู้รับและสิทธิ์รายงาน</h2><p class="text-muted-color mt-1 mb-0">ผู้รับต้องยืนยันผ่าน LINE ก่อนจึงจะส่งรายงานได้</p></div></template><template #end><Button label="เชิญผู้รับ" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''" /></template></Toolbar><DataTable :value="recipients" data-key="id" striped-rows scrollable><Column field="displayName" header="ชื่อ" /><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template></Column><Column header="สิทธิ์"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template></Column><Column field="verifiedAt" header="ยืนยันเมื่อ"><template #body="{ data }">{{ formatDateTime(data.verifiedAt) }}</template></Column><Column header=""><template #body="{ data }"><Button label="กำหนดสิทธิ์" icon="pi pi-lock" text class="touch-action" @click="editPermissions(data)" /></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ กด “เชิญผู้รับ” เพื่อเริ่มต้น</div></template></DataTable></TabPanel>
+        <TabPanel value="recipients"><Toolbar class="mb-5 border-0 p-0"><template #start><div><h2 class="text-lg font-semibold m-0">ผู้รับและสิทธิ์รายงาน</h2><p class="text-muted-color mt-1 mb-0">เพิ่มผู้รับด้วยลิงก์ LINE และเพิกถอนสิทธิ์ได้จากตารางนี้</p></div></template><template #end><Button label="เพิ่มผู้รับ LINE" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''; inviteLabel = ''" /></template></Toolbar><DataTable :value="recipients" data-key="id" striped-rows scrollable><Column field="displayName" header="ชื่อ" /><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template></Column><Column header="สิทธิ์"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template></Column><Column field="verifiedAt" header="ยืนยันเมื่อ"><template #body="{ data }">{{ formatDateTime(data.verifiedAt) }}</template></Column><Column header="การจัดการ"><template #body="{ data }"><div class="flex flex-wrap items-center gap-1"><Button label="กำหนดสิทธิ์" icon="pi pi-lock" text class="touch-action" :disabled="!!revokingRecipientId" @click="editPermissions(data)" /><Button :label="data.status === 'PENDING' ? 'ยกเลิกคำเชิญ' : 'ลบผู้รับ'" icon="pi pi-trash" severity="danger" text class="touch-action" :loading="revokingRecipientId === data.id" :disabled="!!revokingRecipientId && revokingRecipientId !== data.id" @click="confirmRevokeRecipient(data)" /></div></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ กด “เพิ่มผู้รับ LINE” เพื่อเริ่มต้น</div></template></DataTable></TabPanel>
         <TabPanel value="schedules">
           <Toolbar class="mb-5 border-0 p-0">
             <template #start><p class="m-0 text-muted-color">หนึ่ง LINE Card รองรับสูงสุด 10 รายงาน รายงานละ 2 ตัวเลขสำคัญ</p></template>
@@ -373,5 +420,5 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
     </Tabs></div>
   </template>
 
-  <Dialog v-model:visible="inviteOpen" modal header="เชิญผู้รับผ่าน LINE" class="responsive-dialog" :style="{ width: '32rem' }"><div v-if="!inviteURL" class="grid gap-3"><label for="recipient-invite-label">ชื่อที่ใช้ระบุก่อนผู้รับยืนยัน</label><InputText id="recipient-invite-label" v-model="inviteLabel" placeholder="เช่น เจ้าของร้าน" fluid /></div><div v-else><Message severity="success" :closable="false">ส่งลิงก์นี้ให้ผู้รับที่ต้องการเท่านั้น ลิงก์มีอายุ 7 วัน</Message><InputGroup class="mt-4"><InputText :model-value="inviteURL" aria-label="ลิงก์คำเชิญ" readonly /><Button icon="pi pi-copy" aria-label="คัดลอก" @click="copyInvite" /></InputGroup></div><template #footer><Button label="ปิด" text @click="inviteOpen = false" /><Button v-if="!inviteURL" label="สร้างลิงก์" icon="pi pi-link" :loading="inviting" @click="invite" /></template></Dialog>
+  <Dialog v-model:visible="inviteOpen" modal header="เพิ่มผู้รับ LINE" class="responsive-dialog" :style="{ width: '32rem' }"><div v-if="!inviteURL" class="grid gap-3"><label for="recipient-invite-label">ชื่อสำหรับระบุผู้รับ</label><InputText id="recipient-invite-label" v-model="inviteLabel" placeholder="เช่น เจ้าของร้าน หรือ ผู้จัดการ" fluid /><small class="text-muted-color">หลังผู้รับเปิดลิงก์และยืนยัน LINE ระบบจะแทนชื่อนี้ด้วยชื่อจากบัญชี LINE</small></div><div v-else><Message severity="success" :closable="false">ส่งลิงก์นี้ให้ผู้รับที่ต้องการเท่านั้น ลิงก์มีอายุ 7 วันและใช้ได้หนึ่งครั้ง</Message><InputGroup class="mt-4"><InputText :model-value="inviteURL" aria-label="ลิงก์คำเชิญ" readonly /><Button icon="pi pi-copy" aria-label="คัดลอก" @click="copyInvite" /></InputGroup></div><template #footer><Button label="ปิด" text @click="inviteOpen = false" /><Button v-if="!inviteURL" label="สร้างลิงก์เพิ่มผู้รับ" icon="pi pi-link" :loading="inviting" :disabled="!inviteLabel.trim()" @click="invite" /></template></Dialog>
 </template>
