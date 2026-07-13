@@ -144,7 +144,7 @@ export interface paths {
         get: operations["getTenant"];
         put?: never;
         post?: never;
-        delete?: never;
+        delete: operations["archiveTenant"];
         options?: never;
         head?: never;
         patch: operations["updateTenant"];
@@ -1749,6 +1749,33 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    archiveTenant: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tenant archived, access revoked, and future schedules stopped while retained history remains available to audit operations. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     updateTenant: {

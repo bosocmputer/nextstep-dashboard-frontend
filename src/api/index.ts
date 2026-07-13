@@ -19,6 +19,7 @@ export const adminApi = {
   createTenant: (input: TenantInput, idempotencyKey = newIdempotencyKey('tenant')) => apiRequest<Tenant>(`${api}/admin/tenants`, { method: 'POST', scope: 'admin', idempotencyKey, body: input }),
   getTenant: (tenantId: string) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`),
   updateTenant: (tenantId: string, input: TenantPatch) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`, { method: 'PATCH', scope: 'admin', body: input }),
+  archiveTenant: (tenantId: string, version: number) => apiRequest<void>(`${api}/admin/tenants/${tenantId}${queryString({ version })}`, { method: 'DELETE', scope: 'admin' }),
   getDashboardRefreshPolicy: (tenantId: string, signal?: AbortSignal) => apiRequest<DashboardRefreshPolicy>(`${api}/admin/tenants/${tenantId}/dashboard-refresh-policy`, { signal }),
   updateDashboardRefreshPolicy: (tenantId: string, input: DashboardRefreshPolicyInput) => apiRequest<DashboardRefreshPolicy>(`${api}/admin/tenants/${tenantId}/dashboard-refresh-policy`, { method: 'PUT', scope: 'admin', body: input }),
   getSML: (tenantId: string) => apiRequest<SMLConnectionStatus>(`${api}/admin/tenants/${tenantId}/sml-connection`),

@@ -17,3 +17,18 @@ describe('adminApi recipients', () => {
     expect((options?.headers as Headers).get('X-CSRF-Token')).toBe('csrf-value');
   });
 });
+
+describe('adminApi tenants', () => {
+  it('archives a tenant with its optimistic version and CSRF protection', async () => {
+    document.cookie = 'nextstep_admin_csrf=csrf-value; path=/';
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+
+    await adminApi.archiveTenant('tenant-1', 4);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/v1/admin/tenants/tenant-1?version=4');
+    expect(options?.method).toBe('DELETE');
+    expect((options?.headers as Headers).get('X-CSRF-Token')).toBe('csrf-value');
+  });
+});
