@@ -39,7 +39,8 @@ npm run lint
 npm test
 npm run test:e2e
 npm run build
-bash scripts/context-verify.sh
+npm run context:verify
+npm run test:context
 ```
 
 ## Context Tools
@@ -47,4 +48,6 @@ bash scripts/context-verify.sh
 - Exact symbol, error, or single-file work: use `rg` and source reads first.
 - Broad cross-module exploration: run `scripts/graphify-update.sh`, then a focused `scripts/graphify-query.sh` query.
 - Graphify is an untrusted navigation hint. Verify every conclusion in source/tests before editing.
-- Update the relevant knowledge note when architecture, contract, security boundary, workflow, or production invariant changes.
+- `docs/knowledge/context-map.json` maps important source paths to their notes.
+- Run `npm run context:sync` after route changes; never edit generated blocks by hand.
+- A mapped behavior change requires its note update. For behavior-neutral refactors, use the PR `Context-Reviewed`/`Context-Reason` contract.

@@ -7,6 +7,36 @@ tags: [frontend, viewer, admin, routing]
 
 # Viewer and Admin Flows
 
+## Generated Route Inventory
+
+This block is generated from `src/router/index.ts`. Do not edit it manually.
+
+<!-- BEGIN GENERATED: ROUTE_INVENTORY -->
+| Path | Route name | Surface | Page title |
+| --- | --- | --- | --- |
+| `/` | `—` | Public | — |
+| `/admin/login` | `admin-login` | Admin | — |
+| `/admin` | `—` | Admin | — |
+| `/admin` | `admin-dashboard` | Admin | ภาพรวมระบบ |
+| `/admin/password` | `admin-password` | Admin | ตั้งรหัสผ่านใหม่ |
+| `/admin/tenants` | `admin-tenants` | Admin | ร้านค้า |
+| `/admin/tenants/:tenantId/recipients/:recipientId/permissions` | `admin-recipient-permissions` | Admin | กำหนดสิทธิ์รายงาน |
+| `/admin/tenants/:tenantId/schedules/new` | `admin-schedule-new` | Admin | เพิ่มตารางส่งรายงาน |
+| `/admin/tenants/:tenantId/schedules/:scheduleId/edit` | `admin-schedule-edit` | Admin | แก้ไขตารางส่งรายงาน |
+| `/admin/tenants/:tenantId` | `admin-tenant-detail` | Admin | รายละเอียดร้าน |
+| `/admin/report-runs` | `admin-report-runs` | Admin | การสร้างรายงาน |
+| `/admin/deliveries` | `admin-deliveries` | Admin | การส่ง LINE |
+| `/admin/audit` | `admin-audit` | Admin | ประวัติการใช้งาน |
+| `/app` | `—` | Viewer | — |
+| `/app` | `viewer-home` | Viewer | — |
+| `/app/invite` | `viewer-invite` | Viewer | — |
+| `/app/tenant/:tenantId` | `viewer-overview` | Viewer | — |
+| `/app/tenant/:tenantId/delivery/:deliveryId` | `viewer-delivery` | Viewer | — |
+| `/app/tenant/:tenantId/delivery/:deliveryId/report/:reportKey` | `viewer-delivery-report` | Viewer | — |
+| `/app/tenant/:tenantId/report/:reportKey` | `viewer-report` | Viewer | — |
+| `/:pathMatch(.*)*` | `not-found` | Public | — |
+<!-- END GENERATED: ROUTE_INVENTORY -->
+
 ## Admin
 
 The router protects every `/admin` child route with the admin session guard. Main workflows are:

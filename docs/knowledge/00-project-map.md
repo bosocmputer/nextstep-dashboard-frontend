@@ -48,3 +48,5 @@ Use the commands in `AGENTS.md`. The backend owns `api/openapi.yaml`; regenerate
 - Reference source paths for claims that can change.
 - Do not record customer-specific state or secrets.
 - Update the relevant note and `last_verified` after a material behavior change.
+- `context-map.json` and the PR Context Impact Gate require mapped source changes to update a note or carry a review reason.
+- Route inventory is generated from source by `npm run context:sync`; CI checks it without writing.

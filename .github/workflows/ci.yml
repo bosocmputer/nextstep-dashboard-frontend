@@ -18,11 +18,20 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run context:verify
+      - run: npm run test:context
+      - name: Verify Living Context impact
+        if: github.event_name == 'pull_request'
+        env:
+          CONTEXT_PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash scripts/context-impact.sh --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}"
       - run: npm audit --audit-level=high
       - run: npm run contract:verify
       - run: npm run lint
