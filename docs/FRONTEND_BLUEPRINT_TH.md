@@ -1,4 +1,13 @@
+---
+status: historical
+last_verified: 2026-07-15
+source_of_truth: [src/router/index.ts, src/api/index.ts]
+tags: [frontend, historical, blueprint]
+---
+
 # Nextstep Dashboard Frontend Blueprint
+
+> Historical proposal: เอกสารนี้เก็บบริบทการออกแบบเริ่มต้นเท่านั้น หลาย route และพฤติกรรมไม่ตรงกับ Production ปัจจุบัน ห้ามใช้เป็น source of truth สำหรับการ implement ให้เริ่มที่ `docs/knowledge/00-project-map.md` และตรวจ source/tests จริง
 
 ## สถานะเอกสาร
 
@@ -178,4 +187,3 @@ Menu rendering is authorization-aware but hiding a menu is not a security bounda
 ## 11. Implementation Gate
 
 Frontend scaffold starts only after the shared Blueprint and both repository plans are approved.
-
