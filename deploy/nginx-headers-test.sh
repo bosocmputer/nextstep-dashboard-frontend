@@ -18,6 +18,9 @@ header_exists() {
 fetch 10.121.20.83 direct
 fetch dashboard.nextstep-soft.com production
 
+grep -Eqi '^referrer-policy:[[:space:]]*no-referrer' "$temporary/direct.headers"
+grep -Eqi '^referrer-policy:[[:space:]]*no-referrer' "$temporary/production.headers"
+
 if header_exists strict-transport-security "$temporary/direct.headers" ||
    header_exists cross-origin-opener-policy "$temporary/direct.headers" ||
    grep -Eqi '^content-security-policy:.*upgrade-insecure-requests' "$temporary/direct.headers"; then
@@ -28,6 +31,7 @@ fi
 header_exists strict-transport-security "$temporary/production.headers"
 header_exists cross-origin-opener-policy "$temporary/production.headers"
 grep -Eqi '^content-security-policy:.*upgrade-insecure-requests' "$temporary/production.headers"
+grep -Eqi '^content-security-policy:.*script-src[^;]*https://static\.line-scdn\.net' "$temporary/production.headers"
 
 asset_path=$(grep -Eo '/assets/[^" ]+\.js' "$temporary/direct.body" | head -1)
 if [ -z "$asset_path" ]; then

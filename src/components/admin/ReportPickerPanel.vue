@@ -8,7 +8,8 @@ const props = withDefaults(defineProps<{
   maxSelected?: number;
   ordered?: boolean;
   disabled?: boolean;
-}>(), { maxSelected: 0, ordered: false, disabled: false });
+  lockedKeys?: ReportKey[];
+}>(), { maxSelected: 0, ordered: false, disabled: false, lockedKeys: () => [] });
 
 const emit = defineEmits<{ 'update:modelValue': [value: ReportKey[]] }>();
 const search = ref('');
@@ -17,6 +18,7 @@ const selectedOnly = ref(false);
 const limitMessage = ref('');
 
 const selectedSet = computed(() => new Set<ReportKey>(props.modelValue));
+const lockedSet = computed(() => new Set<ReportKey>(props.lockedKeys));
 const definitionsByKey = computed(() => new Map(props.definitions.map((item) => [item.reportKey, item])));
 const categories = computed(() => {
   const labels = new Map<string, string>();
@@ -37,11 +39,13 @@ const selectedDefinitions = computed(() => props.modelValue
 
 function setSelection(next: ReportKey[]) {
   limitMessage.value = '';
-  emit('update:modelValue', next);
+  const nextSet = new Set(next);
+  const preserved = props.modelValue.filter((key) => lockedSet.value.has(key) && !nextSet.has(key));
+  emit('update:modelValue', [...next, ...preserved]);
 }
 
 function toggle(item: AdminReportDefinition, checked: boolean) {
-  if (props.disabled) return;
+  if (props.disabled || lockedSet.value.has(item.reportKey)) return;
   if (checked) {
     if (item.status !== 'ACTIVE') return;
     if (props.maxSelected > 0 && props.modelValue.length >= props.maxSelected) {
@@ -97,9 +101,9 @@ function move(index: number, direction: -1 | 1) {
     <div class="grid grid-cols-1 gap-5" :class="ordered ? 'xl:grid-cols-[minmax(0,1fr)_22rem]' : ''">
       <DataTable :value="filtered" data-key="reportKey" paginator :rows="25" :rows-per-page-options="[25, 50, 100]" striped-rows responsive-layout="scroll">
         <Column header="เลือก" style="width: 5rem" header-class="table-select-column" body-class="table-select-column">
-          <template #body="{ data }"><Checkbox :model-value="selectedSet.has(data.reportKey)" binary :disabled="disabled || (data.status === 'DEPRECATED' && !selectedSet.has(data.reportKey))" :aria-label="`เลือก ${data.label}`" @update:model-value="toggle(data, $event)" /></template>
+          <template #body="{ data }"><Checkbox :model-value="selectedSet.has(data.reportKey)" binary :disabled="disabled || lockedSet.has(data.reportKey) || (data.status === 'DEPRECATED' && !selectedSet.has(data.reportKey))" :aria-label="lockedSet.has(data.reportKey) ? `${data.label} ถูกใช้โดยตารางส่ง LINE ที่กำลังใช้งาน` : `เลือก ${data.label}`" @update:model-value="toggle(data, $event)" /></template>
         </Column>
-        <Column field="label" header="รายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span><Tag v-if="data.status === 'DEPRECATED'" value="เลิกใช้" severity="warn" class="ml-2" /></template></Column>
+        <Column field="label" header="รายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span><Tag v-if="lockedSet.has(data.reportKey)" value="ใช้ในตาราง Active" severity="info" class="ml-2" /><Tag v-if="data.status === 'DEPRECATED'" value="เลิกใช้" severity="warn" class="ml-2" /></template></Column>
         <Column field="categoryLabel" header="หมวด"><template #body="{ data }"><Tag :value="data.categoryLabel" severity="secondary" /></template></Column>
         <template #empty><div class="py-8 text-center text-muted-color">ไม่พบรายงานที่ตรงกับเงื่อนไข</div></template>
       </DataTable>

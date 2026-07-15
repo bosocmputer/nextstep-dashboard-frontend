@@ -9,7 +9,7 @@ import { ApiError, viewerApi, type DashboardRefresh, type DashboardRefreshInput,
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { buildExecutiveKpis, comparisonPeriodText, executiveFeaturedVisualizationKeys, formatDashboardValue, formatPeriodRange, snapshotForReport } from '@/utils/dashboard';
-import { errorMessage, formatDateTime } from '@/utils/format';
+import { errorMessage, formatSourceCollection } from '@/utils/format';
 import { freshnessPresentation, progressPresentation } from '@/utils/freshness';
 import { selectionFromReportPeriod, selectionLabel, type ReportPeriodSelection } from '@/utils/reportPeriod';
 
@@ -27,6 +27,8 @@ const exactRefreshLoaded = ref(false);
 const loading = ref(true);
 const lookingUp = ref(false);
 const refreshing = ref(false);
+const cacheRevalidating = ref(false);
+const cacheRevalidationMessage = ref('');
 const refreshConfirmOpen = ref(false);
 const error = ref('');
 let pollTimer: number | undefined;
@@ -37,9 +39,12 @@ let pollInFlight = false;
 let pageController: AbortController | undefined;
 let pollController: AbortController | undefined;
 let refreshAction: { fingerprint: string; key: string } | undefined;
+let revalidationTimer: number | undefined;
+let revalidationDeadline = 0;
 
 const tenantId = computed(() => String(route.params.tenantId));
 const tenant = computed(() => state.tenants.find((item) => item.id === tenantId.value));
+const hasReportPermissions = computed(() => (tenant.value?.reportKeys.length ?? 0) > 0);
 const reports = computed(() => state.reportsByTenant[tenantId.value] ?? []);
 const snapshots = computed(() => overview.value?.items ?? []);
 const kpis = computed(() => buildExecutiveKpis(snapshots.value));
@@ -80,10 +85,16 @@ const failedReportLabels = computed(() => refreshFailures.value.map((failure) =>
 async function initializeOverview() {
   const context = ++generation;
   const selectedTenantId = tenantId.value;
-  pageController?.abort('new-overview'); pageController = new AbortController(); stopPolling();
+  pageController?.abort('new-overview'); pageController = new AbortController(); stopPolling(); stopRevalidation();
   loading.value = true; lookingUp.value = false; refreshing.value = false; error.value = ''; refreshFailures.value = []; exactRefreshLoaded.value = false;
   try {
     selectTenant(selectedTenantId);
+    if (!hasReportPermissions.value) {
+      overview.value = undefined;
+      refresh.value = undefined;
+      displayedPeriodLabel.value = 'ยังไม่ได้กำหนดสิทธิ์รายงาน';
+      return;
+    }
     await ensureReports(selectedTenantId, true, pageController.signal);
     selectedPeriod.value = periodSelection(selectedTenantId);
     const refreshId = validUUID(route.query.refreshId);
@@ -127,13 +138,62 @@ async function loadLatestOverview(context: number, selectedTenantId: string, sig
   overview.value = result;
   exactRefreshLoaded.value = false;
   displayedPeriodLabel.value = result.items.length ? 'ข้อมูลล่าสุดแต่ละรายงาน' : 'ยังไม่มี Snapshot';
+  const needsRevalidation = missingReportCount.value > 0 || result.items.some((item) => !item.freshnessStatus || item.freshnessStatus !== 'FRESH');
+  if (needsRevalidation) {
+    revalidationDeadline = Date.now() + 12 * 60_000;
+    void revalidateCachedOverview(context, selectedTenantId);
+  }
+}
+
+async function revalidateCachedOverview(context: number, selectedTenantId: string) {
+  if (!isCurrent(context, selectedTenantId) || refreshing.value || Date.now() >= revalidationDeadline) {
+    stopRevalidation();
+    return;
+  }
+  try {
+    const result = await viewerApi.revalidateOverview(selectedTenantId, overviewInput(selectedPeriod.value), pageController?.signal);
+    if (!isCurrent(context, selectedTenantId) || refreshing.value) return;
+    const overviewItems = result.overview.items ?? [];
+    const runs = result.runs ?? [];
+    const exactComplete = overviewItems.length === reports.value.length && overviewItems.every((item) => item.freshnessStatus === 'FRESH');
+    if (exactComplete) {
+      overview.value = { ...result.overview, items: overviewItems };
+      displayedPeriodLabel.value = selectionLabel(selectedPeriod.value, 'SMART_OVERVIEW');
+      cacheRevalidationMessage.value = 'อัปเดต Snapshot ทั้งชุดแล้ว';
+      stopRevalidation(false);
+      return;
+    }
+    if (result.disposition === 'CIRCUIT_OPEN') {
+      cacheRevalidationMessage.value = 'พักการดึงข้อมูลชั่วคราวเพื่อป้องกัน Query ซ้อนใน SML';
+      stopRevalidation(false);
+      return;
+    }
+    if (result.disposition === 'DISABLED' || !runs.length) {
+      stopRevalidation();
+      return;
+    }
+    const terminalRuns = runs.filter((item) => ['SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(item.status));
+    if (terminalRuns.length === runs.length && terminalRuns.some((item) => item.status !== 'SUCCEEDED')) {
+      cacheRevalidationMessage.value = 'อัปเดตอัตโนมัติไม่สำเร็จ กำลังแสดง Snapshot เดิม';
+      stopRevalidation(false);
+      return;
+    }
+    cacheRevalidating.value = true;
+    cacheRevalidationMessage.value = 'กำลังอัปเดต Cache เบื้องหลัง · ข้อมูลบนหน้าจอยังเป็น Snapshot เดิม';
+    revalidationTimer = window.setTimeout(() => void revalidateCachedOverview(context, selectedTenantId), document.visibilityState === 'hidden' ? 15_000 : 5_000);
+  } catch (cause) {
+    if (!isCancelled(cause) && isCurrent(context, selectedTenantId)) {
+      cacheRevalidationMessage.value = 'ตรวจสอบข้อมูลใหม่ไม่สำเร็จ กำลังแสดง Snapshot เดิม';
+      stopRevalidation(false);
+    }
+  }
 }
 
 async function startRefresh(selection: ReportPeriodSelection) {
   if (refreshing.value) return;
   const context = generation;
   const selectedTenantId = tenantId.value;
-  stopPolling(); refreshing.value = true; error.value = ''; pollCount = 0;
+  stopPolling(); stopRevalidation(); refreshing.value = true; error.value = ''; pollCount = 0;
   const input: DashboardRefreshInput = {
     periodPreset: selection.periodPreset,
     reportKeys: reports.value.map((report) => report.reportKey),
@@ -234,7 +294,13 @@ async function loadRefreshResult(context: number, selectedTenantId: string, refr
   if (!isCurrent(context, selectedTenantId) || refresh.value?.id !== refreshId) return;
   refreshFailures.value = result.failures;
   if (result.items.length) {
-    overview.value = { tenantId: selectedTenantId, timezone: 'Asia/Bangkok', items: result.items };
+    overview.value = {
+      tenantId: selectedTenantId, timezone: 'Asia/Bangkok', items: result.items,
+      generationId: result.generationId, generationKey: result.generationKey,
+      sourceConsistency: result.sourceConsistency, sourceStartedAt: result.sourceStartedAt,
+      sourceFinishedAt: result.sourceFinishedAt, publishedAt: result.publishedAt,
+      dataStatus: 'FRESH'
+    };
     exactRefreshLoaded.value = true;
     const inferred = inferSelection(result);
     if (inferred) { selectedPeriod.value = inferred; setPeriodSelection(selectedTenantId, inferred); }
@@ -256,11 +322,18 @@ function openReport(reportKey: ReportKey) {
   void router.push({ path: `/app/tenant/${tenantId.value}/report/${reportKey}`, query: snapshot ? { runId: snapshot.runId } : undefined });
 }
 function snapshotFreshness(snapshot: DashboardSnapshot) { return freshnessPresentation(snapshot.freshnessStatus); }
+function snapshotSource(snapshot: DashboardSnapshot) { return formatSourceCollection(snapshot.sourceStartedAt, snapshot.sourceFinishedAt ?? snapshot.dashboard.generatedAt, snapshot.sourceConsistency); }
 function isTerminal(status: DashboardRefresh['status']) { return status === 'SUCCEEDED' || status === 'PARTIAL' || status === 'FAILED'; }
 function isCurrent(context: number, selectedTenantId: string) { return context === generation && selectedTenantId === tenantId.value; }
 function validUUID(value: unknown): string | undefined { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : undefined; }
 async function removeRefreshReference() { const query = { ...route.query }; delete query.refreshId; await router.replace({ path: route.path, query, hash: route.hash }); }
 function stopPolling() { if (pollTimer) window.clearTimeout(pollTimer); pollTimer = undefined; pollController?.abort('poll-stopped'); pollController = undefined; }
+function stopRevalidation(clearMessage = true) {
+  if (revalidationTimer) window.clearTimeout(revalidationTimer);
+  revalidationTimer = undefined;
+  cacheRevalidating.value = false;
+  if (clearMessage) cacheRevalidationMessage.value = '';
+}
 function isCancelled(cause: unknown) { return cause instanceof ApiError && cause.code === 'CANCELLED'; }
 function handleVisibilityChange() {
   if (document.visibilityState === 'visible' && refreshing.value && refresh.value && !pollInFlight) {
@@ -270,29 +343,43 @@ function handleVisibilityChange() {
 }
 
 onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void initializeOverview(); });
-onBeforeUnmount(() => { generation++; refreshConfirmOpen.value = false; confirm.close(); document.removeEventListener('visibilitychange', handleVisibilityChange); pageController?.abort('unmounted'); stopPolling(); });
+onBeforeUnmount(() => { generation++; refreshConfirmOpen.value = false; confirm.close(); document.removeEventListener('visibilitychange', handleVisibilityChange); pageController?.abort('unmounted'); stopPolling(); stopRevalidation(); });
 watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; void initializeOverview(); });
 </script>
 
 <template>
   <AppPageHeader :title="`ภาพรวมร้าน ${tenant?.name ?? ''}`" desktop-mode="viewerCompact" />
 
+  <section v-if="!hasReportPermissions" class="card executive-panel permission-empty-state" aria-labelledby="permission-empty-title">
+    <span class="permission-empty-icon"><i class="pi pi-check-circle" /></span>
+    <div>
+      <h2 id="permission-empty-title">เข้าร่วมร้านนี้เรียบร้อยแล้ว</h2>
+      <Tag severity="warn" value="ยังไม่ได้กำหนดสิทธิ์รายงาน" />
+      <p>บัญชี LINE ของคุณเชื่อมกับร้านนี้สำเร็จแล้ว แต่ผู้ดูแลยังไม่ได้เลือกรายงานที่เปิดดูได้</p>
+      <p class="permission-empty-hint">เมื่อผู้ดูแลกำหนดสิทธิ์แล้ว ให้รีเฟรชหน้านี้ รายงานจะปรากฏโดยไม่ต้องเปิดลิงก์เชิญหรือเข้าสู่ระบบใหม่</p>
+    </div>
+  </section>
+
+  <template v-else>
   <ReportPeriodToolbar desktop-mode="compact" mode="SMART_OVERVIEW" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" action-label="ดูภาพรวมช่วงนี้" force-action-label="ดึงใหม่จาก SML" :loading="lookingUp || refreshing" :disabled="loading || refreshConfirmOpen || !reports.length" @apply="viewOverviewPeriod" @force="requestRefresh" />
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }} <Button label="ลองโหลดอีกครั้ง" text size="small" @click="initializeOverview" /></Message>
   <Message v-if="refreshFailures.length" severity="warn" :closable="false" class="mb-4">อัปเดตไม่สำเร็จ {{ refreshFailures.length }} รายงาน: {{ failedReportLabels.join(', ') }} — ช่องดังกล่าวจะไม่ใช้ตัวเลขเดิมมาปะปน</Message>
+  <Message v-if="cacheRevalidationMessage" :severity="cacheRevalidating ? 'info' : 'secondary'" :closable="false" class="mb-4">{{ cacheRevalidationMessage }}</Message>
+  <Message v-if="overview?.sourceConsistency === 'CHUNK_WINDOW'" severity="info" :closable="false" class="mb-4">ข้อมูลชุดนี้มาจากหลายคำขอไปยัง SML และไม่ใช่ Snapshot ณ วินาทีเดียว · {{ formatSourceCollection(overview.sourceStartedAt, overview.sourceFinishedAt, overview.sourceConsistency) }}</Message>
   <div v-if="refreshing" class="card executive-panel text-center" aria-live="polite"><div class="flex flex-col items-center gap-1 mb-3"><span class="font-medium">กำลังอัปเดต {{ refreshCompletedLabel }} จาก {{ refreshTotalLabel }} รายงาน</span><strong class="metric-value text-lg">{{ refreshPercent }}%</strong><span class="text-sm text-muted-color">{{ activeRefreshLabel }}<template v-if="activeRefreshTypicalDuration"> · {{ activeRefreshTypicalDuration }}</template></span></div><ProgressBar :value="refreshPercent" :show-value="false" style="height: .45rem" /><p class="text-xs text-muted-color mb-0 mt-3">ข้อมูลด้านล่างยังเป็น Snapshot เดิม ระบบจะเปลี่ยนข้อมูลทั้งชุดเมื่อการอัปเดตเสร็จ</p></div>
   <Message v-if="!loading && missingReportCount" severity="warn" :closable="false" class="mb-4">ยังไม่มี Snapshot {{ exactRefreshLoaded ? 'ตรงช่วงที่เลือก' : 'ล่าสุด' }} {{ missingReportCount }} รายงาน หากต้องการข้อมูลใหม่ให้กด “ดึงใหม่จาก SML”</Message>
 
   <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5"><Skeleton v-for="index in 4" :key="index" height="9rem" /></div>
   <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-    <button v-for="item in kpis" :key="item.key" type="button" class="card executive-kpi" :title="formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB')" @click="openReport(item.reportKey)"><span class="kpi-icon"><i :class="item.icon" /></span><span class="kpi-copy"><span class="kpi-label">{{ item.label }}</span><span v-if="item.period" class="kpi-period">ข้อมูล {{ formatPeriodRange(item.period) }}</span><Tag v-if="snapshotForReport(snapshots, item.reportKey)?.freshnessStatus" :severity="snapshotFreshness(snapshotForReport(snapshots, item.reportKey)!).severity" :value="snapshotFreshness(snapshotForReport(snapshots, item.reportKey)!).label" class="kpi-freshness" /><strong class="kpi-value">{{ formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB') }}</strong><span v-if="item.metric?.comparison.availability === 'AVAILABLE'" class="kpi-comparison"><span><i :class="item.metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : item.metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(item.metric.comparison.delta, item.metric.unit) }}</span><span>{{ comparisonPeriodText(item.comparisonPeriod) }}</span></span><span v-else class="kpi-comparison">{{ item.metric ? 'ไม่มีข้อมูลเทียบช่วงเวลาเดียวกัน' : 'รอการอัปเดตข้อมูล' }}</span><span v-if="snapshotForReport(snapshots, item.reportKey)?.sourceFinishedAt" class="kpi-source-time">ดึงจาก SML {{ formatDateTime(snapshotForReport(snapshots, item.reportKey)?.sourceFinishedAt) }}</span></span><i class="pi pi-chevron-right kpi-link" /></button>
+    <button v-for="item in kpis" :key="item.key" type="button" class="card executive-kpi" :title="formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB')" @click="openReport(item.reportKey)"><span class="kpi-icon"><i :class="item.icon" /></span><span class="kpi-copy"><span class="kpi-label">{{ item.label }}</span><span v-if="item.period" class="kpi-period">ข้อมูล {{ formatPeriodRange(item.period) }}</span><Tag v-if="snapshotForReport(snapshots, item.reportKey)?.freshnessStatus" :severity="snapshotFreshness(snapshotForReport(snapshots, item.reportKey)!).severity" :value="snapshotFreshness(snapshotForReport(snapshots, item.reportKey)!).label" class="kpi-freshness" /><strong class="kpi-value">{{ formatDashboardValue(item.metric?.value, item.metric?.unit ?? 'THB') }}</strong><span v-if="item.metric?.comparison.availability === 'AVAILABLE'" class="kpi-comparison"><span><i :class="item.metric.comparison.direction === 'UP' ? 'pi pi-arrow-up-right' : item.metric.comparison.direction === 'DOWN' ? 'pi pi-arrow-down-right' : 'pi pi-minus'" /> {{ formatDashboardValue(item.metric.comparison.delta, item.metric.unit) }}</span><span>{{ comparisonPeriodText(item.comparisonPeriod) }}</span></span><span v-else class="kpi-comparison">{{ item.metric ? 'ไม่มีข้อมูลเทียบช่วงเวลาเดียวกัน' : 'รอการอัปเดตข้อมูล' }}</span><span v-if="snapshotForReport(snapshots, item.reportKey)?.sourceFinishedAt" class="kpi-source-time">{{ snapshotSource(snapshotForReport(snapshots, item.reportKey)!) }}</span></span><i class="pi pi-chevron-right kpi-link" /></button>
   </div>
 
   <div v-if="featuredCharts.length" class="grid grid-cols-1 2xl:grid-cols-2 gap-5">
-    <article v-for="item in featuredCharts" :key="`${item.snapshot.runId}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }} · ดึงจาก SML {{ formatDateTime(item.snapshot.sourceFinishedAt ?? item.snapshot.dashboard.generatedAt) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
+    <article v-for="item in featuredCharts" :key="`${item.snapshot.dashboard.reportKey}-${item.visualization.key}`" class="card executive-panel dashboard-card"><div class="chart-heading"><div><h2>{{ item.visualization.title }}</h2><p>ข้อมูล {{ formatPeriodRange(item.snapshot.dashboard.period) }} · {{ snapshotSource(item.snapshot) }}</p></div><Button icon="pi pi-arrow-up-right" text rounded class="touch-action" aria-label="เปิดรายงาน" @click="openReport(item.snapshot.dashboard.reportKey)" /></div><ExecutiveChart :visualization="item.visualization" compact /></article>
   </div>
   <div v-else-if="!loading && !refreshing" class="card executive-panel empty-overview"><i class="pi pi-chart-bar" /><h2>ยังไม่มี Snapshot สำหรับช่วงนี้</h2><p>เลือกช่วงแล้วกด “ดูภาพรวมช่วงนี้” เพื่อค้นหา Cache ที่มีอยู่ หรือกด “ดึงใหม่จาก SML” เมื่อต้องการสร้างข้อมูลใหม่</p></div>
+  </template>
 </template>
 
 <style scoped>
@@ -318,9 +405,15 @@ watch(tenantId, () => { refresh.value = undefined; refreshing.value = false; voi
 .empty-overview > i { color: var(--primary-color); font-size: 2.75rem; }
 .empty-overview h2 { margin: 1rem 0 .4rem; }
 .empty-overview p { max-width: 34rem; margin: 0 0 1.25rem; color: var(--text-color-secondary); }
+.permission-empty-state { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 1rem; max-width: 52rem; }
+.permission-empty-icon { display: grid; place-items: center; width: 3rem; height: 3rem; border-radius: 50%; color: var(--p-green-600); background: var(--p-green-50); font-size: 1.4rem; }
+.permission-empty-state h2 { margin: 0 0 .75rem; font-size: 1.2rem; }
+.permission-empty-state p { max-width: 42rem; margin: .9rem 0 0; color: var(--text-color-secondary); }
+.permission-empty-state .permission-empty-hint { margin-top: .45rem; font-size: .85rem; }
 @media (prefers-reduced-motion: reduce) { .executive-kpi { transition: none; } }
 @media (max-width: 767px) {
   .executive-kpi { min-height: 7rem; padding: 1.25rem; }
   .executive-panel.dashboard-card { padding: 1.25rem; }
+  .permission-empty-state { grid-template-columns: 1fr; padding: 1.25rem; }
 }
 </style>

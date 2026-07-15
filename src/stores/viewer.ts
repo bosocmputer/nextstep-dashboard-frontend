@@ -1,5 +1,5 @@
 import { reactive, readonly } from 'vue';
-import { viewerApi, type ReportDefinition, type ViewerMe, type ViewerTenant } from '@/api';
+import { viewerApi, type DeliveryContext, type ReportDefinition, type ViewerMe, type ViewerTenant } from '@/api';
 import { clearStoredPeriodSelections, defaultPeriodSelection, loadPeriodSelection, savePeriodSelection, type ReportPeriodSelection } from '@/utils/reportPeriod';
 
 type ViewerState = {
@@ -8,10 +8,11 @@ type ViewerState = {
   selectedTenantId: string;
   reportsByTenant: Record<string, ReportDefinition[]>;
   periodByTenant: Record<string, ReportPeriodSelection>;
+  deliveryContexts: Record<string, DeliveryContext>;
   ready: boolean;
 };
 
-const state = reactive<ViewerState>({ me: null, tenants: [], selectedTenantId: '', reportsByTenant: {}, periodByTenant: {}, ready: false });
+const state = reactive<ViewerState>({ me: null, tenants: [], selectedTenantId: '', reportsByTenant: {}, periodByTenant: {}, deliveryContexts: {}, ready: false });
 
 async function loadViewer(): Promise<void> {
   state.me = await viewerApi.me();
@@ -22,14 +23,18 @@ async function loadViewer(): Promise<void> {
 function setViewer(me: ViewerMe): void { state.me = me; state.ready = true; }
 function setTenants(tenants: ViewerTenant[]): void {
   state.tenants = tenants;
-  clearStoredPeriodSelections(tenants.map((tenant) => tenant.id));
-  Object.keys(state.periodByTenant).forEach((tenantId) => { if (!tenants.some((tenant) => tenant.id === tenantId)) delete state.periodByTenant[tenantId]; });
-  if (!tenants.some((tenant) => tenant.id === state.selectedTenantId)) state.selectedTenantId = tenants[0]?.id ?? '';
+  const authorizedTenantIds = new Set(tenants.map((tenant) => tenant.id));
+  clearStoredPeriodSelections([...authorizedTenantIds]);
+  Object.keys(state.periodByTenant).forEach((tenantId) => { if (!authorizedTenantIds.has(tenantId)) delete state.periodByTenant[tenantId]; });
+  Object.keys(state.reportsByTenant).forEach((tenantId) => { if (!authorizedTenantIds.has(tenantId)) delete state.reportsByTenant[tenantId]; });
+  Object.entries(state.deliveryContexts).forEach(([deliveryId, context]) => { if (!authorizedTenantIds.has(context.tenantId)) delete state.deliveryContexts[deliveryId]; });
+  if (!authorizedTenantIds.has(state.selectedTenantId)) state.selectedTenantId = tenants.length === 1 ? (tenants[0]?.id ?? '') : '';
 }
 function selectTenant(tenantId: string): void {
   if (state.tenants.some((tenant) => tenant.id === tenantId)) state.selectedTenantId = tenantId;
 }
 function setReports(tenantId: string, reports: ReportDefinition[]): void { state.reportsByTenant[tenantId] = reports; }
+function setDeliveryContext(context: DeliveryContext): void { state.deliveryContexts[context.deliveryId] = context; }
 function periodSelection(tenantId: string): ReportPeriodSelection {
   if (!tenantId) return defaultPeriodSelection();
   state.periodByTenant[tenantId] ??= loadPeriodSelection(tenantId);
@@ -51,10 +56,11 @@ function clearViewer(): void {
   state.selectedTenantId = '';
   state.reportsByTenant = {};
   state.periodByTenant = {};
+  state.deliveryContexts = {};
   clearStoredPeriodSelections();
   state.ready = false;
 }
 
 export function useViewerSession() {
-  return { state: readonly(state), loadViewer, setViewer, setTenants, selectTenant, setReports, ensureReports, periodSelection, setPeriodSelection, clearViewer };
+  return { state: readonly(state), loadViewer, setViewer, setTenants, selectTenant, setReports, setDeliveryContext, ensureReports, periodSelection, setPeriodSelection, clearViewer };
 }

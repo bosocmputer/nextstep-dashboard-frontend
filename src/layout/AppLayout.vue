@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAdminSession } from '@/stores/session';
+import { beginAdminTenantContext, clearAdminTenantContext, resolveAdminMobileContext } from '@/stores/adminTenantContext';
 import type { NavigationItem } from './menu';
 import AppShell from './AppShell.vue';
 
 const router = useRouter();
 const route = useRoute();
 const { state, logout } = useAdminSession();
-const mobileTitle = computed(() => typeof route.meta.pageTitle === 'string' ? route.meta.pageTitle : 'Nextstep Admin');
+const routeTenantId = computed(() => typeof route.params.tenantId === 'string' ? route.params.tenantId : '');
+const pageTitle = computed(() => typeof route.meta.pageTitle === 'string' ? route.meta.pageTitle : 'Nextstep Admin');
+const mobileContext = computed(() => resolveAdminMobileContext(routeTenantId.value, pageTitle.value));
+watch(routeTenantId, (tenantId) => {
+  if (tenantId) beginAdminTenantContext(tenantId);
+  else clearAdminTenantContext();
+}, { immediate: true, flush: 'sync' });
 const model: NavigationItem[] = [
   { label: 'จัดการระบบ', items: [
     { label: 'ภาพรวม', icon: 'pi pi-fw pi-home', to: '/admin' },
@@ -28,7 +35,7 @@ async function signOut() {
 </script>
 
 <template>
-  <AppShell :menu-model="model" home-to="/admin" :mobile-title="mobileTitle" mobile-subtitle="Nextstep Admin" :account-label="state.session?.username" confirm-dialogs @sign-out="signOut">
+  <AppShell :menu-model="model" home-to="/admin" :mobile-title="mobileContext.title" :mobile-subtitle="mobileContext.subtitle" :mobile-home-to="mobileContext.homeTo" :account-label="state.session?.username" confirm-dialogs @sign-out="signOut">
     <RouterView />
   </AppShell>
 </template>

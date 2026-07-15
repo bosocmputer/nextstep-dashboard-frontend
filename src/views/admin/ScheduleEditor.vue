@@ -2,22 +2,29 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
-import { adminApi, ApiError, type AdminReportCatalog, type FlexPreview, type Recipient, type Schedule, type ScheduleInput, type Tenant } from '@/api';
+import { adminApi, ApiError, type AdminReportCatalog, type FlexPreview, type Schedule, type ScheduleInput, type ScheduleRecipientOption, type Tenant } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import LineFlexPreview from '@/components/LineFlexPreview.vue';
 import ReportPickerPanel from '@/components/admin/ReportPickerPanel.vue';
+import { beginAdminTenantContext, setAdminTenantContext } from '@/stores/adminTenantContext';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 import { errorMessage, formatDateTime } from '@/utils/format';
+import { schedulePeriodExample, schedulePeriodGroupDetail, schedulePeriodOptions, type SchedulePeriodMode } from '@/utils/schedulePeriodPresentation';
 
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
 const tenantId = String(route.params.tenantId);
+beginAdminTenantContext(tenantId);
 const scheduleId = route.params.scheduleId ? String(route.params.scheduleId) : '';
 const editing = computed(() => !!scheduleId);
 const tenant = ref<Tenant>();
 const schedule = ref<Schedule>();
-const recipients = ref<Recipient[]>([]);
+const recipients = ref<ScheduleRecipientOption[]>([]);
+const recipientSearch = ref('');
+const recipientPage = ref(0);
+const recipientTotal = ref(0);
+const loadingRecipients = ref(false);
 const catalog = ref<AdminReportCatalog>();
 const preview = ref<FlexPreview>();
 const loading = ref(true);
@@ -28,21 +35,20 @@ const baseline = ref('');
 const controller = new AbortController();
 let actionKey = '';
 let previewController: AbortController | undefined;
+let recipientController: AbortController | undefined;
+let recipientGeneration = 0;
+let recipientSearchTimer: ReturnType<typeof setTimeout> | undefined;
+const serverConflict = ref<Schedule>();
+const conflictAcknowledged = ref(false);
 
 const form = reactive<ScheduleInput>({ name: '', daysOfWeek: [1, 2, 3, 4, 5], localTime: '09:00', timezone: 'Asia/Bangkok', periodPreset: 'YESTERDAY', reportKeys: [], recipientIds: [] });
 const days = [{ label: 'อาทิตย์', value: 0 }, { label: 'จันทร์', value: 1 }, { label: 'อังคาร', value: 2 }, { label: 'พุธ', value: 3 }, { label: 'พฤหัสบดี', value: 4 }, { label: 'ศุกร์', value: 5 }, { label: 'เสาร์', value: 6 }];
-const presets = [
-  { label: 'ข้อมูลของวันก่อนหน้า', value: 'YESTERDAY' },
-  { label: 'วันนี้ถึงเวลาส่ง', value: 'TODAY_TO_NOW' },
-  { label: 'ต้นเดือนถึงเวลาส่ง', value: 'MONTH_TO_DATE' },
-  { label: 'สถานะ ณ เวลาส่ง', value: 'AS_OF_RUN' }
-];
+const presets = schedulePeriodOptions;
 const fingerprint = computed(() => JSON.stringify({ ...form, daysOfWeek: [...form.daysOfWeek].sort(), reportKeys: [...form.reportKeys], recipientIds: [...form.recipientIds].sort() }));
 const dirty = computed(() => !!baseline.value && fingerprint.value !== baseline.value);
 const selectedRecipientSet = computed(() => new Set(form.recipientIds));
 const maxReports = computed(() => catalog.value?.limits.maxScheduleReports ?? 10);
-const missingByRecipient = computed(() => new Map(recipients.value.map((item) => [item.id, form.reportKeys.filter((key) => !item.reportKeys.includes(key))])));
-const invalidSelectedRecipients = computed(() => form.recipientIds.filter((id) => (missingByRecipient.value.get(id)?.length ?? 0) > 0 || recipients.value.find((item) => item.id === id)?.status !== 'ACTIVE'));
+const invalidSelectedRecipients = computed(() => form.recipientIds.filter((id) => recipients.value.find((item) => item.id === id)?.eligible !== true));
 const scheduleTimingValid = computed(() => form.daysOfWeek.length > 0 && /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(form.localTime));
 const definitionsByKey = computed(() => new Map(catalog.value?.data.map((item) => [item.reportKey, item]) ?? []));
 const periodModesReady = computed(() => form.reportKeys.every((key) => ['DATE_RANGE', 'AS_OF_DATE', 'CURRENT_ONLY'].includes(definitionsByKey.value.get(key)?.periodMode ?? '')));
@@ -54,40 +60,77 @@ const previewDisabledReason = computed(() => {
   if (!periodModesReady.value) return 'ข้อมูลความสามารถของรายงานไม่ครบ กรุณาโหลดหน้าใหม่ก่อน Preview หรือบันทึก';
   return '';
 });
-const valid = computed(() => form.name.trim().length > 0 && previewReady.value && form.recipientIds.length > 0 && invalidSelectedRecipients.value.length === 0);
+const valid = computed(() => form.name.trim().length > 0 && previewReady.value && form.recipientIds.length > 0 && invalidSelectedRecipients.value.length === 0 && (!serverConflict.value || conflictAcknowledged.value));
 const readOnly = computed(() => schedule.value?.status === 'ACTIVE');
+const periodExample = computed(() => schedulePeriodExample(form.periodPreset, form.localTime, form.daysOfWeek));
 const periodGroupCopy = computed(() => {
-  const range: Record<string, string> = {
-    YESTERDAY: 'ใช้ข้อมูลของวันก่อนรอบส่ง', TODAY_TO_NOW: `ใช้ข้อมูลตั้งแต่ต้นวันถึง ${form.localTime} น.`,
-    MONTH_TO_DATE: `ใช้ข้อมูลตั้งแต่ต้นเดือนถึง ${form.localTime} น. ของวันส่ง`, AS_OF_RUN: `ใช้ข้อมูลของวันส่งถึง ${form.localTime} น.`
-  };
-  const asOf: Record<string, string> = {
-    YESTERDAY: 'ใช้สถานะ ณ วันก่อนรอบส่ง', TODAY_TO_NOW: 'ใช้สถานะ ณ วันส่ง', MONTH_TO_DATE: 'ใช้สถานะ ณ วันส่ง', AS_OF_RUN: 'ใช้สถานะ ณ วันส่ง'
-  };
-  return [
-    { mode: 'DATE_RANGE', title: 'รายงานแบบช่วงวันที่', detail: range[form.periodPreset] },
-    { mode: 'AS_OF_DATE', title: 'รายงาน ณ วันที่', detail: asOf[form.periodPreset] },
-    { mode: 'CURRENT_ONLY', title: 'รายงานสถานะปัจจุบัน', detail: `ใช้สถานะจริง ณ ${form.localTime} น. และไม่รองรับย้อนหลัง` }
-  ].map((group) => ({ ...group, reports: form.reportKeys.map((key) => definitionsByKey.value.get(key)).filter((item) => item?.periodMode === group.mode) }));
+  const groups: { mode: SchedulePeriodMode; title: string }[] = [
+    { mode: 'DATE_RANGE', title: 'รายงานที่สรุปเป็นช่วงเวลา' },
+    { mode: 'AS_OF_DATE', title: 'รายงานที่แสดงข้อมูล ณ วันที่' },
+    { mode: 'CURRENT_ONLY', title: 'รายงานสถานะปัจจุบัน' }
+  ];
+  return groups.map((group) => {
+    const reports = form.reportKeys.map((key) => definitionsByKey.value.get(key)).filter((item) => item?.periodMode === group.mode);
+    return {
+      ...group,
+      detail: schedulePeriodGroupDetail(group.mode, form.periodPreset, form.localTime),
+      reports,
+      reportLabels: reports.map((item) => item?.label ?? '').filter(Boolean).join(', ')
+    };
+  });
+});
+const activePeriodGroups = computed(() => periodGroupCopy.value.filter((group) => group.reports.length > 0));
+const conflictDiff = computed(() => {
+  const latest = serverConflict.value;
+  if (!latest) return [];
+  const items: string[] = [];
+  if (latest.name !== form.name) items.push(`ชื่อบนระบบ: ${latest.name}`);
+  if (JSON.stringify(latest.reportKeys) !== JSON.stringify(form.reportKeys)) items.push(`รายงานบนระบบ: ${latest.reportKeys.length} รายงาน`);
+  if (JSON.stringify([...latest.recipientIds].sort()) !== JSON.stringify([...form.recipientIds].sort())) items.push(`ผู้รับบนระบบ: ${latest.recipientIds.length} คน`);
+  if (JSON.stringify(latest.daysOfWeek) !== JSON.stringify([...form.daysOfWeek].sort()) || latest.localTime !== form.localTime) items.push(`รอบส่งบนระบบ: ${latest.localTime} น.`);
+  if (latest.periodPreset !== form.periodPreset) items.push('วันที่ของข้อมูลบนระบบถูกเปลี่ยน');
+  return items;
 });
 
 async function load() {
   loading.value = true; error.value = '';
   try {
-    const [tenantResult, recipientResult, catalogResult, scheduleResult] = await Promise.all([
-      adminApi.getTenant(tenantId), adminApi.listRecipients(tenantId), loadAdminReportCatalog(controller.signal),
+    const [tenantResult, catalogResult, scheduleResult] = await Promise.all([
+      adminApi.getTenant(tenantId), loadAdminReportCatalog(controller.signal),
       scheduleId ? adminApi.getSchedule(tenantId, scheduleId, controller.signal) : Promise.resolve(undefined)
     ]);
-    tenant.value = tenantResult; recipients.value = recipientResult.data; catalog.value = catalogResult; schedule.value = scheduleResult;
+    tenant.value = tenantResult; catalog.value = catalogResult; schedule.value = scheduleResult;
+    setAdminTenantContext(tenantId, tenantResult.name);
     if (scheduleResult) Object.assign(form, { name: scheduleResult.name, daysOfWeek: [...scheduleResult.daysOfWeek], localTime: scheduleResult.localTime, timezone: scheduleResult.timezone, periodPreset: scheduleResult.periodPreset, reportKeys: [...scheduleResult.reportKeys], recipientIds: [...scheduleResult.recipientIds] });
     baseline.value = fingerprint.value;
   } catch (cause) { error.value = errorMessage(cause); }
   finally { loading.value = false; }
 }
 
-function toggleRecipient(item: Recipient, checked: boolean) {
+async function loadRecipientOptions(resetPage = false) {
+  if (!form.reportKeys.length) { recipients.value = []; recipientTotal.value = 0; return; }
+  if (resetPage) recipientPage.value = 0;
+  recipientController?.abort('recipient-options-replaced');
+  const requestController = new AbortController();
+  recipientController = requestController;
+  const generation = ++recipientGeneration;
+  loadingRecipients.value = true;
+  try {
+    const result = await adminApi.scheduleRecipientOptions(tenantId, {
+      reportKeys: [...form.reportKeys], selectedRecipientIds: [...form.recipientIds], search: recipientSearch.value.trim(), page: recipientPage.value, pageSize: 100
+    }, requestController.signal);
+    if (generation !== recipientGeneration) return;
+    const merged = new Map([...result.selected, ...result.data].map((item) => [item.id, item]));
+    recipients.value = [...merged.values()];
+    recipientTotal.value = result.total;
+  } catch (cause) {
+    if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) toast.add({ severity: 'error', summary: 'โหลดความพร้อมผู้รับไม่สำเร็จ', detail: errorMessage(cause), life: 5000 });
+  } finally { if (generation === recipientGeneration) loadingRecipients.value = false; }
+}
+
+function toggleRecipient(item: ScheduleRecipientOption, checked: boolean) {
   if (checked) {
-    if (item.status !== 'ACTIVE' || (missingByRecipient.value.get(item.id)?.length ?? 0) > 0) return;
+    if (!item.eligible) return;
     if (!selectedRecipientSet.value.has(item.id)) form.recipientIds = [...form.recipientIds, item.id];
   } else form.recipientIds = form.recipientIds.filter((id) => id !== item.id);
 }
@@ -124,17 +167,26 @@ async function save() {
     back();
   } catch (cause) {
     if (!(cause instanceof ApiError) || !cause.retryable) actionKey = '';
-    toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail: errorMessage(cause), life: 6000 });
+    if (cause instanceof ApiError && cause.code === 'VERSION_CONFLICT' && scheduleId) {
+      try {
+        serverConflict.value = await adminApi.getSchedule(tenantId, scheduleId);
+        schedule.value = serverConflict.value;
+        conflictAcknowledged.value = false;
+      } catch (refreshCause) { toast.add({ severity: 'error', summary: 'โหลดค่าล่าสุดไม่สำเร็จ', detail: errorMessage(refreshCause), life: 6000 }); }
+    } else toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail: errorMessage(cause), life: 6000 });
   } finally { saving.value = false; }
 }
 
 function back() { void router.push({ name: 'admin-tenant-detail', params: { tenantId }, query: { tab: 'schedules' } }); }
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value) { event.preventDefault(); event.returnValue = ''; } }
+function onVisibilityChange() { if (!document.hidden && form.reportKeys.length) void loadRecipientOptions(); }
 watch(() => [form.periodPreset, form.localTime, ...form.daysOfWeek, ...form.reportKeys], () => { previewController?.abort('preview-input-changed'); preview.value = undefined; });
+watch(() => [...form.reportKeys], () => { serverConflict.value = undefined; conflictAcknowledged.value = false; void loadRecipientOptions(true); });
+watch(recipientSearch, () => { clearTimeout(recipientSearchTimer); recipientSearchTimer = setTimeout(() => { void loadRecipientOptions(true); }, 250); });
 watch(form, () => { if (!saving.value) actionKey = ''; }, { deep: true });
 onBeforeRouteLeave(() => !dirty.value || window.confirm('มีตารางส่งรายงานที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่'));
-onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void load(); });
-onBeforeUnmount(() => { controller.abort('unmount'); previewController?.abort('unmount'); window.removeEventListener('beforeunload', beforeUnload); });
+onMounted(() => { window.addEventListener('beforeunload', beforeUnload); window.addEventListener('focus', onVisibilityChange); document.addEventListener('visibilitychange', onVisibilityChange); void load(); });
+onBeforeUnmount(() => { controller.abort('unmount'); previewController?.abort('unmount'); recipientController?.abort('unmount'); clearTimeout(recipientSearchTimer); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('focus', onVisibilityChange); document.removeEventListener('visibilitychange', onVisibilityChange); });
 </script>
 
 <template>
@@ -143,37 +195,32 @@ onBeforeUnmount(() => { controller.abort('unmount'); previewController?.abort('u
   <template v-else-if="tenant && catalog">
     <AppPageHeader :title="editing ? 'แก้ไขตารางส่งรายงาน' : 'เพิ่มตารางส่งรายงาน'" :subtitle="`ร้าน ${tenant.name} · เวลาไทย`" mobile-mode="entity"><template #back><Button label="ตารางส่งรายงาน" icon="pi pi-arrow-left" text class="entity-back-action -ml-3 mb-1 touch-action" @click="back" /></template><template v-if="schedule" #actions><Tag :value="schedule.status === 'ACTIVE' ? 'กำลังใช้งาน' : 'ฉบับร่าง/พักไว้'" :severity="schedule.status === 'ACTIVE' ? 'success' : 'secondary'" /></template></AppPageHeader>
     <Message v-if="readOnly" severity="warn" :closable="false" class="mb-4">ตารางนี้กำลังใช้งาน กรุณากลับไปพักตารางก่อนแก้ไข</Message>
+    <Message v-if="serverConflict" severity="warn" :closable="false" class="mb-4"><strong>ตารางนี้ถูกแก้จากอีกหน้าจอ</strong><div class="mt-2">ระบบเก็บค่าที่คุณกำลังแก้ไว้และโหลดค่าล่าสุดมาเปรียบเทียบ โดยยังไม่รวม/เขียนทับอัตโนมัติ</div><ul class="my-2 pl-5"><li v-for="item in conflictDiff" :key="item">{{ item }}</li></ul><Button label="ตรวจสอบแล้ว ใช้ค่าที่กำลังแก้" icon="pi pi-check" outlined @click="conflictAcknowledged = true" /></Message>
     <form class="flex flex-col gap-5" @submit.prevent="save">
       <div class="card">
-        <h2 class="text-lg font-semibold mt-0 mb-5">รอบส่ง</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-5xl">
-          <div class="grid gap-2 md:col-span-2"><label for="schedule-name">ชื่อตาราง</label><InputText id="schedule-name" v-model="form.name" :disabled="readOnly" fluid /></div>
-          <div class="grid gap-2"><label for="schedule-days">วันส่ง</label><MultiSelect input-id="schedule-days" v-model="form.daysOfWeek" :options="days" option-label="label" option-value="value" display="chip" :disabled="readOnly" fluid /></div>
-          <div class="grid gap-2"><label for="schedule-time">เวลาส่ง (เวลาไทย)</label><InputMask id="schedule-time" v-model="form.localTime" mask="99:99" placeholder="09:00" :disabled="readOnly" fluid /></div>
-          <div class="grid gap-2">
-            <label for="schedule-period">ข้อมูลที่นำมาสรุปใน LINE</label>
-            <Select input-id="schedule-period" v-model="form.periodPreset" :options="presets" option-label="label" option-value="value" :disabled="readOnly" aria-describedby="schedule-period-help" fluid />
-            <small id="schedule-period-help" class="text-muted-color">กำหนดช่วงของตัวเลขในรายงาน ไม่ใช่วันและเวลาที่ระบบส่ง LINE</small>
-          </div>
-          <div class="grid gap-2"><label>เขตเวลา</label><div class="timezone-static"><i class="pi pi-clock" /> เวลาไทย</div></div>
-        </div>
-        <Message v-if="!periodModesReady && form.reportKeys.length" severity="error" :closable="false" class="mt-4">ข้อมูลความสามารถของรายงานไม่ครบ ระบบจึงไม่คาดเดาช่วงข้อมูล กรุณาโหลดหน้าใหม่ก่อน Preview หรือบันทึก</Message>
-        <div v-if="form.reportKeys.length" class="period-explanation mt-5" aria-live="polite">
-          <div class="font-semibold mb-3">สรุปวิธีใช้ข้อมูลของรายงานที่เลือก</div>
-          <div v-for="group in periodGroupCopy" :key="group.mode" class="period-explanation-row" :class="{ 'is-empty': !group.reports.length }">
-            <div><strong>{{ group.title }}</strong><div class="text-sm text-muted-color">{{ group.detail }}</div></div>
-            <span class="text-sm">{{ group.reports.length }} รายงาน</span>
-          </div>
-          <Message v-if="periodGroupCopy.find((group) => group.mode === 'CURRENT_ONLY')?.reports.length" severity="warn" :closable="false" class="mt-3">“สินค้าถึงจุดสั่งซื้อ” แสดงสถานะปัจจุบัน ณ เวลาส่งเสมอ จึงไม่สามารถดูย้อนหลังตามช่วงที่เลือกได้</Message>
-        </div>
+        <div class="grid gap-2 max-w-3xl mb-5"><label for="schedule-name">ชื่อตารางส่ง LINE</label><InputText id="schedule-name" v-model="form.name" :disabled="readOnly" placeholder="เช่น สรุปผู้บริหารทุกเช้า" fluid /></div>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-5"><div><h2 class="text-lg font-semibold m-0">1. รายงานใน LINE รอบนี้: {{ form.reportKeys.length.toLocaleString('th-TH') }} รายงาน</h2><p class="text-muted-color mt-1 mb-0">การเลือกนี้กำหนดสิ่งที่ส่งจริง ไม่ใช่สิทธิ์ทั้งหมดของผู้รับ · สูงสุด {{ maxReports }} รายงาน</p></div><Tag :value="`1 LINE Card · ${form.reportKeys.length}/${maxReports} รายงาน${preview ? ` · ${(preview.payloadBytes / 1024).toFixed(1)} KB / ${(catalog.limits.maxFlexPayloadBytes / 1024).toFixed(0)} KB` : ''}`" severity="info" /></div>
+        <ReportPickerPanel v-model="form.reportKeys" :definitions="catalog.data" :max-selected="maxReports" :disabled="readOnly" ordered />
       </div>
 
-      <div class="card"><div class="flex flex-wrap items-center justify-between gap-3 mb-5"><div><h2 class="text-lg font-semibold m-0">เลือกรายงาน</h2><p class="text-muted-color mt-1 mb-0">หนึ่ง LINE Card เลือกได้สูงสุด {{ maxReports }} รายงาน</p></div><Tag :value="`1 LINE Card · ${form.reportKeys.length}/${maxReports} รายงาน${preview ? ` · ${(preview.payloadBytes / 1024).toFixed(1)} KB / ${(catalog.limits.maxFlexPayloadBytes / 1024).toFixed(0)} KB` : ''}`" severity="info" /></div><ReportPickerPanel v-model="form.reportKeys" :definitions="catalog.data" :max-selected="maxReports" :disabled="readOnly" ordered /></div>
+      <div class="card">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">2. ผู้รับ LINE</h2><p class="text-muted-color mt-1 mb-0">ผู้รับต้องยืนยัน LINE และมีสิทธิ์เปิดดู Dashboard ครบทุกรายงานที่เลือก</p></div><div class="flex flex-wrap gap-2"><IconField><InputIcon class="pi pi-search" /><InputText v-model="recipientSearch" placeholder="ค้นหาชื่อผู้รับ" aria-label="ค้นหาผู้รับ" /></IconField><Button v-if="invalidSelectedRecipients.length" label="นำผู้รับที่ไม่พร้อมออก" icon="pi pi-user-minus" severity="warn" outlined class="touch-action" @click="removeInvalidRecipients" /></div></div>
+        <Message v-if="invalidSelectedRecipients.length" severity="error" :closable="false" class="mb-4">ผู้รับที่เลือกไว้ {{ invalidSelectedRecipients.length }} คนไม่พร้อม ระบบคงรายการไว้ให้ตรวจสอบและจะยังไม่อนุญาตให้บันทึก</Message>
+        <Message v-if="!form.reportKeys.length" severity="info" :closable="false">เลือกรายงานในขั้นตอนที่ 1 ก่อน ระบบจึงจะตรวจความพร้อมของผู้รับได้</Message>
+        <DataTable v-else :value="recipients" data-key="id" striped-rows responsive-layout="scroll" :loading="loadingRecipients"><Column header="เลือก" style="width:5rem" header-class="table-select-column" body-class="table-select-column"><template #body="{ data }"><Checkbox :model-value="selectedRecipientSet.has(data.id)" binary :disabled="readOnly || !data.eligible" :aria-label="`เลือกผู้รับ ${data.displayName}`" @update:model-value="toggleRecipient(data, $event)" /></template></Column><Column field="displayName" header="ผู้รับ" /><Column header="ความพร้อม"><template #body="{ data }"><Tag v-if="data.status !== 'ACTIVE'" value="ยังไม่ยืนยัน LINE" severity="warn" /><Tag v-else-if="!data.eligible" :value="`ขาดสิทธิ์ ${data.missingReportKeys.length} รายงาน`" severity="danger" /><Tag v-else value="พร้อมรับรายงานครบ" severity="success" /></template></Column><Column header="การจัดการ" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><RouterLink v-if="data.missingReportKeys.length" :to="{ name: 'admin-recipient-permissions', params: { tenantId, recipientId: data.id } }" target="_blank" rel="noopener noreferrer" class="permission-link"><i class="pi pi-external-link" /> แก้สิทธิ์</RouterLink></template></Column><template #empty><div class="py-8 text-center text-muted-color">ไม่พบผู้รับที่ตรงกับเงื่อนไข</div></template></DataTable>
+        <div v-if="form.reportKeys.length" class="flex items-center justify-between gap-3 mt-3"><small class="text-muted-color">พบ {{ recipientTotal.toLocaleString('th-TH') }} คน · เลือกแล้ว {{ form.recipientIds.length.toLocaleString('th-TH') }} คน</small><div class="flex gap-2"><Button icon="pi pi-angle-left" text rounded aria-label="หน้าก่อน" :disabled="recipientPage === 0 || loadingRecipients" @click="recipientPage--; loadRecipientOptions()" /><Button icon="pi pi-angle-right" text rounded aria-label="หน้าถัดไป" :disabled="(recipientPage + 1) * 100 >= recipientTotal || loadingRecipients" @click="recipientPage++; loadRecipientOptions()" /></div></div>
+      </div>
 
-      <div class="card"><div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">เลือกผู้รับ</h2><p class="text-muted-color mt-1 mb-0">เลือกได้เฉพาะผู้ที่ยืนยัน LINE และมีสิทธิ์ครบทุกรายงาน</p></div><Button v-if="invalidSelectedRecipients.length" label="นำผู้รับที่ไม่พร้อมออก" icon="pi pi-user-minus" severity="warn" outlined class="touch-action" @click="removeInvalidRecipients" /></div><Message v-if="invalidSelectedRecipients.length" severity="error" :closable="false" class="mb-4">มีผู้รับที่เลือกไว้ {{ invalidSelectedRecipients.length }} คนซึ่งสิทธิ์ไม่ครบหรือยังไม่ยืนยัน LINE</Message><DataTable :value="recipients" data-key="id" striped-rows responsive-layout="scroll"><Column header="เลือก" style="width:5rem" header-class="table-select-column" body-class="table-select-column"><template #body="{ data }"><Checkbox :model-value="selectedRecipientSet.has(data.id)" binary :disabled="readOnly || data.status !== 'ACTIVE' || (missingByRecipient.get(data.id)?.length ?? 0) > 0" :aria-label="`เลือกผู้รับ ${data.displayName}`" @update:model-value="toggleRecipient(data, $event)" /></template></Column><Column field="displayName" header="ผู้รับ" /><Column header="ความพร้อม"><template #body="{ data }"><Tag v-if="data.status !== 'ACTIVE'" value="ยังไม่ยืนยัน LINE" severity="warn" /><Tag v-else-if="(missingByRecipient.get(data.id)?.length ?? 0) > 0" :value="`ขาดสิทธิ์ ${missingByRecipient.get(data.id)?.length} รายงาน`" severity="danger" /><Tag v-else value="พร้อม" severity="success" /></template></Column><Column header="" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button v-if="(missingByRecipient.get(data.id)?.length ?? 0) > 0" label="แก้สิทธิ์" icon="pi pi-lock" text class="touch-action" @click="router.push({ name: 'admin-recipient-permissions', params: { tenantId, recipientId: data.id } })" /></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับในร้านนี้</div></template></DataTable></div>
+      <div class="card">
+        <h2 class="text-lg font-semibold mt-0 mb-5">3. ตั้งวันส่งและวันที่ของข้อมูล</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-5xl"><div class="grid gap-2"><label for="schedule-days">วันส่ง</label><MultiSelect input-id="schedule-days" v-model="form.daysOfWeek" :options="days" option-label="label" option-value="value" display="chip" :disabled="readOnly" fluid /></div><div class="grid gap-2"><label for="schedule-time">เวลาส่ง (เวลาไทย)</label><InputMask id="schedule-time" v-model="form.localTime" mask="99:99" placeholder="09:00" :disabled="readOnly" fluid /></div><div class="grid gap-2"><label for="schedule-period">ต้องการให้ LINE สรุปข้อมูลช่วงไหน?</label><Select input-id="schedule-period" v-model="form.periodPreset" :options="presets" option-label="label" option-value="value" :disabled="readOnly" aria-describedby="schedule-period-help schedule-period-example" fluid /><small id="schedule-period-help" class="text-muted-color">ระบบจะคำนวณวันที่ของข้อมูลใหม่ในแต่ละรอบส่ง</small></div><div class="grid gap-2"><label>เขตเวลา</label><div class="timezone-static"><i class="pi pi-clock" /> เวลาไทย</div></div></div>
+        <Message id="schedule-period-example" severity="info" :closable="false" class="mt-4"><strong>{{ periodExample }}</strong></Message>
+        <Message v-if="!periodModesReady && form.reportKeys.length" severity="error" :closable="false" class="mt-4">ข้อมูลความสามารถของรายงานไม่ครบ ระบบจึงไม่คาดเดาช่วงข้อมูล กรุณาโหลดหน้าใหม่ก่อน Preview หรือบันทึก</Message>
+        <div v-if="form.reportKeys.length" class="period-explanation mt-5" aria-live="polite"><div class="font-semibold mb-3">รายงานที่เลือกจะใช้ข้อมูลดังนี้</div><div v-for="group in activePeriodGroups" :key="group.mode" class="period-explanation-row"><div><strong>{{ group.title }}</strong><div class="text-sm text-muted-color mt-1">{{ group.detail }}</div><div class="text-sm mt-1">{{ group.reportLabels }}</div></div><Tag :value="`${group.reports.length} รายงาน`" severity="secondary" /></div><Message v-if="activePeriodGroups.find((group) => group.mode === 'CURRENT_ONLY')" severity="warn" :closable="false" class="mt-3">“สินค้าถึงจุดสั่งซื้อ” แสดงสถานะปัจจุบัน ณ เวลาส่งเสมอ จึงไม่สามารถดูย้อนหลังตามช่วงที่เลือกได้</Message></div>
+      </div>
 
-      <div v-if="preview" class="card"><div class="flex flex-wrap items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">ตัวอย่าง LINE Card</h2><p class="text-sm text-muted-color mt-1 mb-0">ตัวอย่างรอบส่งถัดไป {{ formatDateTime(preview.exampleScheduledFor) }} · {{ preview.mixedPeriods ? 'แต่ละรายงานใช้ช่วงตามความสามารถจริง' : 'ทุกรายงานใช้ช่วงเดียวกัน' }}</p></div></div><LineFlexPreview :preview="preview" /></div>
-      <div class="card"><div class="flex flex-wrap items-center justify-between gap-3"><small v-if="previewDisabledReason" class="text-muted-color"><i class="pi pi-info-circle mr-1" />{{ previewDisabledReason }}</small><span v-else /><div class="flex flex-wrap justify-end gap-2"><Button type="button" label="ยกเลิก" text class="touch-action" @click="back" /><Button type="button" label="ดูตัวอย่าง LINE Card" icon="pi pi-eye" outlined class="touch-action" :disabled="!previewReady" :loading="previewing" @click="createPreview" /><Button type="submit" label="บันทึกตารางส่ง" icon="pi pi-save" class="touch-action" :disabled="!valid || readOnly" :loading="saving" /></div></div></div>
+      <div v-if="preview" class="card"><div class="flex flex-wrap items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">4. ตรวจสอบตัวอย่าง LINE Card</h2><p class="text-sm text-muted-color mt-1 mb-0">รอบส่งถัดไป {{ formatDateTime(preview.exampleScheduledFor) }} · {{ preview.mixedPeriods ? 'แต่ละรายงานใช้ช่วงตามความสามารถจริง' : 'ทุกรายงานใช้ช่วงเดียวกัน' }}</p></div></div><LineFlexPreview :preview="preview" /></div>
+      <div class="card"><div class="flex flex-wrap items-center justify-between gap-3"><small v-if="previewDisabledReason" class="text-muted-color"><i class="pi pi-info-circle mr-1" />{{ previewDisabledReason }}</small><span v-else /><div class="flex flex-wrap justify-end gap-2"><Button type="button" label="ยกเลิก" text class="touch-action" @click="back" /><Button type="button" label="ดูตัวอย่าง LINE Card" icon="pi pi-eye" outlined class="touch-action" :disabled="!previewReady" :loading="previewing" @click="createPreview" /><Button type="submit" label="บันทึกตารางส่ง LINE" icon="pi pi-save" class="touch-action" :disabled="!valid || readOnly" :loading="saving" /></div></div></div>
     </form>
   </template>
 </template>
@@ -185,5 +232,6 @@ onBeforeUnmount(() => { controller.abort('unmount'); previewController?.abort('u
 .period-explanation { max-width: 64rem; padding: 1rem; border: 1px solid var(--surface-border); border-radius: var(--content-border-radius); background: var(--surface-50); }
 .period-explanation-row { display: flex; align-items: start; justify-content: space-between; gap: 1rem; padding-block: .7rem; border-bottom: 1px solid var(--surface-border); }
 .period-explanation-row:last-of-type { border-bottom: 0; }
-.period-explanation-row.is-empty { opacity: .55; }
+.permission-link { display: inline-flex; min-height: 44px; align-items: center; gap: .5rem; color: var(--p-primary-color); text-decoration: none; font-weight: 600; }
+.permission-link:hover { text-decoration: underline; }
 </style>

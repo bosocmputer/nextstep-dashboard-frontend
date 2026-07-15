@@ -31,6 +31,8 @@ const router = createRouter({
         { path: '', name: 'viewer-home', component: () => import('@/views/viewer/ViewerHome.vue') },
         { path: 'invite', name: 'viewer-invite', component: () => import('@/views/viewer/ViewerHome.vue') },
         { path: 'tenant/:tenantId', name: 'viewer-overview', component: () => import('@/views/viewer/ExecutiveOverview.vue') },
+        { path: 'tenant/:tenantId/delivery/:deliveryId', name: 'viewer-delivery', component: () => import('@/views/viewer/ViewerDelivery.vue') },
+        { path: 'tenant/:tenantId/delivery/:deliveryId/report/:reportKey', name: 'viewer-delivery-report', component: () => import('@/views/viewer/ViewerDeliveryReport.vue') },
         { path: 'tenant/:tenantId/report/:reportKey', name: 'viewer-report', component: () => import('@/views/viewer/ViewerReport.vue') }
       ]
     },

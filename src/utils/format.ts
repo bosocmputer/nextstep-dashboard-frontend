@@ -17,6 +17,16 @@ export function formatTime(value?: string | null): string {
   }).format(date);
 }
 
+export function formatSourceCollection(start?: string | null, finish?: string | null, consistency?: 'STATEMENT' | 'SERIAL_WINDOW' | 'CHUNK_WINDOW'): string {
+  if (!finish) return 'ยังไม่มีเวลาที่ดึงข้อมูลจาก SML';
+  const startedAt = start ? new Date(start) : undefined;
+  const finishedAt = new Date(finish);
+  if (Number.isNaN(finishedAt.getTime())) return 'ยังไม่มีเวลาที่ดึงข้อมูลจาก SML';
+  const hasWindow = startedAt && !Number.isNaN(startedAt.getTime()) && (consistency === 'CHUNK_WINDOW' || finishedAt.getTime() - startedAt.getTime() >= 60_000);
+  if (hasWindow) return `รวบรวมจาก SML ระหว่าง ${formatTime(start)}–${formatTime(finish)} น.`;
+  return `ดึงจาก SML สำเร็จเมื่อ ${formatDateTime(finish)}`;
+}
+
 export function formatDate(value?: string | null): string {
   if (!value) return '—';
   const date = new Date(value);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorMessage, formatDateOnly, formatMetric, formatTime, metricLabel } from './format';
+import { errorMessage, formatDateOnly, formatMetric, formatSourceCollection, formatTime, metricLabel } from './format';
 
 describe('format utilities', () => {
   it('preserves the local calendar date instead of converting through UTC', () => {
@@ -32,5 +32,17 @@ describe('formatTime', () => {
   it('returns a safe placeholder for invalid values', () => {
     expect(formatTime('not-a-date')).toBe('—');
     expect(formatTime()).toBe('—');
+  });
+});
+
+describe('formatSourceCollection', () => {
+  it('describes chunked results as a collection window instead of a point-in-time snapshot', () => {
+    expect(formatSourceCollection('2026-07-12T01:30:00Z', '2026-07-12T01:36:00Z', 'CHUNK_WINDOW')).toContain('08:30–08:36');
+  });
+
+  it('uses a completed-at label for a direct statement result', () => {
+    const label = formatSourceCollection('2026-07-12T01:30:00Z', '2026-07-12T01:30:20Z', 'STATEMENT');
+    expect(label).toContain('ดึงจาก SML สำเร็จเมื่อ');
+    expect(label).not.toContain('ระหว่าง');
   });
 });

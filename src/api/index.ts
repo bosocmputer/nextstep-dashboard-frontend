@@ -4,7 +4,8 @@ import type {
   FlexPreview, FlexPreviewInput, LineQuotaStatus, NotificationExecution, ReportKey, ReportRowPage, ReportRun, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
   SMLConnectionInput, SMLConnectionStatus, SMLConnectionTestResult, Tenant, TenantInput, TenantPage, TenantPatch,
   DashboardRefresh, DashboardRefreshInput, DashboardRefreshResult, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant,
-  DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot
+  DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot,
+  DeliveryContext, DeliveryReportContext, PermissionDependencies, ScheduleRecipientOptions, ScheduleRecipientOptionsInput
 } from './types';
 
 const api = '/api/v1';
@@ -28,7 +29,10 @@ export const adminApi = {
   listRecipients: (tenantId: string, cursor?: string) => apiRequest<RecipientPage>(`${api}/admin/tenants/${tenantId}/recipients${queryString({ cursor, pageSize: 100 })}`),
   getRecipient: (tenantId: string, recipientId: string, signal?: AbortSignal) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}`, { signal }),
   inviteRecipient: (tenantId: string, invitationLabel: string, idempotencyKey = newIdempotencyKey('recipient')) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients`, { method: 'POST', scope: 'admin', idempotencyKey, body: { invitationLabel } }),
+  reissueRecipientInvitation: (tenantId: string, recipientId: string, idempotencyKey = newIdempotencyKey('recipient-reissue')) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/invitation`, { method: 'POST', scope: 'admin', idempotencyKey }),
   replacePermissions: (tenantId: string, recipientId: string, reportKeys: ReportKey[], version: number) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/permissions`, { method: 'PUT', scope: 'admin', body: { reportKeys, version } }),
+  permissionDependencies: (tenantId: string, recipientId: string, signal?: AbortSignal) => apiRequest<PermissionDependencies>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/permission-dependencies`, { signal }),
+  scheduleRecipientOptions: (tenantId: string, input: ScheduleRecipientOptionsInput, signal?: AbortSignal) => apiRequest<ScheduleRecipientOptions>(`${api}/admin/tenants/${tenantId}/schedule-recipient-options/query`, { method: 'POST', body: input, signal }),
   revokeRecipient: (tenantId: string, recipientId: string) => apiRequest<void>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}`, { method: 'DELETE', scope: 'admin' }),
   listSchedules: (tenantId: string, cursor?: string, includeArchived = false) => apiRequest<SchedulePage>(`${api}/admin/tenants/${tenantId}/schedules${queryString({ cursor, pageSize: 100, includeArchived: includeArchived ? 'true' : 'false' })}`),
   getSchedule: (tenantId: string, scheduleId: string, signal?: AbortSignal) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}`, { signal }),
@@ -47,11 +51,14 @@ export const adminApi = {
 };
 
 export const viewerApi = {
-  exchange: (idToken: string, invitationReference?: string, deliveryReference?: string) => apiRequest<ViewerMe>(`${api}/viewer/line/session`, { method: 'POST', body: { idToken, invitationReference, deliveryReference }, timeoutMs: 15_000 }),
+  exchange: (idToken: string, invitationReference?: string, deliveryReference?: string, expectedTenantId?: string) => apiRequest<ViewerMe>(`${api}/viewer/line/session`, { method: 'POST', body: { idToken, invitationReference, deliveryReference, expectedTenantId }, timeoutMs: 15_000 }),
   me: () => apiRequest<ViewerMe>(`${api}/viewer/me`),
   logout: () => apiRequest<void>(`${api}/viewer/logout`, { method: 'POST', scope: 'viewer' }),
   tenants: () => apiRequest<DataPage<ViewerTenant>>(`${api}/viewer/tenants`),
   reports: (tenantId: string, signal?: AbortSignal) => apiRequest<DataPage<ReportDefinition>>(`${api}/viewer/tenants/${tenantId}/reports`, { signal }),
+  resolveDeliveryContext: (deliveryReference: string, expectedTenantId: string, signal?: AbortSignal) => apiRequest<DeliveryContext>(`${api}/viewer/delivery-contexts`, { method: 'POST', scope: 'viewer', body: { deliveryReference, expectedTenantId }, signal }),
+  deliveryContext: (tenantId: string, deliveryId: string, signal?: AbortSignal) => apiRequest<DeliveryContext>(`${api}/viewer/tenants/${tenantId}/deliveries/${deliveryId}/context`, { signal }),
+  deliveryReport: (tenantId: string, deliveryId: string, reportKey: ReportKey, signal?: AbortSignal) => apiRequest<DeliveryReportContext>(`${api}/viewer/tenants/${tenantId}/deliveries/${deliveryId}/reports/${reportKey}`, { signal }),
   overview: (tenantId: string, signal?: AbortSignal) => apiRequest<ExecutiveOverview>(`${api}/viewer/tenants/${tenantId}/executive-overview`, { signal }),
   exactOverview: (tenantId: string, input: DashboardRefreshInput, signal?: AbortSignal) => apiRequest<ExecutiveOverview>(`${api}/viewer/tenants/${tenantId}/executive-overview${overviewQueryString(input)}`, { signal }),
   createDashboardRefresh: (tenantId: string, input?: DashboardRefreshInput, idempotencyKey = newIdempotencyKey('dashboard-refresh')) => apiRequest<DashboardRefresh>(`${api}/viewer/tenants/${tenantId}/executive-overview/refreshes`, { method: 'POST', scope: 'viewer', idempotencyKey, body: input }),

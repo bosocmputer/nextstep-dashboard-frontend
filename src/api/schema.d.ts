@@ -236,6 +236,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/tenants/{tenantId}/recipients/{recipientId}/invitation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Replaces the unused invitation for a pending recipient. The previous invitation reference becomes invalid immediately. */
+        post: operations["reissueRecipientInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/tenants/{tenantId}/recipients/{recipientId}/permission-dependencies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRecipientPermissionDependencies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/tenants/{tenantId}/schedule-recipient-options/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Read-only, tenant-scoped recipient eligibility query. This operation never changes a schedule. */
+        post: operations["queryScheduleRecipientOptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/tenants/{tenantId}/recipients/{recipientId}": {
         parameters: {
             query?: never;
@@ -449,6 +499,54 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["exchangeLineSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/viewer/delivery-contexts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolveViewerDeliveryContext"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/viewer/tenants/{tenantId}/deliveries/{deliveryId}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getViewerDeliveryContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/viewer/tenants/{tenantId}/deliveries/{deliveryId}/reports/{reportKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getViewerDeliveryReport"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -771,6 +869,11 @@ export interface components {
             smlReadiness?: "UNCONFIGURED" | "UNTESTED" | "READY" | "FAILED";
             /** Format: date-time */
             nextScheduleAt?: string | null;
+            /**
+             * Format: uri
+             * @description Canonical Dashboard link generated from configured PUBLIC_BASE_URL; opening it never grants access.
+             */
+            readonly viewerUrl?: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -816,6 +919,8 @@ export interface components {
             standardIntervalMinutes?: 15 | 30 | 60 | null;
             /** @enum {integer|null} */
             heavyIntervalMinutes?: 30 | 60 | 120 | null;
+            /** @enum {string} */
+            rolloutStatus?: "ACTIVE" | "SNAPSHOT_FIRST_DISABLED" | "TENANT_NOT_ENABLED" | "REVALIDATION_DISABLED";
             version: number;
         };
         DashboardRefreshPolicyInput: {
@@ -894,6 +999,40 @@ export interface components {
         PermissionUpdate: {
             reportKeys: components["schemas"]["ReportKey"][];
             version: number;
+        };
+        PermissionDependencies: {
+            /** Format: uuid */
+            recipientId: string;
+            permissionsVersion: number;
+            items: {
+                reportKey: components["schemas"]["ReportKey"];
+                activeScheduleCount: number;
+                schedules: {
+                    /** Format: uuid */
+                    id: string;
+                    name: string;
+                }[];
+                additionalCount: number;
+            }[];
+        };
+        ScheduleRecipientOptionsInput: {
+            reportKeys: components["schemas"]["ReportKey"][];
+            selectedRecipientIds: string[];
+            search: string;
+            page: number;
+            pageSize: number;
+        };
+        ScheduleRecipientOption: components["schemas"]["Recipient"] & {
+            eligible: boolean;
+            missingReportKeys: components["schemas"]["ReportKey"][];
+        };
+        ScheduleRecipientOptions: {
+            data: components["schemas"]["ScheduleRecipientOption"][];
+            selected: components["schemas"]["ScheduleRecipientOption"][];
+            page: number;
+            pageSize: number;
+            total: number;
+            hasMore: boolean;
         };
         /** @enum {string} */
         ReportKey: "sales_goods_services" | "purchase_goods_payables" | "gross_profit_by_product" | "gross_profit_by_ar_customer" | "stock_balance" | "stock_reorder" | "ar_customer_movement" | "ar_debt_receipt" | "cash_bank_receipts" | "cash_bank_payments";
@@ -1074,6 +1213,15 @@ export interface components {
             tenantName?: string;
             reportKey: components["schemas"]["ReportKey"];
             status: components["schemas"]["ReportRunStatus"];
+            /**
+             * @description Operational lease health for Admin monitoring.
+             * @enum {string}
+             */
+            runtimeStatus?: "ACTIVE" | "STALLED";
+            /** Format: date-time */
+            retryAvailableAt?: string | null;
+            /** @enum {string} */
+            waitReason?: "TENANT_BUSY" | "HOST_BUSY" | "TENANT_COOLDOWN" | "HOST_COOLDOWN" | "SCHEDULE_RESERVED";
             /** @enum {string} */
             resultKind?: "SUMMARY" | "DETAIL";
             periodPreset: string;
@@ -1209,6 +1357,9 @@ export interface components {
             freshnessStatus?: "FRESH" | "STALE" | "EXPIRED" | "MISSING" | "REFRESHING" | "REFRESH_FAILED";
             reportDefinitionVersion?: string;
             dataSourceVersion?: number;
+            queryPlanFingerprint?: string;
+            /** @enum {string} */
+            sourceConsistency?: "STATEMENT" | "SERIAL_WINDOW" | "CHUNK_WINDOW";
             detailsAvailable?: boolean;
             /** Format: date-time */
             detailsExpiresAt?: string | null;
@@ -1218,6 +1369,20 @@ export interface components {
             tenantId: string;
             /** @enum {string} */
             timezone: "Asia/Bangkok";
+            /** Format: uuid */
+            generationId?: string | null;
+            generationKey?: string;
+            requestedPeriod?: components["schemas"]["ReportPeriod"];
+            /** @enum {string} */
+            dataStatus?: "FRESH" | "STALE" | "EXPIRED" | "MISSING" | "REFRESHING" | "REFRESH_FAILED";
+            /** @enum {string} */
+            sourceConsistency?: "STATEMENT" | "SERIAL_WINDOW" | "CHUNK_WINDOW";
+            /** Format: date-time */
+            sourceStartedAt?: string | null;
+            /** Format: date-time */
+            sourceFinishedAt?: string | null;
+            /** Format: date-time */
+            publishedAt?: string | null;
             items: components["schemas"]["DashboardSnapshot"][];
         };
         DashboardRefreshRun: {
@@ -1232,12 +1397,20 @@ export interface components {
             expectedP50Ms?: number;
             expectedP90Ms?: number;
             expectedSampleCount?: number;
+            /** @enum {string} */
+            executionStrategy?: "DIRECT" | "CHUNKED";
+            /** @enum {string} */
+            sourceConsistency?: "STATEMENT" | "SERIAL_WINDOW" | "CHUNK_WINDOW";
+            completedChunks?: number;
+            totalChunks?: number;
         };
         DashboardRefresh: {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             tenantId: string;
+            /** Format: uuid */
+            generationId?: string | null;
             /** @enum {string} */
             status: "QUEUED" | "RUNNING" | "PARTIAL" | "SUCCEEDED" | "FAILED";
             total: number;
@@ -1268,6 +1441,17 @@ export interface components {
             refreshId: string;
             /** Format: uuid */
             tenantId: string;
+            /** Format: uuid */
+            generationId?: string | null;
+            generationKey?: string;
+            /** @enum {string} */
+            sourceConsistency?: "STATEMENT" | "SERIAL_WINDOW" | "CHUNK_WINDOW";
+            /** Format: date-time */
+            sourceStartedAt?: string | null;
+            /** Format: date-time */
+            sourceFinishedAt?: string | null;
+            /** Format: date-time */
+            publishedAt?: string | null;
             /** @enum {string} */
             status: "PARTIAL" | "SUCCEEDED" | "FAILED";
             items: components["schemas"]["DashboardSnapshot"][];
@@ -1295,6 +1479,11 @@ export interface components {
             idToken: string;
             invitationReference?: string;
             deliveryReference?: string;
+            /**
+             * Format: uuid
+             * @description Explicit tenant from the viewer route; mismatch is rejected without redirecting to another tenant.
+             */
+            expectedTenantId?: string;
         };
         ViewerMe: {
             /** Format: uuid */
@@ -1303,6 +1492,9 @@ export interface components {
             csrfToken?: string;
             /** Format: date-time */
             expiresAt: string;
+            deliveryContext?: components["schemas"]["DeliveryContext"];
+            /** @enum {string} */
+            deliveryContextErrorCode?: "DELIVERY_CONTEXT_UNAVAILABLE" | "DELIVERY_CONTEXT_PERMISSION_CHANGED";
         };
         ViewerTenant: {
             /** Format: uuid */
@@ -1310,6 +1502,47 @@ export interface components {
             name: string;
             timezone: string;
             reportKeys: components["schemas"]["ReportKey"][];
+        };
+        DeliveryContextResolveInput: {
+            deliveryReference: string;
+            /** Format: uuid */
+            expectedTenantId: string;
+        };
+        /** @enum {string} */
+        DeliverySnapshotStatus: "AVAILABLE" | "DETAIL_EXPIRED" | "SNAPSHOT_EXPIRED" | "UNAVAILABLE";
+        DeliveryContextReport: {
+            reportKey: components["schemas"]["ReportKey"];
+            label: string;
+            position?: number;
+            /** Format: uuid */
+            reportRunId: string;
+            snapshotStatus: components["schemas"]["DeliverySnapshotStatus"];
+            summary?: components["schemas"]["DashboardSnapshot"];
+        };
+        DeliveryContext: {
+            /** Format: uuid */
+            deliveryId: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** Format: date-time */
+            scheduledFor: string;
+            materializationVersion: number;
+            /** @enum {string} */
+            orderStatus: "EXACT" | "LEGACY";
+            /** @enum {string} */
+            dataStatus: "AVAILABLE" | "PARTIAL_EXPIRED" | "EXPIRED";
+            reports: components["schemas"]["DeliveryContextReport"][];
+        };
+        DeliveryReportContext: {
+            /** Format: uuid */
+            deliveryId: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** Format: date-time */
+            scheduledFor: string;
+            /** @enum {string} */
+            orderStatus: "EXACT" | "LEGACY";
+            report: components["schemas"]["DeliveryContextReport"];
         };
         Delivery: {
             /** Format: uuid */
@@ -1319,6 +1552,9 @@ export interface components {
             tenantName: string;
             /** @description Decrypted recipient label for authenticated Admin display only. */
             recipientDisplayName: string;
+            /** @description Immutable report set materialized for this delivery occurrence. */
+            reportKeys: components["schemas"]["ReportKey"][];
+            reportCount: number;
             /** @enum {string} */
             status: "PENDING" | "SENDING" | "ACCEPTED" | "RETRY_WAIT" | "UNCERTAIN" | "FAILED_PERMANENT";
             attempt: number;
@@ -2036,6 +2272,86 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    reissueRecipientInvitation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                recipientId: components["parameters"]["RecipientID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending recipient with a newly issued one-time invitation URL. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Recipient"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getRecipientPermissionDependencies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                recipientId: components["parameters"]["RecipientID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active schedules that currently require each recipient permission. Schedule details are bounded to five per report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionDependencies"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    queryScheduleRecipientOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleRecipientOptionsInput"];
+            };
+        };
+        responses: {
+            /** @description Paginated recipients plus every currently selected recipient, including invalid selections. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecipientOptions"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     getTenantRecipient: {
         parameters: {
             query?: never;
@@ -2484,6 +2800,85 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    resolveViewerDeliveryContext: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliveryContextResolveInput"];
+            };
+        };
+        responses: {
+            /** @description Exact immutable report set for the referenced delivery. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryContext"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getViewerDeliveryContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                deliveryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact immutable report set for one authorized delivery. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryContext"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getViewerDeliveryReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                deliveryId: string;
+                reportKey: components["parameters"]["ReportKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One report snapshot from the immutable delivery report set. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryReportContext"];
+                };
+            };
             403: components["responses"]["Forbidden"];
         };
     };

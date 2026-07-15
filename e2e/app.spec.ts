@@ -451,7 +451,6 @@ test('mobile viewer switches tenants from the sidebar without showing stale topb
   await page.getByRole('button', { name: 'เปิดหรือปิดเมนู' }).click();
   await page.getByRole('combobox', { name: 'ร้านที่กำลังดู' }).click();
   await page.getByRole('option', { name: 'ร้านสอง' }).click();
-  await expect(page.getByTestId('mobile-topbar-context')).toContainText('กำลังเปลี่ยนร้าน');
 
   await expect(page).toHaveURL(`/app/tenant/${secondTenantId}`);
   await expect(page.getByTestId('mobile-topbar-context')).toContainText('ร้านสอง');
@@ -647,6 +646,7 @@ test('mobile report details use stacked rows without horizontal overflow', async
 test('LINE deep link opens the exact snapshot without creating a new SQL run', async ({ page }) => {
   const consoleErrors = captureUnexpectedConsoleErrors(page);
   const runId = '77777777-7777-4777-8777-777777777777';
+  const deliveryId = '88888888-8888-4888-8888-888888888888';
   let createRunRequests = 0;
   await page.route(`**${api}/viewer/me`, (route) => route.fulfill(json({
     recipientId: '22222222-2222-4222-8222-222222222222', displayName: 'ผู้ทดสอบ', expiresAt: '2026-07-11T00:00:00Z'
@@ -656,6 +656,16 @@ test('LINE deep link opens the exact snapshot without creating a new SQL run', a
   })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports`, (route) => route.fulfill(json({
     data: [{ reportKey: 'sales_goods_services', version: '1.0.0', label: 'รายงานขายสินค้าและบริการ', category: 'SALES', isSensitive: false }], page: { hasMore: false }
+  })));
+  await page.route(`**${api}/viewer/delivery-contexts`, (route) => route.fulfill(json({
+    deliveryId, tenantId, scheduledFor: '2026-07-10T01:00:00Z', materializationVersion: 2,
+    orderStatus: 'EXACT', dataStatus: 'AVAILABLE', reports: [{
+      reportKey: 'sales_goods_services', label: 'รายงานขายสินค้าและบริการ', position: 1,
+      reportRunId: runId, snapshotStatus: 'DETAIL_EXPIRED', summary: {
+        dashboard: salesDashboard(), sourceConsistency: 'STATEMENT',
+        sourceStartedAt: '2026-07-10T00:00:00Z', sourceFinishedAt: '2026-07-10T00:00:01Z'
+      }
+    }]
   })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports/sales_goods_services/runs**`, (route) => {
     if (route.request().method() === 'POST') {
@@ -670,15 +680,13 @@ test('LINE deep link opens the exact snapshot without creating a new SQL run', a
     }));
   });
 
-  await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services?snapshotRunId=${runId}&deliveryRef=secret-reference`);
+  await page.goto(`/app/tenant/${tenantId}/report/sales_goods_services?snapshotRunId=${runId}&deliveryRef=${'d'.repeat(32)}`);
 
-  await expect(page).toHaveURL(new RegExp(`snapshotRunId=${runId}$`));
+  await expect(page).toHaveURL(`/app/tenant/${tenantId}/delivery/${deliveryId}/report/sales_goods_services`);
   await expect(page.getByText('ข้อมูลจาก LINE', { exact: true })).toBeVisible();
-  await expect(page.getByText('ข้อมูลล่าสุด')).toBeVisible();
   await expect(page.getByText('฿1,250')).toBeVisible();
   expect(createRunRequests).toBe(0);
-  await page.getByRole('tab', { name: 'ข้อมูลรายละเอียด' }).click();
-  await expect(page.getByText('ข้อมูลแถวรายละเอียดเป็นข้อมูลชั่วคราว')).toBeVisible();
+  await expect(page.getByText('ข้อมูลแถวรายละเอียดหมดอายุแล้ว')).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 
@@ -707,6 +715,11 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json({
     data: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services'], permissionsVersion: 1, createdAt: '2026-07-01T00:00:00Z' }],
     page: { hasMore: false }
+  })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/schedule-recipient-options/query`, (route) => route.fulfill(json({
+    data: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', eligible: true, missingReportKeys: [] }],
+    selected: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', eligible: true, missingReportKeys: [] }],
+    page: 0, pageSize: 100, total: 1
   })));
   const schedule = {
     id: '44444444-4444-4444-8444-444444444444', tenantId, name: 'Morning', daysOfWeek: [1, 2, 3, 4, 5],
@@ -779,7 +792,7 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   await expect(page.getByRole('button', { name: 'บันทึกการเชื่อมต่อ' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'ทดสอบการเชื่อมต่อ' })).toBeDisabled();
   await expect(page.getByText('บันทึกค่าก่อนทดสอบการเชื่อมต่อ')).toBeVisible();
-  await page.getByRole('tab', { name: 'ตารางส่งรายงาน' }).click();
+  await page.getByRole('tab', { name: 'ตารางส่ง LINE' }).click();
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'แก้ไข' }).click();
   await expect(page).toHaveURL(`/admin/tenants/${tenantId}/schedules/${schedule.id}/edit`);

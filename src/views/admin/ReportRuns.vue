@@ -33,6 +33,22 @@ async function load(reset = true) {
   finally { if (context === loadGeneration) loading.value = false; }
 }
 function severity(value: string) { return value === 'SUCCEEDED' ? 'success' : value === 'FAILED' ? 'danger' : value === 'RUNNING' || value === 'CLAIMED' ? 'info' : value === 'QUEUED' ? 'warn' : 'secondary'; }
+function runStatusLabel(run: ReportRun) { return run.runtimeStatus === 'STALLED' ? 'งานหยุดค้าง' : statusLabel(run.status); }
+function runSeverity(run: ReportRun) { return run.runtimeStatus === 'STALLED' ? 'danger' : severity(run.status); }
+function waitReasonLabel(value?: string) {
+  return ({
+    TENANT_BUSY: 'รอรายงานอื่นของร้าน', HOST_BUSY: 'รอ Server ปลายทาง',
+    TENANT_COOLDOWN: 'พักการเชื่อมต่อของร้านชั่วคราว', HOST_COOLDOWN: 'Server ปลายทางอยู่ช่วงพัก',
+    SCHEDULE_RESERVED: 'รอรอบส่ง LINE ก่อน'
+  } as Record<string, string>)[value ?? ''] ?? '';
+}
+function safeErrorLabel(value?: string | null) {
+  return ({
+    REPORT_LEASE_EXPIRED: 'Worker หยุดติดตามงานระหว่างดึงข้อมูล ระบบปิดงานนี้เพื่อป้องกัน Query ซ้ำ',
+    SML_TIMEOUT: 'Server ลูกค้าใช้เวลาตอบนานเกินกำหนด ระบบหยุดรอบนี้โดยไม่ส่ง LINE',
+    REPORT_SET_INCOMPLETE: 'สร้างรายงานในรอบนี้ไม่ครบ ระบบจึงไม่ส่ง LINE'
+  } as Record<string, string>)[value ?? ''] ?? '';
+}
 onMounted(() => {
   void loadAdminReportCatalog().then((catalog) => { reportDefinitions.value = catalog.data; }).catch(() => undefined);
   void load();
@@ -48,7 +64,7 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
     <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
       <Column field="tenantName" header="ร้านค้า" frozen><template #body="{ data }"><span class="font-semibold">{{ data.tenantName || '—' }}</span></template></Column>
       <Column field="reportKey" header="รายงาน"><template #body="{ data }"><div class="font-medium">{{ reportDefinitionByKey.get(data.reportKey)?.label ?? data.reportKey }}</div></template></Column>
-      <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="severity(data.status)" :value="statusLabel(data.status)" /></template></Column>
+      <Column field="status" header="สถานะ"><template #body="{ data }"><div class="grid gap-1"><Tag class="w-fit" :severity="runSeverity(data)" :value="runStatusLabel(data)" /><small v-if="data.waitReason" class="text-muted-color">{{ waitReasonLabel(data.waitReason) }}</small><small v-if="data.retryAvailableAt" class="text-muted-color">ลองใหม่ได้หลัง {{ formatDateTime(data.retryAvailableAt) }}</small></div></template></Column>
       <Column header="ช่วงข้อมูล"><template #body="{ data }">{{ data.dateFrom || '—' }}<span v-if="data.dateTo && data.dateTo !== data.dateFrom"> → {{ data.dateTo }}</span></template></Column>
       <Column field="rowCount" header="จำนวนแถว" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }"><span class="metric-value">{{ data.rowCount.toLocaleString('th-TH') }}</span></template></Column>
       <Column field="queuedAt" header="เข้าคิวเมื่อ"><template #body="{ data }">{{ formatDateTime(data.queuedAt) }}</template></Column>
@@ -58,5 +74,5 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
     </DataTable>
     <div v-if="hasMore" class="table-footer text-center"><Button label="โหลดเพิ่มเติม" outlined :loading="loading" @click="load(false)" /></div>
   </div>
-  <Dialog :visible="!!selected" modal header="รายละเอียดการสร้างรายงาน" class="responsive-dialog" :style="{ width: '34rem' }" @update:visible="selected = undefined"><dl v-if="selected" class="grid grid-cols-[9rem_1fr] gap-3 m-0"><dt>รหัสงาน</dt><dd class="technical-detail m-0">{{ selected.id }}</dd><dt>รหัสร้าน</dt><dd class="technical-detail m-0">{{ selected.tenantId }}</dd><dt>รหัสข้อผิดพลาด</dt><dd class="technical-detail m-0">{{ selected.safeErrorCode || '—' }}</dd><dt>รายละเอียด</dt><dd class="m-0">{{ selected.safeErrorMessage || '—' }}</dd><dt>หมดอายุ</dt><dd class="m-0">{{ formatDateTime(selected.expiresAt) }}</dd></dl></Dialog>
+  <Dialog :visible="!!selected" modal header="รายละเอียดการสร้างรายงาน" class="responsive-dialog" :style="{ width: '34rem' }" @update:visible="selected = undefined"><dl v-if="selected" class="grid grid-cols-[9rem_1fr] gap-3 m-0"><dt>สถานะระบบ</dt><dd class="m-0">{{ runStatusLabel(selected) }}</dd><template v-if="selected.waitReason"><dt>กำลังรอ</dt><dd class="m-0">{{ waitReasonLabel(selected.waitReason) }}</dd></template><template v-if="selected.retryAvailableAt"><dt>ลองใหม่ได้หลัง</dt><dd class="m-0">{{ formatDateTime(selected.retryAvailableAt) }}</dd></template><dt>รหัสงาน</dt><dd class="technical-detail m-0">{{ selected.id }}</dd><dt>รหัสร้าน</dt><dd class="technical-detail m-0">{{ selected.tenantId }}</dd><dt>รหัสข้อผิดพลาด</dt><dd class="technical-detail m-0">{{ selected.safeErrorCode || '—' }}</dd><dt>รายละเอียด</dt><dd class="m-0">{{ safeErrorLabel(selected.safeErrorCode) || selected.safeErrorMessage || '—' }}</dd><dt>หมดอายุ</dt><dd class="m-0">{{ formatDateTime(selected.expiresAt) }}</dd></dl></Dialog>
 </template>

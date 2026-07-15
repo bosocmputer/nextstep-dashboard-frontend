@@ -9,7 +9,7 @@ import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, 
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
 import { comparisonPeriodText, formatDashboardValue, formatPeriodRange, periodLabel } from '@/utils/dashboard';
-import { errorMessage, formatDateTime, formatTime } from '@/utils/format';
+import { errorMessage, formatDateTime, formatSourceCollection } from '@/utils/format';
 import { periodModeForReport, selectionForMode, selectionFromReportPeriod, selectionToRunInput, type ReportPeriodSelection } from '@/utils/reportPeriod';
 import { formatReportCell, presentationFor, reportColumnClass, visibleReportColumns, type ReportColumnDefinition } from '@/utils/reportPresentation';
 import { cleanViewerQuery, validSnapshotRunId, validViewerRunId } from '@/utils/viewerSnapshot';
@@ -76,7 +76,7 @@ const elapsedSeconds = computed(() => {
   return Math.max(0, Math.round((end - Date.parse(run.value.queuedAt)) / 1000));
 });
 const sourceFinishedAt = computed(() => cachedSnapshot.value?.sourceFinishedAt ?? run.value?.finishedAt ?? dashboard.value?.generatedAt);
-const sourceLabel = computed(() => sourceFinishedAt.value ? `SML ${formatTime(sourceFinishedAt.value)} น.` : undefined);
+const sourceLabel = computed(() => sourceFinishedAt.value ? formatSourceCollection(cachedSnapshot.value?.sourceStartedAt, sourceFinishedAt.value, cachedSnapshot.value?.sourceConsistency) : undefined);
 const displayedPeriodLabel = computed(() => dashboard.value ? `${periodLabel(dashboard.value.period.preset)} · ${formatPeriodRange(dashboard.value.period)}` : run.value?.dateFrom && run.value.dateTo ? formatPeriodRange({ preset: run.value.periodPreset as ReportDashboard['period']['preset'], dateFrom: run.value.dateFrom, dateTo: run.value.dateTo }) : 'ยังไม่มีข้อมูล');
 const columnOptions = computed(() => presentationFor(reportKey.value, columns.value));
 const displayedColumns = computed(() => visibleReportColumns(reportKey.value, columns.value, selectedColumnKeys.value));
@@ -384,6 +384,8 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
   <AppPageHeader :title="definition?.label ?? 'รายงาน'" desktop-mode="viewerCompact"><template #back><Button label="ภาพรวมร้าน" icon="pi pi-arrow-left" text class="report-back-action touch-action" @click="router.push(`/app/tenant/${tenantId}`)" /></template><template #actions><div class="report-heading-actions"><div class="flex flex-wrap gap-2"><Tag v-if="snapshotMode" severity="info" value="ข้อมูลจาก LINE" /><Tag v-if="cachedSnapshot" :severity="freshness.severity" :icon="freshness.icon" :value="freshness.label" /><Tag v-if="showRunStatus" :severity="statusSeverity" :value="statusLabel" /></div><Button v-if="run?.status === 'QUEUED'" icon="pi pi-times" severity="danger" outlined rounded aria-label="ยกเลิกงานที่รอคิว" @click="cancel" /><Button v-else-if="active" icon="pi pi-eye-slash" severity="secondary" outlined rounded aria-label="หยุดติดตามความคืบหน้า" @click="stopFollowing" /></div></template></AppPageHeader>
 
   <ReportPeriodToolbar desktop-mode="compact" :mode="periodMode" :selection="selectedPeriod" :displayed-label="displayedPeriodLabel" :source-label="sourceLabel" :action-label="periodMode === 'CURRENT_ONLY' ? 'ดูสถานะล่าสุด' : 'ดูช่วงนี้'" force-action-label="ดึงใหม่จาก SML" :loading="loading || cacheLoading" :disabled="forceConfirmOpen" @apply="resolveSnapshot" @force="requestForceRefresh" />
+
+  <Message v-if="cachedSnapshot?.sourceConsistency === 'CHUNK_WINDOW'" severity="info" :closable="false" class="mb-4">รายงานนี้รวบรวมจาก SML หลายช่วงย่อยและไม่ใช่ Snapshot ณ วินาทีเดียว · {{ formatSourceCollection(cachedSnapshot.sourceStartedAt, cachedSnapshot.sourceFinishedAt, cachedSnapshot.sourceConsistency) }}</Message>
 
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
   <Message v-if="expiredSnapshot && !cachedSnapshot" severity="warn" :closable="false" class="mb-4"><div class="flex flex-wrap items-center justify-between gap-3"><span>ข้อมูลล่าสุดไม่พร้อมใช้งาน Snapshot เดิมดึงจาก SML เมื่อ {{ formatDateTime(expiredSnapshot.sourceFinishedAt) }} และจะไม่แสดงเป็น KPI หลักโดยอัตโนมัติ</span><Button label="เปิดดู Snapshot เดิม" icon="pi pi-history" size="small" severity="secondary" @click="showExpiredSnapshot" /></div></Message>

@@ -5,6 +5,7 @@ import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import { adminApi, ApiError, type DashboardRefreshPolicy, type DashboardRefreshPolicyInput, type Recipient, type Schedule, type SMLConnectionStatus, type Tenant } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
+import { beginAdminTenantContext, setAdminTenantContext } from '@/stores/adminTenantContext';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
 
@@ -13,6 +14,7 @@ const router = useRouter();
 const confirm = useConfirm();
 const toast = useToast();
 const tenantId = String(route.params.tenantId);
+beginAdminTenantContext(tenantId);
 const activeTab = ref(typeof route.query.tab === 'string' ? route.query.tab : 'overview');
 const tenant = ref<Tenant>();
 const sml = ref<SMLConnectionStatus>();
@@ -30,14 +32,17 @@ const inviteOpen = ref(false);
 const inviteLabel = ref('');
 const inviteURL = ref('');
 const inviting = ref(false);
+const reissuingRecipientId = ref('');
 const revokingRecipientId = ref('');
 const testSendingScheduleId = ref('');
 const changingScheduleId = ref('');
 const tenantBaseline = ref('');
 const smlBaseline = ref('');
 const refreshPolicyBaseline = ref('');
+const refreshPolicyConflict = ref<DashboardRefreshPolicy>();
 const smlLoaded = ref(false);
 let inviteActionKey = '';
+const reissueActionKeys = new Map<string, string>();
 const testSendActionKeys = new Map<string, string>();
 let scheduleLoadGeneration = 0;
 
@@ -54,11 +59,33 @@ const hasUnsavedChanges = computed(() => tenantDirty.value || smlDirty.value || 
 const fastIntervalOptions = [{ label: 'ปิด', value: null }, 5, 10, 15, 30, 60].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
 const standardIntervalOptions = [{ label: 'ปิด', value: null }, 15, 30, 60].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
 const heavyIntervalOptions = [{ label: 'ปิด', value: null }, 30, 60, 120].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
+const refreshPresets = [
+  { label: 'สมดุล', description: '5 / 15 / 30 นาที', values: [5, 15, 30] as const },
+  { label: 'ลดภาระ SML', description: '15 / 30 / 60 นาที', values: [15, 30, 60] as const },
+  { label: 'ดึงด้วยตนเองเท่านั้น', description: 'ไม่อัปเดตเบื้องหลัง', values: [null, null, null] as const }
+];
+const activeRefreshPreset = computed(() => refreshPresets.find((preset) => JSON.stringify(preset.values) === JSON.stringify([refreshPolicyForm.fastIntervalMinutes, refreshPolicyForm.standardIntervalMinutes, refreshPolicyForm.heavyIntervalMinutes]))?.label ?? 'กำหนดเอง');
+
+function applyRefreshPolicy(policy: DashboardRefreshPolicy, resetBaseline = true) {
+  refreshPolicy.value = policy;
+  Object.assign(refreshPolicyForm, {
+    fastIntervalMinutes: policy.fastIntervalMinutes ?? null,
+    standardIntervalMinutes: policy.standardIntervalMinutes ?? null,
+    heavyIntervalMinutes: policy.heavyIntervalMinutes ?? null,
+    version: policy.version
+  });
+  if (resetBaseline) refreshPolicyBaseline.value = refreshPolicyFingerprint.value;
+}
+
+function setRefreshPreset(values: readonly [DashboardRefreshPolicyInput['fastIntervalMinutes'], DashboardRefreshPolicyInput['standardIntervalMinutes'], DashboardRefreshPolicyInput['heavyIntervalMinutes']]) {
+  [refreshPolicyForm.fastIntervalMinutes, refreshPolicyForm.standardIntervalMinutes, refreshPolicyForm.heavyIntervalMinutes] = values;
+}
 
 async function load() {
   loading.value = true; error.value = '';
   try {
     tenant.value = await adminApi.getTenant(tenantId);
+    setAdminTenantContext(tenantId, tenant.value.name);
     Object.assign(tenantForm, { name: tenant.value.name, status: tenant.value.status, accessEndsAt: new Date(tenant.value.accessEndsAt), version: tenant.value.version });
     tenantBaseline.value = tenantFingerprint.value;
     const [smlResult, recipientResult, scheduleResult, policyResult] = await Promise.allSettled([
@@ -75,9 +102,7 @@ async function load() {
     recipients.value = recipientResult.status === 'fulfilled' ? recipientResult.value.data : [];
     schedules.value = scheduleResult.status === 'fulfilled' ? scheduleResult.value.data : [];
     if (policyResult.status === 'fulfilled') {
-      refreshPolicy.value = policyResult.value;
-      Object.assign(refreshPolicyForm, policyResult.value);
-      refreshPolicyBaseline.value = refreshPolicyFingerprint.value;
+      applyRefreshPolicy(policyResult.value);
     } else throw policyResult.reason;
   } catch (cause) { error.value = errorMessage(cause); }
   finally { loading.value = false; }
@@ -85,16 +110,33 @@ async function load() {
 
 async function saveRefreshPolicy() {
   if (!refreshPolicy.value || savingRefreshPolicy.value || !refreshPolicyDirty.value) return;
+  const isFaster = (next: number | null | undefined, previous: number | null | undefined) => next != null && (previous == null || next < previous);
+  if (isFaster(refreshPolicyForm.fastIntervalMinutes, refreshPolicy.value.fastIntervalMinutes) || isFaster(refreshPolicyForm.standardIntervalMinutes, refreshPolicy.value.standardIntervalMinutes) || isFaster(refreshPolicyForm.heavyIntervalMinutes, refreshPolicy.value.heavyIntervalMinutes)) {
+    confirm.require({
+      header: 'ยืนยันการดึงข้อมูลถี่ขึ้น',
+      message: 'ค่าที่ถี่ขึ้นอาจเพิ่มภาระ Java Web Service และฐาน SML เมื่อมีผู้ใช้เปิด Dashboard ที่ข้อมูลเก่า ต้องการบันทึกหรือไม่?',
+      icon: 'pi pi-exclamation-triangle', acceptLabel: 'ยืนยันและบันทึก', rejectLabel: 'กลับไปตรวจสอบ',
+      accept: () => { void persistRefreshPolicy(); }
+    });
+    return;
+  }
+  await persistRefreshPolicy();
+}
+
+async function persistRefreshPolicy() {
+  if (!refreshPolicy.value || savingRefreshPolicy.value || !refreshPolicyDirty.value) return;
   savingRefreshPolicy.value = true;
   try {
     const updated = await adminApi.updateDashboardRefreshPolicy(tenantId, { ...refreshPolicyForm });
-    refreshPolicy.value = updated; Object.assign(refreshPolicyForm, updated); refreshPolicyBaseline.value = refreshPolicyFingerprint.value;
+    applyRefreshPolicy(updated); refreshPolicyConflict.value = undefined;
     toast.add({ severity: 'success', summary: 'บันทึกรอบอัปเดต Dashboard แล้ว', life: 3000 });
   } catch (cause) {
     if (cause instanceof ApiError && cause.code === 'VERSION_CONFLICT') {
       const latest = await adminApi.getDashboardRefreshPolicy(tenantId);
-      refreshPolicy.value = latest; Object.assign(refreshPolicyForm, latest); refreshPolicyBaseline.value = refreshPolicyFingerprint.value;
-      toast.add({ severity: 'warn', summary: 'มีผู้ดูแลแก้ไขค่าก่อนหน้า', detail: 'โหลดค่าล่าสุดแล้ว กรุณาตรวจสอบอีกครั้ง', life: 5000 });
+      refreshPolicyConflict.value = latest;
+      refreshPolicy.value = latest;
+      refreshPolicyForm.version = latest.version;
+      toast.add({ severity: 'warn', summary: 'มีผู้ดูแลแก้ไขค่าก่อนหน้า', detail: 'เก็บค่าที่คุณกำลังแก้ไว้แล้ว กรุณาเทียบกับค่าล่าสุดก่อนบันทึกอีกครั้ง', life: 6000 });
     } else toast.add({ severity: 'error', summary: 'บันทึกรอบอัปเดตไม่ได้', detail: errorMessage(cause), life: 5000 });
   } finally { savingRefreshPolicy.value = false; }
 }
@@ -125,6 +167,7 @@ async function persistTenant() {
   try {
     const updated = await adminApi.updateTenant(tenantId, { ...tenantForm, timezone: 'Asia/Bangkok', accessEndsAt: tenantForm.accessEndsAt.toISOString() });
     tenant.value = updated; tenantForm.version = updated.version; tenantBaseline.value = tenantFingerprint.value;
+    setAdminTenantContext(tenantId, updated.name);
     toast.add({ severity: 'success', summary: 'บันทึกร้านค้าแล้ว', life: 2500 });
   } catch (cause) { toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail: errorMessage(cause), life: 5000 }); }
   finally { savingTenant.value = false; }
@@ -184,10 +227,51 @@ async function invite() {
   finally { inviting.value = false; }
 }
 
+function confirmReissueInvitation(item: Recipient) {
+  if (reissuingRecipientId.value || revokingRecipientId.value) return;
+  confirm.require({
+    header: 'สร้างลิงก์เชิญใหม่',
+    message: `ลิงก์เชิญเดิมของ “${item.displayName}” จะใช้งานไม่ได้ทันที ต้องการสร้างลิงก์ใหม่หรือไม่?`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptLabel: 'สร้างลิงก์ใหม่',
+    rejectLabel: 'ยกเลิก',
+    accept: () => { void reissueInvitation(item); }
+  });
+}
+
+async function reissueInvitation(item: Recipient) {
+  if (item.status !== 'PENDING' || reissuingRecipientId.value) return;
+  reissuingRecipientId.value = item.id;
+  try {
+    const actionKey = reissueActionKeys.get(item.id) ?? newIdempotencyKey('recipient-reissue');
+    reissueActionKeys.set(item.id, actionKey);
+    const updated = await adminApi.reissueRecipientInvitation(tenantId, item.id, actionKey);
+    reissueActionKeys.delete(item.id);
+    inviteLabel.value = updated.displayName;
+    inviteURL.value = updated.invitationUrl ?? '';
+    inviteOpen.value = true;
+    toast.add({ severity: 'success', summary: 'สร้างลิงก์เชิญใหม่แล้ว', detail: 'ลิงก์เดิมถูกยกเลิกและใช้งานไม่ได้แล้ว', life: 4000 });
+  } catch (cause) {
+    if (!(cause instanceof ApiError) || !cause.retryable) reissueActionKeys.delete(item.id);
+    if (cause instanceof ApiError && (cause.code === 'INVITATION_NOT_PENDING' || cause.code === 'RECIPIENT_NOT_FOUND')) {
+      try { recipients.value = (await adminApi.listRecipients(tenantId)).data; } catch { /* retain the current table and surface the mutation error below */ }
+    }
+    toast.add({ severity: 'error', summary: 'สร้างลิงก์เชิญใหม่ไม่สำเร็จ', detail: errorMessage(cause), life: 5000 });
+  } finally {
+    reissuingRecipientId.value = '';
+  }
+}
+
 async function copyInvite() {
   if (!inviteURL.value) return;
   await navigator.clipboard.writeText(inviteURL.value);
   toast.add({ severity: 'success', summary: 'คัดลอกลิงก์แล้ว', life: 2000 });
+}
+
+async function copyDashboardLink() {
+  if (!tenant.value?.viewerUrl) return;
+  await navigator.clipboard.writeText(tenant.value.viewerUrl);
+  toast.add({ severity: 'success', summary: 'คัดลอกลิงก์ Dashboard แล้ว', detail: 'ลิงก์ไม่เพิ่มสิทธิ์ ผู้รับต้องยืนยัน LINE และมีสิทธิ์ร้านนี้อยู่แล้ว', life: 3500 });
 }
 
 function editPermissions(item: Recipient) { void router.push({ name: 'admin-recipient-permissions', params: { tenantId, recipientId: item.id } }); }
@@ -381,19 +465,44 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
   <div v-if="loading" class="card"><Skeleton height="2rem" width="15rem" class="mb-4" /><Skeleton height="12rem" /></div>
   <Message v-else-if="error" severity="error" :closable="false">{{ error }} <Button label="ลองใหม่" text @click="load" /></Message>
   <template v-else-if="tenant">
-    <h1 class="sr-only">รายละเอียดร้าน {{ tenant.name }}</h1>
-    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <Button label="ร้านค้าทั้งหมด" icon="pi pi-arrow-left" text class="entity-back-action -ml-3" @click="router.push('/admin/tenants')" />
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex min-w-0 flex-1 items-center gap-2">
+        <Button label="ร้านค้าทั้งหมด" icon="pi pi-arrow-left" text class="entity-back-action -ml-3" @click="router.push('/admin/tenants')" />
+        <h1 class="tenant-page-title min-w-0">{{ tenant.name }}</h1>
+      </div>
       <div class="flex flex-wrap gap-2"><Tag :severity="tenant.status === 'ACTIVE' ? 'success' : 'secondary'" :value="statusLabel(tenant.status)" /><Tag :severity="sml?.readinessStatus === 'READY' ? 'success' : 'warn'" :value="`SML ${statusLabel(sml?.readinessStatus ?? 'UNCONFIGURED')}`" /></div>
     </div>
     <div class="card"><Tabs v-model:value="activeTab">
-      <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">การเชื่อมต่อ SML</Tab><Tab value="refresh">การอัปเดต Dashboard</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">ตารางส่งรายงาน</Tab></TabList>
+      <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">การเชื่อมต่อ SML</Tab><Tab value="refresh">ความสดและการดึงข้อมูล</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">ตารางส่ง LINE</Tab></TabList>
       <TabPanels>
-        <TabPanel value="overview"><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveTenant"><div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="tenantForm.name" fluid /></div><div class="grid gap-2"><label for="tenant-status">สถานะ</label><Select input-id="tenant-status" aria-label="สถานะ" v-model="tenantForm.status" :options="['ACTIVE','DISABLED','EXPIRED']" fluid /></div><div class="grid gap-2"><label for="tenant-access-end">สิ้นสุดสิทธิ์ (เวลาไทย)</label><DatePicker input-id="tenant-access-end" v-model="tenantForm.accessEndsAt" show-icon show-time hour-format="24" fluid /></div><div class="md:col-span-2 flex items-center gap-3"><Button type="submit" label="บันทึกข้อมูลร้าน" icon="pi pi-save" :loading="savingTenant" :disabled="savingTenant || !tenantDirty" /><small v-if="tenantDirty" class="text-orange-600">มีการแก้ไขที่ยังไม่บันทึก</small></div></form><Accordion class="mt-6 max-w-4xl"><AccordionPanel value="technical"><AccordionHeader>ข้อมูลทางเทคนิค</AccordionHeader><AccordionContent><div class="flex flex-wrap items-center gap-3"><div><div class="text-sm text-muted-color">รหัสระบบ</div><code>{{ tenant.slug }}</code></div><Button label="คัดลอกรหัส" icon="pi pi-copy" text @click="copySlug" /></div></AccordionContent></AccordionPanel></Accordion></TabPanel>
+        <TabPanel value="overview"><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveTenant"><div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="tenantForm.name" fluid /></div><div class="grid gap-2"><label for="tenant-status">สถานะ</label><Select input-id="tenant-status" aria-label="สถานะ" v-model="tenantForm.status" :options="['ACTIVE','DISABLED','EXPIRED']" fluid /></div><div class="grid gap-2"><label for="tenant-access-end">สิ้นสุดสิทธิ์ (เวลาไทย)</label><DatePicker input-id="tenant-access-end" v-model="tenantForm.accessEndsAt" show-icon show-time hour-format="24" fluid /></div><div class="md:col-span-2 flex items-center gap-3"><Button type="submit" label="บันทึกข้อมูลร้าน" icon="pi pi-save" :loading="savingTenant" :disabled="savingTenant || !tenantDirty" /><small v-if="tenantDirty" class="text-orange-600">มีการแก้ไขที่ยังไม่บันทึก</small></div><div class="md:col-span-2 flex flex-wrap items-center justify-between gap-3 border-t border-surface pt-4"><div><div class="font-semibold">ลิงก์ Dashboard ของร้าน</div><small class="text-muted-color">ลิงก์นี้ไม่โอนหรือเพิ่มสิทธิ์ ผู้รับต้องยืนยัน LINE และได้รับสิทธิ์ร้านนี้อยู่แล้ว</small></div><Button label="คัดลอกลิงก์ Dashboard" icon="pi pi-copy" outlined :disabled="!tenant.viewerUrl" @click="copyDashboardLink" /></div></form><Accordion class="mt-6 max-w-4xl"><AccordionPanel value="technical"><AccordionHeader>ข้อมูลทางเทคนิค</AccordionHeader><AccordionContent><div class="flex flex-wrap items-center gap-3"><div><div class="text-sm text-muted-color">รหัสระบบ</div><code>{{ tenant.slug }}</code></div><Button label="คัดลอกรหัส" icon="pi pi-copy" text @click="copySlug" /></div></AccordionContent></AccordionPanel></Accordion></TabPanel>
         <TabPanel value="sml"><Message severity="info" :closable="false" class="mb-5">กรอก Base URL ของร้านได้ ระบบจะเติม <code>/SMLJavaWebService/DotNetFrameWork</code> ให้อัตโนมัติ และจะไม่แสดงรหัสผ่านหรือ token กลับมา</Message><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveSML"><div class="grid gap-2 md:col-span-2"><label for="sml-endpoint">Java Web Service Base URL</label><InputText id="sml-endpoint" v-model="smlForm.endpointUrl" placeholder="http://shop.example.com:8092" fluid /></div><div class="grid gap-2"><label for="sml-config-file">ไฟล์ SMLConfig</label><InputText id="sml-config-file" v-model="smlForm.configFileName" placeholder="SMLConfigDATA.xml" fluid /></div><div class="grid gap-2"><label for="sml-database">ชื่อฐานข้อมูล SML</label><InputText id="sml-database" v-model="smlForm.databaseName" fluid /></div><div class="md:col-span-2 flex flex-wrap items-center gap-3"><Button type="submit" label="บันทึกการเชื่อมต่อ" icon="pi pi-save" :loading="savingSML" :disabled="savingSML || !smlDirty" /><span v-tooltip.top="smlDirty ? 'บันทึกค่าชุดล่าสุดก่อนทดสอบ' : !sml?.isConfigured ? 'ตั้งค่าและบันทึก SML ก่อนทดสอบ' : ''"><Button type="button" label="ทดสอบการเชื่อมต่อ" icon="pi pi-bolt" outlined :disabled="!sml?.isConfigured || smlDirty || savingSML" :loading="testingSML" @click="testSML" /></span><small v-if="smlDirty" class="text-orange-600">บันทึกค่าก่อนทดสอบการเชื่อมต่อ</small></div></form></TabPanel>
-        <TabPanel value="refresh"><Message severity="info" :closable="false" class="mb-5">กำหนดอายุของ Snapshot ขณะมีผู้ใช้เปิด Dashboard ค่านี้ไม่ใช่ตารางส่ง LINE และระบบจะไม่ Query SML ตลอด 24 ชั่วโมง</Message><form class="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl" @submit.prevent="saveRefreshPolicy"><div class="grid gap-2"><label for="refresh-fast">ข้อมูลเคลื่อนไหวเร็ว</label><Select input-id="refresh-fast" v-model="refreshPolicyForm.fastIntervalMinutes" :options="fastIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">ขาย · รับชำระ · รับเงิน · จ่ายเงิน</small></div><div class="grid gap-2"><label for="refresh-standard">รายงานทั่วไป</label><Select input-id="refresh-standard" v-model="refreshPolicyForm.standardIntervalMinutes" :options="standardIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">ซื้อ · กำไร · ลูกหนี้ · จุดสั่งซื้อ</small></div><div class="grid gap-2"><label for="refresh-heavy">รายงานหนัก</label><Select input-id="refresh-heavy" v-model="refreshPolicyForm.heavyIntervalMinutes" :options="heavyIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">สต็อกคงเหลือ</small></div><div class="md:col-span-3 flex flex-wrap items-center gap-3"><Button type="submit" label="บันทึกรอบอัปเดต" icon="pi pi-save" :loading="savingRefreshPolicy" :disabled="savingRefreshPolicy || !refreshPolicyDirty" /><small v-if="refreshPolicyDirty" class="text-orange-600">มีค่าที่ยังไม่ได้บันทึก</small></div></form></TabPanel>
-        <TabPanel value="recipients"><Toolbar class="mb-5 border-0 p-0"><template #start><div><h2 class="text-lg font-semibold m-0">ผู้รับและสิทธิ์รายงาน</h2><p class="text-muted-color mt-1 mb-0">เพิ่มผู้รับด้วยลิงก์ LINE และเพิกถอนสิทธิ์ได้จากตารางนี้</p></div></template><template #end><Button label="เพิ่มผู้รับ LINE" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''; inviteLabel = ''" /></template></Toolbar><DataTable :value="recipients" data-key="id" striped-rows scrollable><Column field="displayName" header="ชื่อ" /><Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template></Column><Column header="สิทธิ์" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template></Column><Column field="verifiedAt" header="ยืนยันเมื่อ"><template #body="{ data }">{{ formatDateTime(data.verifiedAt) }}</template></Column><Column header="การจัดการ" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><div class="flex flex-wrap items-center justify-end gap-1"><Button label="กำหนดสิทธิ์" icon="pi pi-lock" text class="touch-action" :disabled="!!revokingRecipientId" @click="editPermissions(data)" /><Button :label="data.status === 'PENDING' ? 'ยกเลิกคำเชิญ' : 'ลบผู้รับ'" icon="pi pi-trash" severity="danger" text class="touch-action" :loading="revokingRecipientId === data.id" :disabled="!!revokingRecipientId && revokingRecipientId !== data.id" @click="confirmRevokeRecipient(data)" /></div></template></Column><template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ กด “เพิ่มผู้รับ LINE” เพื่อเริ่มต้น</div></template></DataTable></TabPanel>
+        <TabPanel value="refresh">
+          <Message severity="info" :closable="false" class="mb-5"><strong>กำหนดว่า Snapshot จะถือเป็น “ข้อมูลล่าสุด” ได้นานเท่าไร</strong><div class="mt-2">เมื่อผู้ใช้เปิด Dashboard หลังพ้นช่วงนี้ ระบบจึงอาจเริ่มดึงข้อมูลเบื้องหลัง ค่านี้ไม่ใช่ตารางส่ง LINE และไม่ได้ Query SML ต่อเนื่องตลอดวัน ผู้ใช้ยังกดดึงใหม่เองได้เสมอ</div></Message>
+          <Message v-if="refreshPolicy?.rolloutStatus && refreshPolicy.rolloutStatus !== 'ACTIVE'" severity="warn" :closable="false" class="mb-5">การอัปเดตเบื้องหลังยังไม่เปิดใช้กับร้านนี้ใน Production ค่าที่ตั้งไว้จะมีผลเมื่อระบบเปิด feature นี้ แต่การกดดึงข้อมูลด้วยตนเองยังใช้ได้</Message>
+          <Message v-if="refreshPolicyConflict" severity="warn" :closable="false" class="mb-5"><strong>ค่าถูกแก้จากอีกหน้าจอ</strong><div class="mt-1">ค่าล่าสุดบนระบบ: {{ refreshPolicyConflict.fastIntervalMinutes ?? 'ปิด' }} / {{ refreshPolicyConflict.standardIntervalMinutes ?? 'ปิด' }} / {{ refreshPolicyConflict.heavyIntervalMinutes ?? 'ปิด' }} นาที ระบบเก็บ draft ของคุณไว้และยังไม่เขียนทับอัตโนมัติ</div></Message>
+          <div class="flex flex-wrap gap-3 mb-5"><Button v-for="preset in refreshPresets" :key="preset.label" :label="preset.label" :outlined="activeRefreshPreset !== preset.label" :severity="activeRefreshPreset === preset.label ? 'primary' : 'secondary'" @click="setRefreshPreset(preset.values)" /><Tag v-if="activeRefreshPreset === 'กำหนดเอง'" value="กำหนดเอง" severity="info" /></div>
+          <form class="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl" @submit.prevent="saveRefreshPolicy"><div class="grid gap-2"><label for="refresh-fast">ข้อมูลเคลื่อนไหวเร็ว</label><Select input-id="refresh-fast" v-model="refreshPolicyForm.fastIntervalMinutes" :options="fastIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">ขาย · รับชำระ · รับเงิน · จ่ายเงิน</small></div><div class="grid gap-2"><label for="refresh-standard">รายงานทั่วไป</label><Select input-id="refresh-standard" v-model="refreshPolicyForm.standardIntervalMinutes" :options="standardIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">ซื้อ · กำไร · ลูกหนี้ · จุดสั่งซื้อ</small></div><div class="grid gap-2"><label for="refresh-heavy">รายงานหนัก</label><Select input-id="refresh-heavy" v-model="refreshPolicyForm.heavyIntervalMinutes" :options="heavyIntervalOptions" option-label="label" option-value="value" fluid /><small class="text-muted-color">สต็อกคงเหลือ</small></div><Message v-if="refreshPolicyForm.fastIntervalMinutes == null && refreshPolicyForm.standardIntervalMinutes == null && refreshPolicyForm.heavyIntervalMinutes == null" severity="secondary" :closable="false" class="md:col-span-3">Snapshot ปัจจุบันจะถือว่าเก่าทันที ระบบจะไม่ดึงเบื้องหลัง แต่ผู้ใช้ยังกดดึงใหม่เองได้ และ Snapshot ย้อนหลังยังอยู่ตาม retention เดิม</Message><div class="md:col-span-3 flex flex-wrap items-center gap-3"><Button type="submit" label="บันทึกความสดของข้อมูล" icon="pi pi-save" :loading="savingRefreshPolicy" :disabled="savingRefreshPolicy || !refreshPolicyDirty" /><small v-if="refreshPolicyDirty" class="text-orange-600">มีค่าที่ยังไม่ได้บันทึก</small></div></form>
+        </TabPanel>
+        <TabPanel value="recipients">
+          <Message severity="info" :closable="false" class="mb-5"><strong>ขั้นที่ 1: ให้สิทธิ์เปิดดู Dashboard แก่ผู้รับ</strong><div class="mt-1">สิทธิ์กำหนดเพดานว่าผู้รับเปิดรายงานใดได้ ส่วนรายงานที่จะส่งจริงเลือกอีกครั้งใน “ตารางส่ง LINE”</div></Message>
+          <Toolbar class="mb-5 border-0 p-0"><template #start><div><h2 class="text-lg font-semibold m-0">ผู้รับและสิทธิ์เปิดดู Dashboard</h2><p class="text-muted-color mt-1 mb-0">ผู้รับที่รอยืนยันสามารถออกลิงก์เชิญใหม่ได้ ส่วนผู้รับที่ยืนยันแล้วสามารถส่งลิงก์ Dashboard เดิมให้เข้าใช้งานอีกครั้ง</p></div></template><template #end><Button label="เพิ่มผู้รับ LINE" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''; inviteLabel = ''" /></template></Toolbar>
+          <DataTable :value="recipients" data-key="id" striped-rows scrollable>
+            <Column field="displayName" header="ชื่อ" />
+            <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template></Column>
+            <Column header="สิทธิ์เปิดดู" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template></Column>
+            <Column field="verifiedAt" header="ยืนยันเมื่อ"><template #body="{ data }">{{ formatDateTime(data.verifiedAt) }}</template></Column>
+            <Column header="การจัดการ" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><div class="flex flex-wrap items-center justify-end gap-1">
+              <Button label="กำหนดสิทธิ์" icon="pi pi-lock" text class="touch-action" :disabled="!!revokingRecipientId || !!reissuingRecipientId" @click="editPermissions(data)" />
+              <Button v-if="data.status === 'PENDING'" label="สร้างลิงก์ใหม่" icon="pi pi-link" text class="touch-action" :loading="reissuingRecipientId === data.id" :disabled="!!revokingRecipientId || (!!reissuingRecipientId && reissuingRecipientId !== data.id)" @click="confirmReissueInvitation(data)" />
+              <Button v-else-if="data.status === 'ACTIVE'" label="คัดลอกลิงก์ Dashboard" icon="pi pi-copy" text class="touch-action" :disabled="!tenant?.viewerUrl || !!revokingRecipientId || !!reissuingRecipientId" @click="copyDashboardLink" />
+              <Button :label="data.status === 'PENDING' ? 'ยกเลิกคำเชิญ' : 'ลบผู้รับ'" icon="pi pi-trash" severity="danger" text class="touch-action" :loading="revokingRecipientId === data.id" :disabled="!!reissuingRecipientId || (!!revokingRecipientId && revokingRecipientId !== data.id)" @click="confirmRevokeRecipient(data)" />
+            </div></template></Column>
+            <template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ กด “เพิ่มผู้รับ LINE” เพื่อเริ่มต้น</div></template>
+          </DataTable>
+        </TabPanel>
         <TabPanel value="schedules">
+          <Message severity="info" :closable="false" class="mb-5"><strong>ขั้นที่ 2–4: เลือกรายงานใน LINE รอบนี้ → เลือกผู้รับ → ตั้งวันเวลา → ตรวจสอบและเปิดใช้งาน</strong><div class="mt-1">การเลือกรายงานในตารางส่งไม่เพิ่มสิทธิ์ ผู้รับทุกคนต้องมีสิทธิ์เปิดดูรายงานนั้นจากแท็บ “ผู้รับและสิทธิ์” ก่อน</div></Message>
           <Toolbar class="mb-5 border-0 p-0">
             <template #start><p class="m-0 text-muted-color">หนึ่ง LINE Card รองรับสูงสุด 10 รายงาน รายงานละ 2 ตัวเลขสำคัญ</p></template>
             <template #end><div class="flex flex-wrap items-center gap-3"><label class="flex items-center gap-2 cursor-pointer"><Checkbox v-model="showArchived" binary /><span>แสดงรายการที่ลบแล้ว</span></label><Button label="เพิ่มตารางส่งรายงาน" icon="pi pi-calendar-plus" @click="openSchedule()" /></div></template>
@@ -421,5 +530,22 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
     </Tabs></div>
   </template>
 
-  <Dialog v-model:visible="inviteOpen" modal header="เพิ่มผู้รับ LINE" class="responsive-dialog" :style="{ width: '32rem' }"><div v-if="!inviteURL" class="grid gap-3"><label for="recipient-invite-label">ชื่อสำหรับระบุผู้รับ</label><InputText id="recipient-invite-label" v-model="inviteLabel" placeholder="เช่น เจ้าของร้าน หรือ ผู้จัดการ" fluid /><small class="text-muted-color">หลังผู้รับเปิดลิงก์และยืนยัน LINE ระบบจะแทนชื่อนี้ด้วยชื่อจากบัญชี LINE</small></div><div v-else><Message severity="success" :closable="false">ส่งลิงก์นี้ให้ผู้รับที่ต้องการเท่านั้น ลิงก์มีอายุ 7 วันและใช้ได้หนึ่งครั้ง</Message><InputGroup class="mt-4"><InputText :model-value="inviteURL" aria-label="ลิงก์คำเชิญ" readonly /><Button icon="pi pi-copy" aria-label="คัดลอก" @click="copyInvite" /></InputGroup></div><template #footer><Button label="ปิด" text @click="inviteOpen = false" /><Button v-if="!inviteURL" label="สร้างลิงก์เพิ่มผู้รับ" icon="pi pi-link" :loading="inviting" :disabled="!inviteLabel.trim()" @click="invite" /></template></Dialog>
+  <Dialog v-model:visible="inviteOpen" modal :header="inviteURL ? 'ลิงก์เชิญผู้รับ LINE' : 'เพิ่มผู้รับ LINE'" class="responsive-dialog" :style="{ width: '32rem' }"><div v-if="!inviteURL" class="grid gap-3"><label for="recipient-invite-label">ชื่อสำหรับระบุผู้รับ</label><InputText id="recipient-invite-label" v-model="inviteLabel" placeholder="เช่น เจ้าของร้าน หรือ ผู้จัดการ" fluid /><small class="text-muted-color">หลังผู้รับเปิดลิงก์และยืนยัน LINE ระบบจะแทนชื่อนี้ด้วยชื่อจากบัญชี LINE</small></div><div v-else><Message severity="success" :closable="false">ส่งลิงก์นี้ให้ผู้รับที่ต้องการเท่านั้น ลิงก์มีอายุ 7 วันและใช้ได้หนึ่งครั้ง หากสร้างลิงก์ใหม่อีกครั้ง ลิงก์นี้จะใช้ไม่ได้ทันที</Message><InputGroup class="mt-4"><InputText :model-value="inviteURL" aria-label="ลิงก์คำเชิญ" readonly /><Button icon="pi pi-copy" aria-label="คัดลอก" @click="copyInvite" /></InputGroup></div><template #footer><Button label="ปิด" text @click="inviteOpen = false" /><Button v-if="!inviteURL" label="สร้างลิงก์เพิ่มผู้รับ" icon="pi pi-link" :loading="inviting" :disabled="!inviteLabel.trim()" @click="invite" /></template></Dialog>
 </template>
+
+<style scoped>
+.tenant-page-title {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 991px) {
+  .tenant-page-title {
+    font-size: 1.5rem;
+    line-height: 1.3;
+  }
+}
+</style>
