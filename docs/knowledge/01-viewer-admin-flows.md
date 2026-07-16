@@ -1,7 +1,7 @@
 ---
 status: current
-last_verified: 2026-07-15
-source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue]
+last_verified: 2026-07-16
+source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/OperationalIncidents.vue]
 tags: [frontend, viewer, admin, routing]
 ---
 
@@ -27,6 +27,8 @@ This block is generated from `src/router/index.ts`. Do not edit it manually.
 | `/admin/report-runs` | `admin-report-runs` | Admin | การสร้างรายงาน |
 | `/admin/deliveries` | `admin-deliveries` | Admin | การส่ง LINE |
 | `/admin/audit` | `admin-audit` | Admin | ประวัติการใช้งาน |
+| `/admin/operational-incidents` | `admin-operational-incidents` | Admin | เหตุสำคัญ |
+| `/admin/operational-incidents/:incidentId` | `admin-operational-incident` | Admin | รายละเอียดเหตุสำคัญ |
 | `/app` | `—` | Viewer | — |
 | `/app` | `viewer-home` | Viewer | — |
 | `/app/invite` | `viewer-invite` | Viewer | — |
@@ -46,6 +48,13 @@ The router protects every `/admin` child route with the admin session guard. Mai
 - Recipient invitation, status, report permissions, and permission dependencies
 - LINE schedule creation/editing, preview, activation, pause, test send, archive, and restore
 - Global report run, LINE delivery, and audit views
+- Operational incident list/detail with safe references, evidence timeline, acknowledge, and accepted-risk closure
+
+The App shell polls the open P1 count at most once per minute while the tab is
+visible. The incident detail page may resolve authenticated tenant names, but
+the copy-for-Codex summary contains only safe operational fields. Admin cannot
+manually mark an incident recovered: Acknowledge stops reminders, and accepted
+risk is a separate closure with a required reason.
 
 Permission and schedule selection are different concepts:
 

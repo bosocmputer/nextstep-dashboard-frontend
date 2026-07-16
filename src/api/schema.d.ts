@@ -36,6 +36,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/health/watchdog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Host and Sentinel health derived from bounded runtime files; does not require PostgreSQL. */
+        get: operations["getWatchdog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/admin/login": {
         parameters: {
             query?: never;
@@ -809,6 +826,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/operational-incidents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listOperationalIncidents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/operational-incidents/{incidentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOperationalIncident"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/operational-incidents/{incidentId}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["acknowledgeOperationalIncident"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/operational-incidents/{incidentId}/accept-risk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["acceptOperationalIncidentRisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1566,6 +1647,73 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
         };
+        WatchdogStatus: {
+            /** @enum {string} */
+            status: "ok" | "degraded";
+            /** Format: date-time */
+            checkedAt: string;
+            monitorFresh: boolean;
+            hostProbeFresh: boolean;
+            safeErrorCodes: string[];
+            safeWarningCodes?: string[];
+        };
+        /** @enum {string} */
+        OperationalIncidentStatus: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "CLOSED_ACCEPTED";
+        /** @enum {string} */
+        OperationalIncidentSeverity: "P1" | "P2";
+        OperationalIncident: {
+            /** Format: uuid */
+            id: string;
+            alertRef: string;
+            incidentType: string;
+            /** @enum {string} */
+            rootCause: "SML_CONNECTIVITY" | "REPORT_DATA" | "LINE_DELIVERY" | "PLATFORM" | "CAPACITY";
+            severity: components["schemas"]["OperationalIncidentSeverity"];
+            status: components["schemas"]["OperationalIncidentStatus"];
+            safeErrorCode?: string;
+            occurrenceCount: number;
+            affectedCount: number;
+            /** Format: date-time */
+            firstSeenAt: string;
+            /** Format: date-time */
+            lastSeenAt: string;
+            /** Format: date-time */
+            acknowledgedAt?: string;
+            /** Format: date-time */
+            resolvedAt?: string;
+            /** Format: date-time */
+            acceptedAt?: string;
+            acceptedReason?: string;
+            version: number;
+            events?: components["schemas"]["OperationalIncidentEvent"][];
+        };
+        OperationalIncidentEvent: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            eventKind: "OBSERVED" | "ACKNOWLEDGED" | "EVIDENCE_RESOLVED" | "RISK_ACCEPTED" | "ALERT_SENT" | "ALERT_FAILED";
+            /** @enum {string} */
+            sourceKind?: "NOTIFICATION" | "DELIVERY" | "REPORT" | "WORKER" | "SML_CIRCUIT" | "HOST" | "BACKUP" | "DATABASE";
+            safeErrorCode?: string;
+            /** @description Authenticated Admin detail only; never returned in Telegram. */
+            tenantName?: string;
+            /** Format: date-time */
+            observedAt: string;
+        };
+        OperationalIncidentDetail: components["schemas"]["OperationalIncident"] & {
+            events: components["schemas"]["OperationalIncidentEvent"][];
+        };
+        OperationalIncidentPage: {
+            data: components["schemas"]["OperationalIncident"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        OperationalIncidentVersionInput: {
+            version: number;
+        };
+        OperationalIncidentAcceptRiskInput: {
+            version: number;
+            reason: string;
+        };
         LineQuotaStatus: {
             /** @enum {string} */
             state: "READY" | "UNLIMITED" | "STALE" | "UNSYNCED";
@@ -1800,6 +1948,35 @@ export interface operations {
                 };
             };
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getWatchdog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sentinel and protected host resources are healthy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchdogStatus"];
+                };
+            };
+            /** @description Sentinel or a protected host resource is degraded. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchdogStatus"];
+                };
+            };
         };
     };
     loginAdmin: {
@@ -3315,6 +3492,117 @@ export interface operations {
                 };
             };
             409: components["responses"]["Conflict"];
+        };
+    };
+    listOperationalIncidents: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                pageSize?: components["parameters"]["PageSize"];
+                status?: components["schemas"]["OperationalIncidentStatus"];
+                severity?: components["schemas"]["OperationalIncidentSeverity"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cursor-paginated sanitized operational incidents. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalIncidentPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getOperationalIncident: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incidentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sanitized incident evidence visible only to authenticated Admin. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalIncidentDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    acknowledgeOperationalIncident: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                incidentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationalIncidentVersionInput"];
+            };
+        };
+        responses: {
+            /** @description Reminder stopped; the incident remains unresolved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalIncident"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    acceptOperationalIncidentRisk: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                incidentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationalIncidentAcceptRiskInput"];
+            };
+        };
+        responses: {
+            /** @description Incident closed as accepted risk without claiming recovery. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalIncident"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
 }

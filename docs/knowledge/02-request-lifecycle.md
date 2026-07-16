@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-15
+last_verified: 2026-07-16
 source_of_truth: [src/api/client.ts, src/api/index.ts, src/views/viewer/ExecutiveOverview.vue, src/views/viewer/ViewerReport.vue]
 tags: [frontend, requests, idempotency, snapshots]
 ---
@@ -45,6 +45,10 @@ Long-lived pages that react to route, tenant, report, period, or run changes mus
 - Overview refresh replaces a complete result set atomically; partial output must be labelled and never mixed silently with another period.
 - `runId`, `refreshId`, `snapshotRunId`, and `deliveryId` identify resources but are never authorization tokens.
 - Delivery routes are read-only snapshot flows.
+
+Admin operational incident reads are `no-store`. Their acknowledge and
+accepted-risk mutations use the shared Admin CSRF policy and optimistic version;
+the UI refetches after conflicts rather than overwriting newer evidence.
 
 ## LINE/LIFF Entry
 

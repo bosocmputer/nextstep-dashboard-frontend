@@ -5,5 +5,7 @@ export type NavigationItem = {
   activePrefix?: string;
   visible?: boolean;
   disabled?: boolean;
+  badge?: string | number;
+  badgeSeverity?: 'danger' | 'warn' | 'info' | 'success' | 'secondary';
   items?: NavigationItem[];
 };

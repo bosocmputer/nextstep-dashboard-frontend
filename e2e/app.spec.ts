@@ -37,6 +37,7 @@ function captureUnexpectedConsoleErrors(page: Page, allowedStatusCodes: number[]
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route(`**${api}/admin/operational-incidents**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
   await page.route(`**${api}/admin/tenants/*/dashboard-refresh-policy`, (route) => route.fulfill(json({
     tenantId, fastIntervalMinutes: 5, standardIntervalMinutes: 15, heavyIntervalMinutes: 30, version: 0
   })));
@@ -59,6 +60,7 @@ async function mockAdminLogin(page: Page) {
     operationalReservePercent: 10, syncedAt: '2026-07-10T12:00:00Z'
   })));
   await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json(adminReportCatalog)));
+  await page.route(`**${api}/admin/operational-incidents**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
 }
 
 async function mockEmptyExecutiveOverview(page: Page) {
@@ -235,6 +237,50 @@ test('admin operation tables identify the tenant and LINE recipient', async ({ p
   await page.goto('/admin/audit');
   await expect(page.getByRole('columnheader', { name: 'ร้านค้า' })).toBeVisible();
   await expect(page.getByRole('row').filter({ hasText: 'ร้านตัวอย่าง' })).toBeVisible();
+});
+
+test('admin incident flow separates acknowledgement from evidence-based recovery', async ({ page }) => {
+  const consoleErrors = captureUnexpectedConsoleErrors(page);
+  await mockAdminLogin(page);
+  const incidentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  let status = 'OPEN';
+  const incident = () => ({
+    id: incidentId, alertRef: 'NST-ABC123DEF456', incidentType: 'WORKER_HEARTBEAT_MISSING',
+    rootCause: 'PLATFORM', severity: 'P1', status, safeErrorCode: 'WORKER_HEARTBEAT_STALE',
+    occurrenceCount: 2, affectedCount: 1, firstSeenAt: '2026-07-16T01:00:00Z',
+    lastSeenAt: '2026-07-16T01:01:00Z', version: status === 'OPEN' ? 1 : 2
+  });
+  await page.route(`**${api}/admin/operational-incidents**`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/acknowledge')) {
+      status = 'ACKNOWLEDGED';
+      await route.fulfill(json(incident()));
+      return;
+    }
+    if (url.pathname.endsWith(incidentId)) {
+      await route.fulfill(json({ ...incident(), events: [{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', eventKind: 'OBSERVED', sourceKind: 'WORKER', safeErrorCode: 'WORKER_HEARTBEAT_STALE', tenantName: '', observedAt: '2026-07-16T01:00:00Z' }] }));
+      return;
+    }
+    await route.fulfill(json({ data: [incident()], page: { hasMore: false } }));
+  });
+
+  await page.goto('/admin/login');
+  await page.getByLabel('รหัสผ่าน').fill('local-e2e-password');
+  await page.getByRole('button', { name: 'เข้าสู่ระบบ' }).click();
+  await page.goto('/admin/operational-incidents');
+  await expect(page.getByRole('heading', { name: 'เหตุสำคัญ' })).toBeVisible();
+  await expect(page.getByText('NST-ABC123DEF456')).toBeVisible();
+  await page.getByLabel('เปิดรายละเอียดเหตุสำคัญ').click();
+  await expect(page).toHaveURL(`/admin/operational-incidents/${incidentId}`);
+  await expect(page.getByRole('heading', { name: 'รายละเอียดเหตุสำคัญ' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'รับทราบ' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /หายแล้ว|Resolve/i })).toHaveCount(0);
+  await page.getByRole('button', { name: 'รับทราบ' }).click();
+  await expect(page.getByText('รับทราบแล้ว')).toBeVisible();
+  await expect(page.getByText('ระบบยืนยันว่าหายแล้ว')).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+  expect(consoleErrors).toEqual([]);
 });
 
 test('viewer loading messages are centered', async ({ page }) => {

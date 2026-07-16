@@ -62,6 +62,32 @@ describe('adminApi tenants', () => {
   });
 });
 
+describe('adminApi operational incidents', () => {
+  it('loads only the requested safe incident filters', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await adminApi.incidents({ status: 'OPEN', severity: 'P1', pageSize: 100 });
+
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/v1/admin/operational-incidents?status=OPEN&severity=P1&pageSize=100');
+    expect(options?.method ?? 'GET').toBe('GET');
+  });
+
+  it('acknowledges by optimistic version with admin CSRF protection', async () => {
+    document.cookie = 'nextstep_admin_csrf=csrf-value; path=/';
+    const incident = { id: 'incident-1', alertRef: 'NST-ABC123DEF456', status: 'OPEN', severity: 'P1', rootCause: 'PLATFORM', incidentType: 'WORKER_HEARTBEAT_MISSING', occurrenceCount: 1, affectedCount: 1, firstSeenAt: '2026-07-16T01:00:00Z', lastSeenAt: '2026-07-16T01:00:00Z', version: 4 } as const;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ...incident, status: 'ACKNOWLEDGED', version: 5 }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await adminApi.acknowledgeIncident(incident);
+
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/v1/admin/operational-incidents/incident-1/acknowledge');
+    expect(options?.method).toBe('POST');
+    expect((options?.headers as Headers).get('X-CSRF-Token')).toBe('csrf-value');
+    expect(options?.body).toBe(JSON.stringify({ version: 4 }));
+  });
+});
+
 describe('viewerApi delivery contexts', () => {
   it('resolves a reference once through a CSRF-protected body without putting the token in the URL', async () => {
     document.cookie = 'nextstep_viewer_csrf=viewer-csrf; path=/';
