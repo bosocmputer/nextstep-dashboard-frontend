@@ -5,7 +5,8 @@ import type {
   SMLConnectionInput, SMLConnectionStatus, SMLConnectionTestResult, Tenant, TenantInput, TenantPage, TenantPatch,
   DashboardRefresh, DashboardRefreshInput, DashboardRefreshResult, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant,
   DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot,
-  DeliveryContext, DeliveryReportContext, PermissionDependencies, ScheduleRecipientOptions, ScheduleRecipientOptionsInput
+  DeliveryContext, DeliveryReportContext, PermissionDependencies, ScheduleRecipientOptions, ScheduleRecipientOptionsInput,
+  OperationalIncident, OperationalIncidentDetail, OperationalIncidentPage, OperationalIncidentStatus, OperationalIncidentSeverity
 } from './types';
 
 const api = '/api/v1';
@@ -47,7 +48,11 @@ export const adminApi = {
   lineQuota: () => apiRequest<LineQuotaStatus>(`${api}/admin/line-quota`),
   reportRuns: (filters: { cursor?: string; tenantId?: string; status?: string } = {}, signal?: AbortSignal) => apiRequest<ReportRunPage>(`${api}/admin/report-runs${queryString({ ...filters, pageSize: 50 })}`, { signal }),
   deliveries: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: 50 })}`, { signal }),
-  audit: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: 50 })}`, { signal })
+  audit: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: 50 })}`, { signal }),
+  incidents: (filters: { cursor?: string; status?: OperationalIncidentStatus; severity?: OperationalIncidentSeverity; pageSize?: number } = {}, signal?: AbortSignal) => apiRequest<OperationalIncidentPage>(`${api}/admin/operational-incidents${queryString({ ...filters, pageSize: filters.pageSize ?? 50 })}`, { signal }),
+  incident: (incidentId: string, signal?: AbortSignal) => apiRequest<OperationalIncidentDetail>(`${api}/admin/operational-incidents/${incidentId}`, { signal }),
+  acknowledgeIncident: (incident: OperationalIncident) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/acknowledge`, { method: 'POST', scope: 'admin', body: { version: incident.version } }),
+  acceptIncidentRisk: (incident: OperationalIncident, reason: string) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/accept-risk`, { method: 'POST', scope: 'admin', body: { version: incident.version, reason } })
 };
 
 export const viewerApi = {

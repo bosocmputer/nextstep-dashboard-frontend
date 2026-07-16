@@ -70,11 +70,13 @@ const onMouseEnter = () => {
         <a v-if="(!item.to || item.items) && item.visible !== false" :href="item.url" @click="itemClick($event, item)" :class="item.class" :target="item.target" tabindex="0" @mouseenter="onMouseEnter">
             <i :class="item.icon" class="layout-menuitem-icon" aria-hidden="true" />
             <span class="layout-menuitem-text">{{ item.label }}</span>
+            <Badge v-if="item.badge" :value="item.badge" :severity="item.badgeSeverity || 'danger'" class="ml-auto" />
             <i class="pi pi-fw pi-angle-down layout-submenu-toggler" v-if="item.items" aria-hidden="true" />
         </a>
         <router-link v-if="item.to && !item.items && item.visible !== false" @click="itemClick($event, item)" :class="[item.class, { 'active-route': isRouteActive }]" tabindex="0" :to="item.to" @mouseenter="onMouseEnter">
             <i :class="item.icon" class="layout-menuitem-icon" aria-hidden="true" />
             <span class="layout-menuitem-text">{{ item.label }}</span>
+            <Badge v-if="item.badge" :value="item.badge" :severity="item.badgeSeverity || 'danger'" class="ml-auto" />
             <i class="pi pi-fw pi-angle-down layout-submenu-toggler" v-if="item.items" aria-hidden="true" />
         </router-link>
         <Transition v-if="item.items && item.visible !== false" name="layout-submenu">

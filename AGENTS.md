@@ -17,6 +17,7 @@ Keep this file short. Load detailed context only when the task needs it.
 - Viewer tenant/delivery scope: `src/utils/viewerRouting.ts`, `src/views/viewer/ViewerShell.vue`
 - Viewer snapshots and refresh: `src/views/viewer/ExecutiveOverview.vue`, `src/views/viewer/ViewerReport.vue`
 - Admin workflows: `src/views/admin/`
+- Operational incident UI and badge polling: `src/views/admin/OperationalIncident*.vue`, `src/layout/AppLayout.vue`
 - Shared shell and responsive behavior: `src/layout/`, `src/assets/layout/`
 - Report/chart presentation: `src/components/dashboard/`, `src/utils/reportPresentation.ts`
 
@@ -28,6 +29,7 @@ Keep this file short. Load detailed context only when the task needs it.
 - Unsafe HTTP methods are not retried automatically; reuse the same idempotency key when outcome is uncertain.
 - Thai UI uses `th-TH` and `Asia/Bangkok`; API dates/timestamps retain their contract format.
 - Preserve loading, empty, stale, partial, error, denied, and session-expired states.
+- Operational incidents are Admin-only; Acknowledge is not Resolve and accepted risk requires an explicit reason.
 - Never store tokens, invitation/delivery references, customer identifiers, KPI values, or production logs in tracked docs.
 
 ## Commands

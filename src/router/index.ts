@@ -21,7 +21,9 @@ const router = createRouter({
         { path: 'tenants/:tenantId', name: 'admin-tenant-detail', component: () => import('@/views/admin/TenantDetail.vue'), meta: { pageTitle: 'รายละเอียดร้าน' } },
         { path: 'report-runs', name: 'admin-report-runs', component: () => import('@/views/admin/ReportRuns.vue'), meta: { pageTitle: 'การสร้างรายงาน' } },
         { path: 'deliveries', name: 'admin-deliveries', component: () => import('@/views/admin/Deliveries.vue'), meta: { pageTitle: 'การส่ง LINE' } },
-        { path: 'audit', name: 'admin-audit', component: () => import('@/views/admin/AuditLogs.vue'), meta: { pageTitle: 'ประวัติการใช้งาน' } }
+        { path: 'audit', name: 'admin-audit', component: () => import('@/views/admin/AuditLogs.vue'), meta: { pageTitle: 'ประวัติการใช้งาน' } },
+        { path: 'operational-incidents', name: 'admin-operational-incidents', component: () => import('@/views/admin/OperationalIncidents.vue'), meta: { pageTitle: 'เหตุสำคัญ' } },
+        { path: 'operational-incidents/:incidentId', name: 'admin-operational-incident', component: () => import('@/views/admin/OperationalIncidentDetail.vue'), meta: { pageTitle: 'รายละเอียดเหตุสำคัญ' } }
       ]
     },
     {

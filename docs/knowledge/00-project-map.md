@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-15
+last_verified: 2026-07-16
 source_of_truth: [src/router/index.ts, src/api/index.ts, src/views/viewer/ViewerShell.vue]
 tags: [nextstep, frontend, project-map]
 ---
@@ -14,6 +14,7 @@ Nextstep Dashboard Frontend is a Vue 3, TypeScript, PrimeVue/Sakai application w
 | Task | Read next | Verify in source |
 | --- | --- | --- |
 | Admin tenant, recipient, permission, schedule | [Viewer and Admin flows](01-viewer-admin-flows.md) | `src/views/admin/`, `src/api/index.ts` |
+| Operational incident list/detail and P1 badge | [Viewer and Admin flows](01-viewer-admin-flows.md) | incident views, `src/layout/AppLayout.vue` |
 | Viewer login, tenant selection, LINE link | [Viewer and Admin flows](01-viewer-admin-flows.md) | `src/views/viewer/ViewerShell.vue`, `src/utils/viewerRouting.ts` |
 | Timeout, retry, stale response, idempotency | [Request lifecycle](02-request-lifecycle.md) | `src/api/client.ts`, route component tests |
 | Layout, mobile, accessibility, charts | [UI quality gates](03-ui-quality-gates.md) | `src/layout/`, `src/components/dashboard/` |

@@ -13,4 +13,9 @@ describe('router shell context metadata', () => {
     expect(router.resolve('/app/tenant/tenant-1/delivery/delivery-1').name).toBe('viewer-delivery');
     expect(router.resolve('/app/tenant/tenant-1/delivery/delivery-1/report/sales_goods_services').name).toBe('viewer-delivery-report');
   });
+
+  it('keeps operational incident routes inside the authenticated admin shell', () => {
+    expect(router.resolve('/admin/operational-incidents').name).toBe('admin-operational-incidents');
+    expect(router.resolve('/admin/operational-incidents/11111111-1111-4111-8111-111111111111').name).toBe('admin-operational-incident');
+  });
 });

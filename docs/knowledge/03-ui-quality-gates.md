@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-15
+last_verified: 2026-07-16
 source_of_truth: [src/main.ts, src/constants/themeConstants.ts, src/layout/AppShell.vue, src/components/dashboard/ExecutiveChart.vue]
 tags: [frontend, ui, accessibility, performance]
 ---
@@ -40,6 +40,7 @@ tags: [frontend, ui, accessibility, performance]
 - INP: at most 200 ms
 - CLS: at most 0.1
 - Route and chart chunks remain lazy; polling must not remount stable chart/table instances.
+- Admin P1 badge polling pauses while the document is hidden, aborts stale requests, and cleans timers/listeners on unmount.
 
 ## Required QA
 
