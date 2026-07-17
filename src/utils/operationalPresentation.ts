@@ -36,7 +36,8 @@ export function sourceKindLabel(value?: string): string {
 
 export function eventKindLabel(value: string): string {
   return ({
-    OBSERVED: 'ตรวจพบต้นเหตุ', DOWNSTREAM_IMPACT: 'ตรวจพบผลกระทบต่อเนื่อง', ACKNOWLEDGED: 'Admin รับทราบ',
+    OBSERVED: 'ตรวจพบต้นเหตุ', CONDITION_UPDATED: 'ค่าที่เฝ้าระวังเปลี่ยนแปลง', DOWNSTREAM_IMPACT: 'ตรวจพบผลกระทบต่อเนื่อง', SUBJECT_RECOVERED: 'ส่วนที่ได้รับผลฟื้นตัวแล้ว', ACKNOWLEDGED: 'Admin รับทราบ',
+    POLICY_CHANGED: 'เปลี่ยนนโยบายการติดตาม',
     EVIDENCE_RESOLVED: 'ระบบยืนยันการฟื้นตัว', RISK_ACCEPTED: 'Admin ยอมรับความเสี่ยง',
     ALERT_SENT: 'ส่ง Telegram แล้ว', ALERT_FAILED: 'ส่ง Telegram ไม่สำเร็จ'
   } as Record<string, string>)[value] ?? 'เหตุการณ์จากระบบ';
@@ -92,6 +93,9 @@ export function buildCodexIncidentText(incident: OperationalIncidentDetail): str
     `severity: ${incident.severity}`,
     `status: ${incident.status}`,
     `safe_error_code: ${incident.safeErrorCode || 'UNKNOWN'}`,
+    `observation_mode: ${incident.observationMode}`,
+    `subject_type: ${incident.subjectType}`,
+    `active_affected_count: ${incident.activeAffectedCount}`,
     `first_seen_at: ${incident.firstSeenAt}`,
     `last_seen_at: ${incident.lastSeenAt}`
   ];

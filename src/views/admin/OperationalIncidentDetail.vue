@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
-import { ApiError, adminApi, type AdminReportDefinition, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentStatus } from '@/api';
+import { useConfirm } from 'primevue/useconfirm';
+import { ApiError, adminApi, type AdminReportDefinition, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentOccurrence, type OperationalIncidentStatus, type SMLConnectionTestResult } from '@/api';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 import {
@@ -13,6 +14,7 @@ import {
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
+const confirm = useConfirm();
 const incident = ref<OperationalIncidentDetail>();
 const loading = ref(false);
 const mutating = ref(false);
@@ -20,7 +22,15 @@ const error = ref('');
 const acceptDialog = ref(false);
 const acceptReason = ref('');
 const reportDefinitions = ref<AdminReportDefinition[]>([]);
+const occurrences = ref<OperationalIncidentOccurrence[]>([]);
+const occurrenceCursor = ref<string>();
+const occurrenceHasMore = ref(false);
+const occurrenceLoading = ref(false);
+const testingTenantId = ref('');
+const testResults = ref<Record<string, SMLConnectionTestResult>>({});
 let controller: AbortController | undefined;
+let occurrenceController: AbortController | undefined;
+let occurrenceGeneration = 0;
 
 const incidentId = computed(() => String(route.params.incidentId || ''));
 const canAcknowledge = computed(() => incident.value?.status === 'OPEN');
@@ -30,6 +40,7 @@ const validReason = computed(() => [...acceptReason.value.trim()].length >= 12 &
 const reportDefinitionByKey = computed(() => new Map(reportDefinitions.value.map((item) => [item.reportKey, item])));
 const primaryEvent = computed(() => incident.value?.events.find((event) => event.failureEvidence && !event.isDownstream) ?? incident.value?.events.find((event) => event.failureEvidence));
 const chain = computed(() => causalChain(primaryEvent.value));
+const affectedLabel = computed(() => incident.value?.causeBreakdown?.[0]?.affectedLabelTh ?? 'ส่วนที่ได้รับผล');
 
 function statusLabel(value: OperationalIncidentStatus) {
   return ({ OPEN: 'ยังไม่รับทราบ', ACKNOWLEDGED: 'รับทราบแล้ว', RESOLVED: 'ระบบยืนยันว่าหายแล้ว', CLOSED_ACCEPTED: 'ยอมรับความเสี่ยง' } as const)[value];
@@ -47,16 +58,71 @@ function eventTitle(event: OperationalIncidentEvent) {
 
 async function load() {
   controller?.abort('superseded');
+  occurrenceController?.abort('incident-reloaded');
   controller = new AbortController();
   loading.value = true;
   error.value = '';
   try {
     incident.value = await adminApi.incident(incidentId.value, controller.signal);
+    void loadOccurrences(true);
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause);
   } finally {
     loading.value = false;
   }
+}
+
+async function loadOccurrences(reset = false) {
+  if (!reset && (occurrenceLoading.value || !occurrenceHasMore.value)) return;
+  if (reset) {
+    occurrenceGeneration++;
+    occurrenceController?.abort('occurrences-reloaded');
+    occurrenceController = new AbortController();
+  }
+  const requestGeneration = occurrenceGeneration;
+  occurrenceLoading.value = true;
+  try {
+    const page = await adminApi.incidentOccurrences(incidentId.value, reset ? undefined : occurrenceCursor.value, occurrenceController?.signal);
+    if (requestGeneration !== occurrenceGeneration) return;
+    occurrences.value = reset ? page.data : [...occurrences.value, ...page.data];
+    occurrenceCursor.value = page.page.nextCursor ?? undefined;
+    occurrenceHasMore.value = page.page.hasMore;
+  } catch (cause) {
+    if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause);
+  } finally {
+    if (requestGeneration === occurrenceGeneration) occurrenceLoading.value = false;
+  }
+}
+
+function displayEndpoint(item: OperationalIncidentOccurrence) {
+  return item.smlConnectionReference?.currentEndpointUrl || item.smlConnectionReference?.endpointUrlAtFailure || '';
+}
+function currentTestEndpoint(item: OperationalIncidentOccurrence) { return item.smlConnectionReference?.currentEndpointUrl || ''; }
+function testResult(item: OperationalIncidentOccurrence) { return item.tenantId ? testResults.value[item.tenantId] : undefined; }
+
+function confirmConnectionTest(item: OperationalIncidentOccurrence) {
+  const endpoint = currentTestEndpoint(item);
+  if (!item.tenantId || !endpoint || testingTenantId.value) return;
+  confirm.require({
+    header: 'ทดสอบจาก Server Dashboard',
+    message: `ระบบจะติดต่อ Java Web Service ของ ${item.tenantName || 'ร้านนี้'} ที่ URL ปัจจุบันด้วยคำสั่ง read-only ขนาดเล็ก โดยไม่ดึงรายงานหรือ KPI\n\n${endpoint}`,
+    icon: 'pi pi-exclamation-triangle',
+    rejectLabel: 'ยกเลิก', acceptLabel: 'เริ่มทดสอบ',
+    accept: () => void testConnection(item)
+  });
+}
+
+async function testConnection(item: OperationalIncidentOccurrence) {
+  if (!item.tenantId || testingTenantId.value) return;
+  testingTenantId.value = item.tenantId;
+  try {
+    const result = await adminApi.testSML(item.tenantId);
+    testResults.value = { ...testResults.value, [item.tenantId]: result };
+    toast.add({ severity: 'success', summary: 'ทดสอบสำเร็จ', detail: `Server Dashboard ติดต่อ Java Web Service ได้ · ใช้เวลา ${result.latencyMs.toLocaleString('th-TH')} มิลลิวินาที`, life: 6000 });
+  } catch (cause) {
+    const wait = cause instanceof ApiError && cause.retryAfterMs ? ` ลองใหม่ได้อีกประมาณ ${Math.ceil(cause.retryAfterMs / 1000)} วินาที` : '';
+    toast.add({ severity: 'warn', summary: 'ยังทดสอบไม่ได้', detail: `${errorMessage(cause)}${wait}`, life: 7000 });
+  } finally { testingTenantId.value = ''; }
 }
 
 async function acknowledge() {
@@ -98,7 +164,10 @@ onMounted(() => {
   void loadAdminReportCatalog().then((catalog) => { reportDefinitions.value = catalog.data; }).catch(() => undefined);
   void load();
 });
-onBeforeUnmount(() => controller?.abort('unmounted'));
+onBeforeUnmount(() => {
+  controller?.abort('unmounted');
+  occurrenceController?.abort('unmounted');
+});
 </script>
 
 <template>
@@ -122,8 +191,9 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
         <dl class="incident-summary m-0">
           <dt>พบครั้งแรก</dt><dd>{{ formatDateTime(incident.firstSeenAt) }} เวลาไทย</dd>
           <dt>พบล่าสุด</dt><dd>{{ formatDateTime(incident.lastSeenAt) }} เวลาไทย</dd>
-          <dt>จำนวนเหตุการณ์</dt><dd>{{ incident.occurrenceCount.toLocaleString('th-TH') }}</dd>
-          <dt>ขอบเขตที่ได้รับผล</dt><dd>{{ incident.affectedCount.toLocaleString('th-TH') }} ร้านหรือทรัพยากร</dd>
+          <dt>ลักษณะการตรวจพบ</dt><dd>{{ incident.observationMode === 'CONTINUOUS' ? 'ตรวจพบต่อเนื่อง' : `พบ ${incident.occurrenceCount.toLocaleString('th-TH')} เหตุการณ์` }}</dd>
+          <dt>{{ affectedLabel }}ที่ยังไม่หาย</dt><dd>{{ incident.activeAffectedCount.toLocaleString('th-TH') }} รายการ</dd>
+          <template v-if="incident.measurement"><dt>ค่าที่ตรวจพบล่าสุด</dt><dd>{{ incident.measurement.value.toLocaleString('th-TH', { maximumFractionDigits: 1 }) }}{{ incident.measurement.unit === 'PERCENT' ? '%' : incident.measurement.unit === 'SECONDS' ? ' วินาที' : '' }} · เริ่มเตือนที่ {{ incident.measurement.threshold.toLocaleString('th-TH', { maximumFractionDigits: 1 }) }}{{ incident.measurement.unit === 'PERCENT' ? '%' : incident.measurement.unit === 'SECONDS' ? ' วินาที' : '' }}</dd></template>
           <template v-if="incident.acceptedReason"><dt>เหตุผลที่ยอมรับความเสี่ยง</dt><dd>{{ incident.acceptedReason }}</dd></template>
         </dl>
       </section>
@@ -132,6 +202,18 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
         <p class="text-muted-color mb-0">Admin รับทราบได้เพื่อหยุดการเตือนซ้ำ แต่มีเพียงหลักฐานจากระบบเท่านั้นที่เปลี่ยนเหตุเป็น “หายแล้ว”</p>
       </aside>
     </div>
+
+    <section v-if="incident.causeBreakdown?.length" class="card">
+      <h2 class="text-lg mt-0 mb-1">สาเหตุและส่วนที่ควรตรวจสอบ</h2>
+      <p class="text-muted-color mt-0 mb-4">แยกตามหลักฐานที่ระบบบันทึก ไม่สรุปว่า Server ปิดหรือ Firewall บล็อกหากยังพิสูจน์ไม่ได้</p>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div v-for="cause in incident.causeBreakdown" :key="`${cause.category}-${cause.stage}-${cause.transportPhase}`" class="cause-card">
+          <strong>{{ cause.presentation.titleTh }}</strong>
+          <span>{{ cause.presentation.stageTh }}</span>
+          <small>{{ cause.affectedLabelTh }}ที่ยังไม่หาย {{ cause.activeAffectedCount.toLocaleString('th-TH') }} รายการ · {{ cause.investigationScope === 'CUSTOMER_SYSTEM' ? 'ควรตรวจ Server ลูกค้า' : cause.investigationScope === 'LINE_PROVIDER' ? 'ควรตรวจผู้ให้บริการ LINE' : cause.investigationScope === 'CONFIGURATION' ? 'ควรตรวจการตั้งค่า SML' : 'ควรตรวจระบบ Nextstep Dashboard' }}</small>
+        </div>
+      </div>
+    </section>
 
     <section v-if="chain.length" class="card causal-card">
       <h2 class="text-lg mt-0 mb-4">ลำดับสาเหตุและผลกระทบ</h2>
@@ -156,10 +238,48 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
       </DataTable>
     </section>
 
+    <section class="card table-card">
+      <h2 class="text-lg mt-0 mb-1">เหตุที่ได้รับผลและการตรวจ Java Web Service</h2>
+      <p class="text-muted-color mt-0 mb-4">การเปิด URL จาก Browser ยืนยันได้เฉพาะเครื่องของคุณ ส่วนการทดสอบจาก Server Dashboard จะติดต่อ Java Web Service จริงด้วยคำสั่ง read-only ขนาดเล็ก และไม่ทำให้ Incident เปลี่ยนเป็น “หายแล้ว”</p>
+      <DataTable :value="occurrences" :loading="occurrenceLoading" data-key="id" striped-rows scrollable>
+        <Column field="tenantName" header="ร้าน/รายงาน"><template #body="{ data }"><div class="event-description"><span>{{ data.tenantName || 'ระบบส่วนกลาง' }}</span><small>{{ data.reportKey ? (reportDefinitionByKey.get(data.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : sourceKindLabel(data.sourceKind) }}</small></div></template></Column>
+        <Column field="observedAt" header="เวลา"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template></Column>
+        <Column header="URL Java Web Service">
+          <template #body="{ data }">
+            <div v-if="data.smlConnectionReference && displayEndpoint(data)" class="endpoint-cell">
+              <small>{{ data.smlConnectionReference.endpointUrlAtFailure ? 'URL ที่ใช้ตอนเกิดเหตุ' : 'URL ปัจจุบัน' }}</small>
+              <a :href="data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data)" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data) }}</a>
+              <template v-if="data.smlConnectionReference.status === 'CHANGED_SINCE_FAILURE'">
+                <small class="text-orange-600">การตั้งค่าเปลี่ยนหลังเกิดเหตุ · URL ปัจจุบัน</small>
+                <a :href="data.smlConnectionReference.currentEndpointUrl" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ data.smlConnectionReference.currentEndpointUrl }}</a>
+              </template>
+              <small v-else-if="data.smlConnectionReference.status === 'CURRENT_ONLY'" class="text-orange-600">ไม่มี URL รุ่นเดิม จึงแสดง URL ปัจจุบันโดยไม่อ้างว่าเป็นค่าตอนเกิดเหตุ</small>
+              <small v-if="data.smlConnectionReference.schemeSecurity === 'HTTP'" class="text-orange-600">การเชื่อมต่อนี้ไม่ได้เข้ารหัส</small>
+              <small>เปิดใน Browser ไม่ได้ยืนยันว่า Server Dashboard เชื่อมต่อได้</small>
+              <a :href="data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data)" target="_blank" rel="noopener noreferrer" class="endpoint-open-action"><i class="pi pi-external-link" aria-hidden="true" /> เปิด URL ใน Browser</a>
+            </div>
+            <span v-else class="text-muted-color">ไม่มี URL ที่ยืนยันได้จากหลักฐาน</span>
+          </template>
+        </Column>
+        <Column header="ตรวจจาก Server" header-class="table-action-column" body-class="table-action-column">
+          <template #body="{ data }">
+            <div class="grid justify-items-end gap-1">
+              <Button label="ทดสอบจาก Server Dashboard" icon="pi pi-bolt" outlined size="small" :loading="testingTenantId === data.tenantId" :disabled="!data.tenantId || !currentTestEndpoint(data) || Boolean(testingTenantId)" @click="confirmConnectionTest(data)" />
+              <small v-if="testResult(data)" class="text-green-600">สำเร็จเมื่อ {{ formatDateTime(testResult(data)!.testedAt) }} · {{ testResult(data)!.latencyMs.toLocaleString('th-TH') }} ms</small>
+              <small v-else-if="data.smlConnectionReference?.testAvailableAt" class="text-muted-color">ทดสอบได้อีกครั้งหลัง {{ formatDateTime(data.smlConnectionReference.testAvailableAt) }}</small>
+            </div>
+          </template>
+        </Column>
+        <template #empty><div class="py-6 text-center text-muted-color">ไม่มีเหตุรายรายการที่แสดงได้</div></template>
+      </DataTable>
+      <div v-if="occurrenceHasMore" class="table-footer text-center"><Button label="โหลดเหตุเพิ่มเติม" outlined :loading="occurrenceLoading" @click="loadOccurrences(false)" /></div>
+    </section>
+
     <section v-if="primaryEvent?.failureEvidence" class="card">
       <h2 class="text-lg mt-0">สิ่งที่ควรตรวจสอบต่อ</h2>
       <p v-if="primaryEvent.failureEvidence.presentation.evidenceNoteTh" class="text-muted-color">{{ primaryEvent.failureEvidence.presentation.evidenceNoteTh }}</p>
       <ul class="pl-5 mb-0"><li v-for="action in primaryEvent.failureEvidence.presentation.nextActionsTh" :key="action" class="mb-2">{{ action }}</li></ul>
+      <Message v-if="incident.subjectType === 'TENANT'" severity="info" :closable="false" class="mt-4 mb-0">ระบบจะยืนยันการฟื้นตัวจากรอบส่งตามตารางที่สำเร็จหลังเหตุนี้ หากตารางถูกพักหรือลบ จะไม่มีรอบถัดไปสำหรับยืนยันอัตโนมัติ</Message>
       <Message v-if="primaryEvent.connectionChangedSinceFailure" severity="warn" :closable="false" class="mt-4 mb-0">การตั้งค่าการเชื่อมต่อ SML ถูกแก้ไขหลังเกิดเหตุ หลักฐานนี้อ้างอิงค่าที่ระบบใช้ในเวลานั้น</Message>
     </section>
 
@@ -200,6 +320,12 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
 .causal-index { width: 2rem; height: 2rem; border-radius: 999px; display: inline-grid; place-items: center; color: var(--p-primary-color); background: color-mix(in srgb, var(--p-primary-color) 12%, transparent); font-weight: 700; }
 .event-description { min-width: 11rem; display: grid; gap: .25rem; }
 .event-description small { color: var(--text-color-secondary); line-height: 1.4; }
+.cause-card { display: grid; gap: .35rem; padding: 1rem; border: 1px solid var(--surface-border); border-radius: var(--content-border-radius); }
+.cause-card span, .cause-card small { color: var(--text-color-secondary); line-height: 1.45; }
+.endpoint-cell { min-width: 18rem; max-width: 32rem; display: grid; gap: .35rem; }
+.endpoint-cell small { line-height: 1.35; }
+.endpoint-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.endpoint-open-action { display: inline-flex; align-items: center; gap: .4rem; width: max-content; max-width: 100%; font-weight: 600; }
 .technical-detail { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .875rem; }
 @media (max-width: 640px) { .incident-summary { grid-template-columns: 1fr; gap: .25rem; } .incident-summary dd { margin-bottom: .75rem; } }
 </style>

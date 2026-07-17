@@ -6,7 +6,7 @@ import type {
   DashboardRefresh, DashboardRefreshInput, DashboardRefreshResult, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant,
   DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot,
   DeliveryContext, DeliveryReportContext, PermissionDependencies, ScheduleRecipientOptions, ScheduleRecipientOptionsInput,
-  OperationalIncident, OperationalIncidentDetail, OperationalIncidentPage, OperationalIncidentStatus, OperationalIncidentSeverity
+  OperationalIncident, OperationalIncidentDetail, OperationalIncidentPage, OperationalIncidentStatus, OperationalIncidentSeverity, OperationalIncidentOccurrencePage
 } from './types';
 
 const api = '/api/v1';
@@ -50,8 +50,9 @@ export const adminApi = {
   reportRun: (runId: string, signal?: AbortSignal) => apiRequest<ReportRunDetail>(`${api}/admin/report-runs/${runId}`, { signal }),
   deliveries: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: 50 })}`, { signal }),
   audit: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: 50 })}`, { signal }),
-  incidents: (filters: { cursor?: string; status?: OperationalIncidentStatus; severity?: OperationalIncidentSeverity; pageSize?: number } = {}, signal?: AbortSignal) => apiRequest<OperationalIncidentPage>(`${api}/admin/operational-incidents${queryString({ ...filters, pageSize: filters.pageSize ?? 50 })}`, { signal }),
+  incidents: (filters: { cursor?: string; status?: OperationalIncidentStatus; severity?: OperationalIncidentSeverity; scope?: 'ACTIVE' | 'ALL'; pageSize?: number } = {}, signal?: AbortSignal) => apiRequest<OperationalIncidentPage>(`${api}/admin/operational-incidents${queryString({ ...filters, scope: filters.scope ?? 'ACTIVE', pageSize: filters.pageSize ?? 50 })}`, { signal }),
   incident: (incidentId: string, signal?: AbortSignal) => apiRequest<OperationalIncidentDetail>(`${api}/admin/operational-incidents/${incidentId}`, { signal }),
+  incidentOccurrences: (incidentId: string, cursor?: string, signal?: AbortSignal) => apiRequest<OperationalIncidentOccurrencePage>(`${api}/admin/operational-incidents/${incidentId}/occurrences${queryString({ cursor, pageSize: 50 })}`, { signal }),
   acknowledgeIncident: (incident: OperationalIncident) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/acknowledge`, { method: 'POST', scope: 'admin', body: { version: incident.version } }),
   acceptIncidentRisk: (incident: OperationalIncident, reason: string) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/accept-risk`, { method: 'POST', scope: 'admin', body: { version: incident.version, reason } })
 };

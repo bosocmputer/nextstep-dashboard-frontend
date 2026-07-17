@@ -53,6 +53,7 @@ describe('ข้อความสำหรับ Codex', () => {
     const incident = {
       id: '14e88612-bb55-4161-8e91-000468c91ed7', alertRef: 'NST-ABC123DEF456', incidentType: 'SCHEDULED_REPORT_FAILED',
       rootCause: 'SML_CONNECTIVITY', severity: 'P1', status: 'OPEN', occurrenceCount: 1, affectedCount: 1,
+      activeAffectedCount: 1, observationMode: 'DISCRETE', subjectType: 'TENANT',
       firstSeenAt: '2026-07-16T11:00:04Z', lastSeenAt: '2026-07-16T11:00:04Z', version: 1,
       presentation: event.failureEvidence!.presentation, isDownstream: false, events: [event]
     } satisfies OperationalIncidentDetail;

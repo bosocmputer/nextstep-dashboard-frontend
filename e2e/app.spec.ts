@@ -269,13 +269,21 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
   const consoleErrors = captureUnexpectedConsoleErrors(page);
   await mockAdminLogin(page);
   const incidentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const incidentTenantId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   let status = 'OPEN';
+  let connectionTestCount = 0;
   const incident = () => ({
-    id: incidentId, alertRef: 'NST-ABC123DEF456', incidentType: 'WORKER_HEARTBEAT_MISSING',
-    rootCause: 'PLATFORM', severity: 'P1', status, safeErrorCode: 'WORKER_HEARTBEAT_STALE',
-    occurrenceCount: 2, affectedCount: 3, tenantExamples: ['ร้านตัวอย่างหนึ่ง', 'ร้านตัวอย่างสอง'], firstSeenAt: '2026-07-16T01:00:00Z',
+    id: incidentId, alertRef: 'NST-ABC123DEF456', incidentType: 'SCHEDULED_REPORT_FAILED',
+    rootCause: 'SML_CONNECTIVITY', severity: 'P1', status, safeErrorCode: 'SML_UNREACHABLE',
+    occurrenceCount: 2, affectedCount: 3, activeAffectedCount: 3, observationMode: 'DISCRETE', subjectType: 'TENANT',
+    tenantExamples: ['ร้านตัวอย่างหนึ่ง', 'ร้านตัวอย่างสอง'], firstSeenAt: '2026-07-16T01:00:00Z',
     lastSeenAt: '2026-07-16T01:01:00Z', version: status === 'OPEN' ? 1 : 2,
-    presentation: { titleTh: 'ระบบประมวลผลงานไม่ตอบสนอง', summaryTh: 'ไม่พบสัญญาณการทำงานจาก Worker', stageTh: 'คิวและ Worker ประมวลผล', nextActionsTh: ['ตรวจสอบ Worker'] },
+    presentation: { titleTh: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ', summaryTh: 'ระบบไม่สามารถเริ่มส่งคำขอไปยัง Server ลูกค้าได้', stageTh: 'เชื่อมต่อ Java Web Service', nextActionsTh: ['ตรวจสอบ Java Web Service'] },
+    causeBreakdown: [{
+      presentation: { titleTh: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ', summaryTh: 'ระบบไม่สามารถเริ่มส่งคำขอไปยัง Server ลูกค้าได้', stageTh: 'เชื่อมต่อ Java Web Service', nextActionsTh: ['ตรวจสอบ Java Web Service'] },
+      category: 'JAVA_WS_CONNECTIVITY', stage: 'CONNECT_JAVA_WS', transportPhase: 'BEFORE_REQUEST_SENT', investigationScope: 'CUSTOMER_SYSTEM', subjectType: 'TENANT',
+      occurrenceCount: 2, affectedCount: 3, activeAffectedCount: 3, affectedLabelTh: 'ร้านที่ได้รับผล', firstSeenAt: '2026-07-16T01:00:00Z', lastSeenAt: '2026-07-16T01:01:00Z'
+    }],
     isDownstream: false
   });
   await page.route(`**${api}/admin/operational-incidents**`, async (route) => {
@@ -285,21 +293,36 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
       await route.fulfill(json(incident()));
       return;
     }
+    if (url.pathname.endsWith('/occurrences')) {
+      await route.fulfill(json({ data: [{
+        id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', tenantId: incidentTenantId, tenantName: 'ร้านตัวอย่างหนึ่ง', reportKey: 'stock_balance',
+        sourceKind: 'REPORT', safeErrorCode: 'SML_UNREACHABLE', observedAt: '2026-07-16T01:00:00Z',
+        smlConnectionReference: {
+          endpointUrlAtFailure: 'http://sml.example.test:8092', currentEndpointUrl: 'http://sml.example.test:8092', endpointHost: 'sml.example.test:8092',
+          versionAtFailure: 2, currentVersion: 2, status: 'EXACT_VERSION', schemeSecurity: 'HTTP'
+        }
+      }], page: { hasMore: false } }));
+      return;
+    }
     if (url.pathname.endsWith(incidentId)) {
       await route.fulfill(json({ ...incident(), events: [{
-        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', eventKind: 'OBSERVED', sourceKind: 'WORKER',
-        safeErrorCode: 'WORKER_HEARTBEAT_STALE', tenantName: '', observedAt: '2026-07-16T01:00:00Z',
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', eventKind: 'OBSERVED', sourceKind: 'REPORT',
+        safeErrorCode: 'SML_UNREACHABLE', tenantName: 'ร้านตัวอย่างหนึ่ง', reportKey: 'stock_balance', observedAt: '2026-07-16T01:00:00Z',
         isDownstream: false, connectionChangedSinceFailure: false,
         failureEvidence: {
-          version: 1, level: 'CONFIRMED', category: 'QUEUE_WORKER', stage: 'QUEUE_EXECUTION',
-          occurredAt: '2026-07-16T01:00:00Z', durationMs: 60000, retryable: true, remoteStateUnknown: false,
-          safeErrorCode: 'WORKER_HEARTBEAT_STALE', presentation: incident().presentation
+          version: 1, level: 'CONFIRMED', category: 'JAVA_WS_CONNECTIVITY', stage: 'CONNECT_JAVA_WS', transportPhase: 'BEFORE_REQUEST_SENT',
+          occurredAt: '2026-07-16T01:00:00Z', durationMs: 3000, retryable: true, remoteStateUnknown: false,
+          safeErrorCode: 'SML_UNREACHABLE', presentation: incident().presentation
         },
         impact: { reportsTotal: 1, reportsSucceeded: 0, reportsFailed: 1, reportsCancelled: 0, notificationOutcome: 'NOT_APPLICABLE' }
       }] }));
       return;
     }
     await route.fulfill(json({ data: [incident()], page: { hasMore: false } }));
+  });
+  await page.route(`**${api}/admin/tenants/${incidentTenantId}/sml-connection/test`, async (route) => {
+    connectionTestCount++;
+    await route.fulfill(json({ status: 'READY', testedAt: '2026-07-16T01:05:00Z', latencyMs: 320 }));
   });
 
   await page.goto('/admin/login');
@@ -308,13 +331,22 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
   await page.goto('/admin/operational-incidents');
   await expect(page.getByRole('heading', { name: 'เหตุสำคัญ' })).toBeVisible();
   await expect(page.getByText('NST-ABC123DEF456')).toBeVisible();
-  await expect(page.getByText('ร้านตัวอย่างหนึ่ง · ร้านตัวอย่างสอง และอีก 1 ร้านหรือทรัพยากร')).toBeVisible();
+  await expect(page.getByText('ร้านตัวอย่างหนึ่ง · ร้านตัวอย่างสอง และอีก 1 ร้าน')).toBeVisible();
   await page.getByLabel('เปิดรายละเอียดเหตุสำคัญ').click();
   await expect(page).toHaveURL(`/admin/operational-incidents/${incidentId}`);
   await expect(page.getByRole('heading', { name: 'รายละเอียดเหตุสำคัญ' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'ระบบประมวลผลงานไม่ตอบสนอง' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'ลำดับสาเหตุและผลกระทบ' })).toBeVisible();
-  await expect(page.getByText('WORKER_HEARTBEAT_STALE', { exact: true })).toBeHidden();
+  await expect(page.getByText('SML_UNREACHABLE', { exact: true })).toBeHidden();
+  await expect(page.getByText('การเชื่อมต่อนี้ไม่ได้เข้ารหัส')).toBeVisible();
+  const openEndpoint = page.getByRole('link', { name: 'เปิด URL ใน Browser' });
+  await expect(openEndpoint).toHaveAttribute('href', 'http://sml.example.test:8092');
+  await expect(openEndpoint).toHaveAttribute('rel', 'noopener noreferrer');
+  expect(connectionTestCount).toBe(0);
+  await page.getByRole('button', { name: 'ทดสอบจาก Server Dashboard' }).click();
+  await page.getByRole('button', { name: 'เริ่มทดสอบ' }).click();
+  await expect(page.getByText(/สำเร็จเมื่อ/)).toBeVisible();
+  expect(connectionTestCount).toBe(1);
   await expect(page.getByRole('button', { name: 'รับทราบ' })).toBeVisible();
   await expect(page.getByRole('button', { name: /หายแล้ว|Resolve/i })).toHaveCount(0);
   await page.getByRole('button', { name: 'รับทราบ' }).click();

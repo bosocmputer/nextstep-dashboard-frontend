@@ -62,13 +62,17 @@ and separates confirmed stage/transport evidence from possible checks. It must
 not claim that a customer Server is down or a Firewall blocked traffic without
 direct evidence, and opening the detail must never test SML automatically.
 
-Incident list/detail leads with Thai cause, impact, and local time rather than
-raw codes. The authenticated timeline may show tenant/report context and a
-causal chain, while technical fields remain collapsed. Copy-for-Codex excludes
-tenant names, endpoints, KPI, SQL, credentials, and raw payloads.
-The list may show at most two tenant examples supplied by the Admin API and a
-remaining-count label; it never infers names from alert references or starts a
-per-row lookup.
+Incident list defaults to active episodes and leads with Thai cause, area to
+inspect, active impact, and local time rather than raw codes. Continuous
+conditions say `ตรวจพบต่อเนื่อง` instead of displaying probe counts. The detail
+page loads bounded occurrences separately from the incident summary and may show
+a sanitized historical/current JavaWS URL only to an authenticated Admin.
+Opening that URL is explicitly different from the guarded Server Dashboard
+connection test; neither action runs automatically and a successful test never
+marks the scheduled incident recovered. The timeline may show tenant/report
+context and a causal chain, while technical fields remain collapsed.
+Copy-for-Codex excludes tenant names, tenant IDs, endpoints, KPI, SQL,
+credentials, and raw payloads.
 
 Permission and schedule selection are different concepts:
 

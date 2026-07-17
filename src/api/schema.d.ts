@@ -875,6 +875,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/operational-incidents/{incidentId}/occurrences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listOperationalIncidentOccurrences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/operational-incidents/{incidentId}/acknowledge": {
         parameters: {
             query?: never;
@@ -1724,6 +1740,34 @@ export interface components {
         OperationalIncidentStatus: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "CLOSED_ACCEPTED";
         /** @enum {string} */
         OperationalIncidentSeverity: "P1" | "P2";
+        /** @enum {string} */
+        OperationalIncidentSubjectType: "TENANT" | "HOST_RESOURCE" | "BACKUP_POLICY" | "DATABASE" | "CONTAINER" | "LINE_PROVIDER";
+        OperationalMeasurement: {
+            /** @enum {string} */
+            kind: "DISK_USED_PERCENT" | "MEMORY_AVAILABLE_PERCENT" | "DATABASE_CONNECTIONS_PERCENT" | "QUEUE_AGE_SECONDS";
+            value: number;
+            threshold: number;
+            /** @enum {string} */
+            unit: "PERCENT" | "SECONDS" | "COUNT";
+        };
+        OperationalIncidentCauseBreakdown: {
+            presentation: components["schemas"]["FailurePresentation"];
+            category?: string;
+            stage?: string;
+            /** @enum {string} */
+            transportPhase?: "BEFORE_REQUEST_SENT" | "REQUEST_SENT_RESULT_UNKNOWN" | "RESPONSE_STARTED";
+            /** @enum {string} */
+            investigationScope: "CUSTOMER_SYSTEM" | "NEXTSTEP_PLATFORM" | "LINE_PROVIDER" | "CONFIGURATION" | "UNKNOWN";
+            subjectType: components["schemas"]["OperationalIncidentSubjectType"];
+            occurrenceCount: number;
+            affectedCount: number;
+            activeAffectedCount: number;
+            affectedLabelTh: string;
+            /** Format: date-time */
+            firstSeenAt: string;
+            /** Format: date-time */
+            lastSeenAt: string;
+        };
         OperationalIncident: {
             /** Format: uuid */
             id: string;
@@ -1736,6 +1780,12 @@ export interface components {
             safeErrorCode?: string;
             occurrenceCount: number;
             affectedCount: number;
+            activeAffectedCount: number;
+            /** @enum {string} */
+            observationMode: "DISCRETE" | "CONTINUOUS";
+            subjectType: components["schemas"]["OperationalIncidentSubjectType"];
+            measurement?: components["schemas"]["OperationalMeasurement"];
+            causeBreakdown?: components["schemas"]["OperationalIncidentCauseBreakdown"][];
             /** @description Authenticated Admin list only; never returned in Telegram. */
             tenantExamples?: string[];
             /** Format: date-time */
@@ -1759,7 +1809,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            eventKind: "OBSERVED" | "DOWNSTREAM_IMPACT" | "ACKNOWLEDGED" | "EVIDENCE_RESOLVED" | "RISK_ACCEPTED" | "ALERT_SENT" | "ALERT_FAILED";
+            eventKind: "OBSERVED" | "CONDITION_UPDATED" | "DOWNSTREAM_IMPACT" | "SUBJECT_RECOVERED" | "ACKNOWLEDGED" | "EVIDENCE_RESOLVED" | "POLICY_CHANGED" | "RISK_ACCEPTED" | "ALERT_SENT" | "ALERT_FAILED";
             /** @enum {string} */
             sourceKind?: "NOTIFICATION" | "DELIVERY" | "REPORT" | "WORKER" | "SML_CIRCUIT" | "HOST" | "BACKUP" | "DATABASE";
             safeErrorCode?: string;
@@ -1781,6 +1831,51 @@ export interface components {
         };
         OperationalIncidentPage: {
             data: components["schemas"]["OperationalIncident"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        SMLConnectionReference: {
+            /**
+             * Format: uri
+             * @description Sanitized Admin-only URL without userinfo, query, or fragment.
+             */
+            endpointUrlAtFailure?: string;
+            /**
+             * Format: uri
+             * @description Sanitized Admin-only URL without userinfo, query, or fragment.
+             */
+            currentEndpointUrl?: string;
+            endpointHost?: string;
+            versionAtFailure?: number;
+            currentVersion?: number;
+            /** @enum {string} */
+            status: "EXACT_VERSION" | "CHANGED_SINCE_FAILURE" | "CURRENT_ONLY" | "UNAVAILABLE";
+            /** @enum {string} */
+            schemeSecurity?: "HTTP" | "HTTPS";
+            /** Format: date-time */
+            testAvailableAt?: string;
+            testBlockedReason?: string;
+        };
+        OperationalIncidentOccurrence: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Authenticated Admin action context only; never returned in Telegram or clipboard.
+             */
+            tenantId?: string;
+            tenantName?: string;
+            reportKey?: components["schemas"]["ReportKey"];
+            /** @enum {string} */
+            sourceKind: "NOTIFICATION" | "DELIVERY" | "REPORT" | "WORKER" | "SML_CIRCUIT" | "HOST" | "BACKUP" | "DATABASE";
+            safeErrorCode: string;
+            /** Format: date-time */
+            observedAt: string;
+            failureEvidence?: components["schemas"]["FailureEvidence"];
+            impact?: components["schemas"]["FailureImpact"];
+            smlConnectionReference?: components["schemas"]["SMLConnectionReference"];
+        };
+        OperationalIncidentOccurrencePage: {
+            data: components["schemas"]["OperationalIncidentOccurrence"][];
             page: components["schemas"]["PageInfo"];
         };
         OperationalIncidentVersionInput: {
@@ -3600,6 +3695,7 @@ export interface operations {
                 pageSize?: components["parameters"]["PageSize"];
                 status?: components["schemas"]["OperationalIncidentStatus"];
                 severity?: components["schemas"]["OperationalIncidentSeverity"];
+                scope?: "ACTIVE" | "ALL";
             };
             header?: never;
             path?: never;
@@ -3642,6 +3738,34 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listOperationalIncidentOccurrences: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                pageSize?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path: {
+                incidentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cursor-paginated root occurrences. Sanitized JavaWS URLs are present only here. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationalIncidentOccurrencePage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     acknowledgeOperationalIncident: {

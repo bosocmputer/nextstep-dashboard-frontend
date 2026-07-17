@@ -22,6 +22,11 @@ describe('format utilities', () => {
     expect(errorMessage({ code: 'REPORT_CONCURRENCY_LIMIT', message: 'English provider text' })).toContain('กำลังสร้างรายงาน');
     expect(errorMessage({ code: 'FUTURE_ERROR', message: 'ข้อความสำรอง' })).toBe('ข้อความสำรอง');
   });
+
+  it('explains guarded JavaWS tests without encouraging an unsafe retry', () => {
+    expect(errorMessage({ code: 'SML_TEST_BUSY', message: 'English' })).toContain('กำลังติดต่อ Server ลูกค้า');
+    expect(errorMessage({ code: 'SML_TIMEOUT', message: 'English' })).toContain('อย่าเริ่มทดสอบซ้ำทันที');
+  });
 });
 
 describe('formatTime', () => {
