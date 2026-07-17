@@ -69,8 +69,15 @@ describe('adminApi operational incidents', () => {
     await adminApi.incidents({ status: 'OPEN', severity: 'P1', pageSize: 100 });
 
     const [url, options] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('/api/v1/admin/operational-incidents?status=OPEN&severity=P1&pageSize=100');
+    expect(url).toBe('/api/v1/admin/operational-incidents?status=OPEN&severity=P1&pageSize=100&scope=ACTIVE');
     expect(options?.method ?? 'GET').toBe('GET');
+  });
+
+  it('loads bounded incident occurrences from the Admin-only detail endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [], page: { hasMore: false } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    await adminApi.incidentOccurrences('11111111-1111-4111-8111-111111111111', 'cursor-value');
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/v1/admin/operational-incidents/11111111-1111-4111-8111-111111111111/occurrences?cursor=cursor-value&pageSize=50');
   });
 
   it('acknowledges by optimistic version with admin CSRF protection', async () => {
@@ -78,6 +85,7 @@ describe('adminApi operational incidents', () => {
     const incident = {
       id: 'incident-1', alertRef: 'NST-ABC123DEF456', status: 'OPEN', severity: 'P1', rootCause: 'PLATFORM',
       incidentType: 'WORKER_HEARTBEAT_MISSING', occurrenceCount: 1, affectedCount: 1,
+      activeAffectedCount: 1, observationMode: 'CONTINUOUS', subjectType: 'CONTAINER',
       firstSeenAt: '2026-07-16T01:00:00Z', lastSeenAt: '2026-07-16T01:00:00Z', version: 4,
       presentation: { titleTh: 'ระบบประมวลผลงานไม่ตอบสนอง', summaryTh: 'ไม่พบสัญญาณการทำงาน', stageTh: 'ตรวจระบบ', nextActionsTh: ['ตรวจสอบ Worker'] as string[] },
       isDownstream: false

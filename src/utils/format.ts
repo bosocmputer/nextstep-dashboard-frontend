@@ -119,6 +119,10 @@ export function errorMessage(error: unknown): string {
       VIEWER_CONTEXT_CHANGED: 'สิทธิ์หรือร้านค้าที่กำลังดูเปลี่ยนแล้ว กรุณาตรวจสอบและลองใหม่',
       DASHBOARD_REFRESH_NOT_READY: 'ภาพรวมยังประมวลผลไม่เสร็จ กรุณารอสักครู่',
       IDEMPOTENCY_CONFLICT: 'คำขอเดิมถูกใช้กับช่วงข้อมูลอื่นแล้ว กรุณาลองใหม่',
+      SML_TEST_BUSY: 'มีรายงานหรือการทดสอบอื่นกำลังติดต่อ Server ลูกค้าอยู่ กรุณารอให้งานเดิมเสร็จก่อน',
+      SML_TEST_COOLDOWN: 'เพิ่งทดสอบการเชื่อมต่อร้านนี้ กรุณารอให้ครบช่วงพักก่อนลองใหม่',
+      SML_UNREACHABLE: 'Server Dashboard ติดต่อ Java Web Service ของร้านไม่สำเร็จ กรุณาตรวจ Server ลูกค้า Network และ Port',
+      SML_TIMEOUT: 'ส่งคำขอไปยัง Server ลูกค้าแล้ว แต่ไม่ได้รับผลยืนยันภายในเวลา กรุณาอย่าเริ่มทดสอบซ้ำทันที',
       VALIDATION_ERROR: 'ข้อมูลที่กรอกไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
       VERSION_CONFLICT: 'ข้อมูลถูกแก้ไขจากที่อื่นแล้ว กรุณาโหลดหน้าใหม่ก่อนบันทึก'
     };
