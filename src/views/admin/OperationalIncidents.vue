@@ -32,8 +32,14 @@ function statusLabel(value: OperationalIncidentStatus) {
 function statusSeverity(value: OperationalIncidentStatus) {
   return value === 'OPEN' ? 'danger' : value === 'ACKNOWLEDGED' ? 'warn' : value === 'RESOLVED' ? 'success' : 'secondary';
 }
-function rootCauseLabel(value: OperationalIncident['rootCause']) {
-  return ({ SML_CONNECTIVITY: 'การเชื่อมต่อ SML', REPORT_DATA: 'ข้อมูลรายงาน', LINE_DELIVERY: 'การส่ง LINE', PLATFORM: 'ระบบ Nextstep', CAPACITY: 'ทรัพยากรระบบ' } as const)[value];
+function impactLabel(item: OperationalIncident) { return item.affectedCount === 1 ? 'กระทบ 1 ร้านหรือทรัพยากร' : `กระทบ ${item.affectedCount.toLocaleString('th-TH')} ร้านหรือทรัพยากร`; }
+function tenantExamplesLabel(item: OperationalIncident) {
+  const examples = (item.tenantExamples ?? []).slice(0, 2);
+  if (examples.length === 0) return '';
+  const remaining = Math.max(0, item.affectedCount - examples.length);
+  return remaining > 0
+    ? `${examples.join(' · ')} และอีก ${remaining.toLocaleString('th-TH')} ร้านหรือทรัพยากร`
+    : examples.join(' · ');
 }
 
 async function load(reset = true) {
@@ -86,10 +92,14 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
     <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
     <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
       <Column field="severity" header="ระดับ"><template #body="{ data }"><Tag :severity="data.severity === 'P1' ? 'danger' : 'warn'" :value="data.severity" /></template></Column>
-      <Column field="alertRef" header="รหัสอ้างอิง"><template #body="{ data }"><code>{{ data.alertRef }}</code></template></Column>
-      <Column field="rootCause" header="สาเหตุหลัก"><template #body="{ data }"><span class="font-semibold">{{ rootCauseLabel(data.rootCause) }}</span></template></Column>
-      <Column field="safeErrorCode" header="รหัสปลอดภัย"><template #body="{ data }"><code>{{ data.safeErrorCode || 'UNKNOWN' }}</code></template></Column>
-      <Column field="affectedCount" header="ได้รับผล" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }">{{ data.affectedCount.toLocaleString('th-TH') }}</template></Column>
+      <Column field="presentation.titleTh" header="เกิดอะไรขึ้น"><template #body="{ data }"><div class="max-w-96"><div class="font-semibold">{{ data.presentation.titleTh }}</div><small class="text-muted-color">อ้างอิง {{ data.alertRef }}</small></div></template></Column>
+      <Column field="affectedCount" header="ผลกระทบ">
+        <template #body="{ data }">
+          <div>{{ impactLabel(data) }}</div>
+          <small v-if="tenantExamplesLabel(data)" class="block max-w-80 truncate text-muted-color" :title="tenantExamplesLabel(data)">{{ tenantExamplesLabel(data) }}</small>
+          <small class="text-muted-color">พบ {{ data.occurrenceCount.toLocaleString('th-TH') }} เหตุการณ์</small>
+        </template>
+      </Column>
       <Column field="lastSeenAt" header="พบล่าสุด"><template #body="{ data }">{{ formatDateTime(data.lastSeenAt) }}</template></Column>
       <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="statusSeverity(data.status)" :value="statusLabel(data.status)" /></template></Column>
       <Column header="" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button as="router-link" :to="`/admin/operational-incidents/${data.id}`" icon="pi pi-chevron-right" text rounded aria-label="เปิดรายละเอียดเหตุสำคัญ" /></template></Column>

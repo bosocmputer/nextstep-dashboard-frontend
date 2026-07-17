@@ -457,6 +457,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/report-runs/{runId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Loads sanitized failure evidence and LINE impact for one report run without contacting SML. */
+        get: operations["getAdminReportRunDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/line-quota": {
         parameters: {
             query?: never;
@@ -1277,6 +1294,45 @@ export interface components {
         };
         /** @enum {string} */
         ReportRunStatus: "QUEUED" | "CLAIMED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "EXPIRED";
+        FailurePresentation: {
+            titleTh: string;
+            summaryTh: string;
+            stageTh: string;
+            evidenceNoteTh?: string;
+            nextActionsTh: string[];
+        };
+        FailureEvidence: {
+            version: number;
+            /** @enum {string} */
+            level: "CONFIRMED" | "LEGACY_PARTIAL";
+            /** @enum {string} */
+            category: "SML_CONFIGURATION" | "JAVA_WS_CONNECTIVITY" | "JAVA_WS_RESPONSE" | "REPORT_PROCESSING" | "QUEUE_WORKER" | "NOTIFICATION" | "LINE_DELIVERY" | "PLATFORM" | "CAPACITY";
+            /** @enum {string} */
+            stage: "LOAD_CONNECTION" | "RESOLVE_ENDPOINT" | "CONNECT_JAVA_WS" | "SEND_REQUEST" | "WAIT_RESPONSE" | "READ_RESPONSE" | "VALIDATE_RESPONSE" | "DECODE_PAYLOAD" | "BUILD_REPORT" | "SAVE_REPORT" | "PREPARE_NOTIFICATION" | "SEND_LINE" | "QUEUE_EXECUTION" | "PLATFORM_CHECK";
+            /** @enum {string} */
+            transportPhase?: "BEFORE_REQUEST_SENT" | "REQUEST_SENT_RESULT_UNKNOWN" | "RESPONSE_STARTED";
+            /** Format: date-time */
+            occurredAt: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            finishedAt?: string;
+            durationMs?: number;
+            attempt?: number;
+            retryable: boolean;
+            remoteStateUnknown: boolean;
+            connectionVersion?: number;
+            safeErrorCode: string;
+            presentation: components["schemas"]["FailurePresentation"];
+        };
+        FailureImpact: {
+            reportsTotal: number;
+            reportsSucceeded: number;
+            reportsFailed: number;
+            reportsCancelled: number;
+            /** @enum {string} */
+            notificationOutcome: "NOT_APPLICABLE" | "NOT_CREATED_INCOMPLETE_REPORT_SET" | "CREATED" | "UNKNOWN";
+        };
         CreateReportRunInput: {
             /** @enum {string} */
             periodPreset: "YESTERDAY" | "TODAY_TO_NOW" | "MONTH_TO_DATE" | "AS_OF_RUN" | "CUSTOM";
@@ -1320,6 +1376,7 @@ export interface components {
             };
             safeErrorCode?: string | null;
             safeErrorMessage?: string | null;
+            failureSummary?: components["schemas"]["FailureEvidence"];
             queuePosition?: number | null;
             /** Format: date-time */
             queuedAt: string;
@@ -1330,6 +1387,12 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
             progress?: components["schemas"]["ReportRunProgress"];
+        };
+        ReportRunDetail: components["schemas"]["ReportRun"] & {
+            impact: components["schemas"]["FailureImpact"];
+            /** @enum {string} */
+            triggerKind: "UNKNOWN" | "SCHEDULED" | "TEST" | "DASHBOARD" | "BACKGROUND";
+            connectionChangedSinceFailure: boolean;
         };
         ReportRunProgress: {
             /** @enum {string} */
@@ -1673,6 +1736,8 @@ export interface components {
             safeErrorCode?: string;
             occurrenceCount: number;
             affectedCount: number;
+            /** @description Authenticated Admin list only; never returned in Telegram. */
+            tenantExamples?: string[];
             /** Format: date-time */
             firstSeenAt: string;
             /** Format: date-time */
@@ -1685,13 +1750,16 @@ export interface components {
             acceptedAt?: string;
             acceptedReason?: string;
             version: number;
+            presentation: components["schemas"]["FailurePresentation"];
+            isDownstream: boolean;
+            causedByAlertRef?: string;
             events?: components["schemas"]["OperationalIncidentEvent"][];
         };
         OperationalIncidentEvent: {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            eventKind: "OBSERVED" | "ACKNOWLEDGED" | "EVIDENCE_RESOLVED" | "RISK_ACCEPTED" | "ALERT_SENT" | "ALERT_FAILED";
+            eventKind: "OBSERVED" | "DOWNSTREAM_IMPACT" | "ACKNOWLEDGED" | "EVIDENCE_RESOLVED" | "RISK_ACCEPTED" | "ALERT_SENT" | "ALERT_FAILED";
             /** @enum {string} */
             sourceKind?: "NOTIFICATION" | "DELIVERY" | "REPORT" | "WORKER" | "SML_CIRCUIT" | "HOST" | "BACKUP" | "DATABASE";
             safeErrorCode?: string;
@@ -1699,6 +1767,14 @@ export interface components {
             tenantName?: string;
             /** Format: date-time */
             observedAt: string;
+            failureEvidence?: components["schemas"]["FailureEvidence"];
+            reportKey?: components["schemas"]["ReportKey"];
+            /** @enum {string} */
+            triggerKind?: "UNKNOWN" | "SCHEDULED" | "TEST" | "VIEWER" | "BACKGROUND";
+            impact?: components["schemas"]["FailureImpact"];
+            isDownstream: boolean;
+            causedByAlertRef?: string;
+            connectionChangedSinceFailure: boolean;
         };
         OperationalIncidentDetail: components["schemas"]["OperationalIncident"] & {
             events: components["schemas"]["OperationalIncidentEvent"][];
@@ -2884,6 +2960,29 @@ export interface operations {
                     "application/json": components["schemas"]["ReportRunPage"];
                 };
             };
+        };
+    };
+    getAdminReportRunDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Report run evidence and impact. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRunDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     getLineQuota: {

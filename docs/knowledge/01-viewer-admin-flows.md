@@ -1,7 +1,7 @@
 ---
 status: current
-last_verified: 2026-07-16
-source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/OperationalIncidents.vue]
+last_verified: 2026-07-17
+source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue]
 tags: [frontend, viewer, admin, routing]
 ---
 
@@ -55,6 +55,20 @@ visible. The incident detail page may resolve authenticated tenant names, but
 the copy-for-Codex summary contains only safe operational fields. Admin cannot
 manually mark an incident recovered: Acknowledge stops reminders, and accepted
 risk is a separate closure with a required reason.
+
+Report Run history shows a persisted Thai failure summary without loading one
+detail request per table row. `ดูสาเหตุและหลักฐาน` lazily loads the selected run
+and separates confirmed stage/transport evidence from possible checks. It must
+not claim that a customer Server is down or a Firewall blocked traffic without
+direct evidence, and opening the detail must never test SML automatically.
+
+Incident list/detail leads with Thai cause, impact, and local time rather than
+raw codes. The authenticated timeline may show tenant/report context and a
+causal chain, while technical fields remain collapsed. Copy-for-Codex excludes
+tenant names, endpoints, KPI, SQL, credentials, and raw payloads.
+The list may show at most two tenant examples supplied by the Admin API and a
+remaining-count label; it never infers names from alert references or starts a
+per-row lookup.
 
 Permission and schedule selection are different concepts:
 

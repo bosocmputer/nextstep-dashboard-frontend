@@ -212,10 +212,30 @@ test('admin operation tables identify the tenant and LINE recipient', async ({ p
     data: [{ id: tenantId, slug: 'sample-shop', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' }],
     page: pageInfo
   })));
-  await page.route(`**${api}/admin/report-runs**`, (route) => route.fulfill(json({
-    data: [{ id: '77777777-7777-4777-8777-777777777777', tenantId, tenantName: 'ร้านตัวอย่าง', reportKey: 'sales_goods_services', status: 'SUCCEEDED', periodPreset: 'YESTERDAY', dateFrom: '2026-07-10', dateTo: '2026-07-10', rowCount: 741, isTruncated: false, queuedAt: '2026-07-10T15:00:00Z', finishedAt: '2026-07-10T15:01:00Z', expiresAt: '2026-07-11T15:01:00Z' }],
-    page: pageInfo
-  })));
+  const failedRun = {
+    id: '77777777-7777-4777-8777-777777777777', tenantId, tenantName: 'ร้านตัวอย่าง',
+    reportKey: 'stock_balance', status: 'FAILED', periodPreset: 'YESTERDAY', dateFrom: '2026-07-10', dateTo: '2026-07-10',
+    rowCount: 0, isTruncated: false, queuedAt: '2026-07-10T15:00:00Z', startedAt: '2026-07-10T15:00:01Z',
+    finishedAt: '2026-07-10T15:00:04Z', expiresAt: '2026-07-11T15:00:04Z', safeErrorCode: 'SML_UNREACHABLE',
+    failureSummary: {
+      version: 1, level: 'CONFIRMED', category: 'JAVA_WS_CONNECTIVITY', stage: 'CONNECT_JAVA_WS',
+      transportPhase: 'BEFORE_REQUEST_SENT', occurredAt: '2026-07-10T15:00:04Z', durationMs: 3000,
+      attempt: 1, retryable: true, remoteStateUnknown: false, connectionVersion: 2, safeErrorCode: 'SML_UNREACHABLE',
+      presentation: {
+        titleTh: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ',
+        summaryTh: 'ระบบไม่สามารถเริ่มส่งคำขอไปยัง Server ลูกค้าได้',
+        stageTh: 'เชื่อมต่อ Java Web Service',
+        nextActionsTh: ['ตรวจสอบ Java Web Service', 'ตรวจสอบ Network และ Port']
+      }
+    }
+  };
+  await page.route(`**${api}/admin/report-runs**`, (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.endsWith(failedRun.id)) {
+      return route.fulfill(json({ ...failedRun, triggerKind: 'SCHEDULED', connectionChangedSinceFailure: false, impact: { reportsTotal: 10, reportsSucceeded: 0, reportsFailed: 1, reportsCancelled: 9, notificationOutcome: 'NOT_CREATED_INCOMPLETE_REPORT_SET' } }));
+    }
+    return route.fulfill(json({ data: [failedRun], page: pageInfo }));
+  });
   await page.route(`**${api}/admin/line-deliveries**`, (route) => route.fulfill(json({
     data: [{ id: '88888888-8888-4888-8888-888888888888', tenantId, tenantName: 'ร้านตัวอย่าง', recipientDisplayName: 'เจ้าของร้าน', status: 'ACCEPTED', attempt: 1, acceptedAt: '2026-07-10T15:02:00Z', createdAt: '2026-07-10T15:01:00Z', expiresAt: '2027-07-10T15:01:00Z' }],
     page: pageInfo
@@ -228,6 +248,12 @@ test('admin operation tables identify the tenant and LINE recipient', async ({ p
   await page.goto('/admin/report-runs');
   await expect(page.getByRole('columnheader', { name: 'ร้านค้า' })).toBeVisible();
   await expect(page.getByRole('row').filter({ hasText: 'ร้านตัวอย่าง' })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ' })).toBeVisible();
+  await page.getByLabel('ดูสาเหตุและหลักฐาน').click();
+  await expect(page.getByRole('dialog')).toContainText('เชื่อมต่อ Java Web Service');
+  await expect(page.getByRole('dialog')).toContainText('ยกเลิก 9');
+  await expect(page.getByRole('dialog')).toContainText('ไม่ได้ส่ง LINE');
+  await page.keyboard.press('Escape');
 
   await page.goto('/admin/deliveries');
   await expect(page.getByRole('columnheader', { name: 'ร้านค้า' })).toBeVisible();
@@ -247,8 +273,10 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
   const incident = () => ({
     id: incidentId, alertRef: 'NST-ABC123DEF456', incidentType: 'WORKER_HEARTBEAT_MISSING',
     rootCause: 'PLATFORM', severity: 'P1', status, safeErrorCode: 'WORKER_HEARTBEAT_STALE',
-    occurrenceCount: 2, affectedCount: 1, firstSeenAt: '2026-07-16T01:00:00Z',
-    lastSeenAt: '2026-07-16T01:01:00Z', version: status === 'OPEN' ? 1 : 2
+    occurrenceCount: 2, affectedCount: 3, tenantExamples: ['ร้านตัวอย่างหนึ่ง', 'ร้านตัวอย่างสอง'], firstSeenAt: '2026-07-16T01:00:00Z',
+    lastSeenAt: '2026-07-16T01:01:00Z', version: status === 'OPEN' ? 1 : 2,
+    presentation: { titleTh: 'ระบบประมวลผลงานไม่ตอบสนอง', summaryTh: 'ไม่พบสัญญาณการทำงานจาก Worker', stageTh: 'คิวและ Worker ประมวลผล', nextActionsTh: ['ตรวจสอบ Worker'] },
+    isDownstream: false
   });
   await page.route(`**${api}/admin/operational-incidents**`, async (route) => {
     const url = new URL(route.request().url());
@@ -258,7 +286,17 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
       return;
     }
     if (url.pathname.endsWith(incidentId)) {
-      await route.fulfill(json({ ...incident(), events: [{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', eventKind: 'OBSERVED', sourceKind: 'WORKER', safeErrorCode: 'WORKER_HEARTBEAT_STALE', tenantName: '', observedAt: '2026-07-16T01:00:00Z' }] }));
+      await route.fulfill(json({ ...incident(), events: [{
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', eventKind: 'OBSERVED', sourceKind: 'WORKER',
+        safeErrorCode: 'WORKER_HEARTBEAT_STALE', tenantName: '', observedAt: '2026-07-16T01:00:00Z',
+        isDownstream: false, connectionChangedSinceFailure: false,
+        failureEvidence: {
+          version: 1, level: 'CONFIRMED', category: 'QUEUE_WORKER', stage: 'QUEUE_EXECUTION',
+          occurredAt: '2026-07-16T01:00:00Z', durationMs: 60000, retryable: true, remoteStateUnknown: false,
+          safeErrorCode: 'WORKER_HEARTBEAT_STALE', presentation: incident().presentation
+        },
+        impact: { reportsTotal: 1, reportsSucceeded: 0, reportsFailed: 1, reportsCancelled: 0, notificationOutcome: 'NOT_APPLICABLE' }
+      }] }));
       return;
     }
     await route.fulfill(json({ data: [incident()], page: { hasMore: false } }));
@@ -270,9 +308,13 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
   await page.goto('/admin/operational-incidents');
   await expect(page.getByRole('heading', { name: 'เหตุสำคัญ' })).toBeVisible();
   await expect(page.getByText('NST-ABC123DEF456')).toBeVisible();
+  await expect(page.getByText('ร้านตัวอย่างหนึ่ง · ร้านตัวอย่างสอง และอีก 1 ร้านหรือทรัพยากร')).toBeVisible();
   await page.getByLabel('เปิดรายละเอียดเหตุสำคัญ').click();
   await expect(page).toHaveURL(`/admin/operational-incidents/${incidentId}`);
   await expect(page.getByRole('heading', { name: 'รายละเอียดเหตุสำคัญ' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'ระบบประมวลผลงานไม่ตอบสนอง' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'ลำดับสาเหตุและผลกระทบ' })).toBeVisible();
+  await expect(page.getByText('WORKER_HEARTBEAT_STALE', { exact: true })).toBeHidden();
   await expect(page.getByRole('button', { name: 'รับทราบ' })).toBeVisible();
   await expect(page.getByRole('button', { name: /หายแล้ว|Resolve/i })).toHaveCount(0);
   await page.getByRole('button', { name: 'รับทราบ' }).click();

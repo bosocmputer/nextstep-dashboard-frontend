@@ -75,7 +75,13 @@ describe('adminApi operational incidents', () => {
 
   it('acknowledges by optimistic version with admin CSRF protection', async () => {
     document.cookie = 'nextstep_admin_csrf=csrf-value; path=/';
-    const incident = { id: 'incident-1', alertRef: 'NST-ABC123DEF456', status: 'OPEN', severity: 'P1', rootCause: 'PLATFORM', incidentType: 'WORKER_HEARTBEAT_MISSING', occurrenceCount: 1, affectedCount: 1, firstSeenAt: '2026-07-16T01:00:00Z', lastSeenAt: '2026-07-16T01:00:00Z', version: 4 } as const;
+    const incident = {
+      id: 'incident-1', alertRef: 'NST-ABC123DEF456', status: 'OPEN', severity: 'P1', rootCause: 'PLATFORM',
+      incidentType: 'WORKER_HEARTBEAT_MISSING', occurrenceCount: 1, affectedCount: 1,
+      firstSeenAt: '2026-07-16T01:00:00Z', lastSeenAt: '2026-07-16T01:00:00Z', version: 4,
+      presentation: { titleTh: 'ระบบประมวลผลงานไม่ตอบสนอง', summaryTh: 'ไม่พบสัญญาณการทำงาน', stageTh: 'ตรวจระบบ', nextActionsTh: ['ตรวจสอบ Worker'] as string[] },
+      isDownstream: false
+    } as const;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ...incident, status: 'ACKNOWLEDGED', version: 5 }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     await adminApi.acknowledgeIncident(incident);
