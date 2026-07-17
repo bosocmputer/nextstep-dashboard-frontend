@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-16
+last_verified: 2026-07-17
 source_of_truth: [src/api/client.ts, src/api/index.ts, src/views/viewer/ExecutiveOverview.vue, src/views/viewer/ViewerReport.vue]
 tags: [frontend, requests, idempotency, snapshots]
 ---
@@ -49,6 +49,10 @@ Long-lived pages that react to route, tenant, report, period, or run changes mus
 Admin operational incident reads are `no-store`. Their acknowledge and
 accepted-risk mutations use the shared Admin CSRF policy and optimistic version;
 the UI refetches after conflicts rather than overwriting newer evidence.
+Report Run detail is also a read-only Admin request. It is fetched only when the
+operator opens a row, aborts when the dialog closes, and uses a generation guard
+so a slower previous selection cannot replace the active evidence. Neither
+Report Run nor Incident detail starts JavaWS/SML work.
 
 ## LINE/LIFF Entry
 

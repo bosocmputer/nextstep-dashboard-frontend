@@ -1,7 +1,7 @@
 import { apiRequest, newIdempotencyKey, queryString } from './client';
 import type {
   AdminReportCatalog, AdminSession, AuditPage, CreateReportRunInput, DataPage, DeliveryPage, Recipient, RecipientPage, ReportDefinition,
-  FlexPreview, FlexPreviewInput, LineQuotaStatus, NotificationExecution, ReportKey, ReportRowPage, ReportRun, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
+  FlexPreview, FlexPreviewInput, LineQuotaStatus, NotificationExecution, ReportKey, ReportRowPage, ReportRun, ReportRunDetail, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
   SMLConnectionInput, SMLConnectionStatus, SMLConnectionTestResult, Tenant, TenantInput, TenantPage, TenantPatch,
   DashboardRefresh, DashboardRefreshInput, DashboardRefreshResult, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant,
   DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot,
@@ -47,6 +47,7 @@ export const adminApi = {
   testSendSchedule: (tenantId: string, scheduleId: string, idempotencyKey = newIdempotencyKey('schedule-test-send')) => apiRequest<NotificationExecution>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/test-send`, { method: 'POST', scope: 'admin', idempotencyKey }),
   lineQuota: () => apiRequest<LineQuotaStatus>(`${api}/admin/line-quota`),
   reportRuns: (filters: { cursor?: string; tenantId?: string; status?: string } = {}, signal?: AbortSignal) => apiRequest<ReportRunPage>(`${api}/admin/report-runs${queryString({ ...filters, pageSize: 50 })}`, { signal }),
+  reportRun: (runId: string, signal?: AbortSignal) => apiRequest<ReportRunDetail>(`${api}/admin/report-runs/${runId}`, { signal }),
   deliveries: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: 50 })}`, { signal }),
   audit: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: 50 })}`, { signal }),
   incidents: (filters: { cursor?: string; status?: OperationalIncidentStatus; severity?: OperationalIncidentSeverity; pageSize?: number } = {}, signal?: AbortSignal) => apiRequest<OperationalIncidentPage>(`${api}/admin/operational-incidents${queryString({ ...filters, pageSize: filters.pageSize ?? 50 })}`, { signal }),
