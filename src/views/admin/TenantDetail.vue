@@ -12,6 +12,7 @@ import { statusLabel } from '@/utils/status';
 import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
 import { useServerTable } from '@/composables/useServerTable';
 import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
+import { normalizeScheduleTableRow, toRecipientQueryInput, type RecipientTableFilters } from '@/utils/adminTableFilters';
 
 const route = useRoute();
 const router = useRouter();
@@ -47,7 +48,6 @@ let inviteActionKey = '';
 const reissueActionKeys = new Map<string, string>();
 const testSendActionKeys = new Map<string, string>();
 
-type RecipientFilters = { statuses: Array<'PENDING' | 'ACTIVE'>; permissionStates: Array<'WITH_REPORTS' | 'WITHOUT_REPORTS'> };
 type ScheduleStatus = Schedule['status'];
 type ScheduleFilters = { statuses: ScheduleStatus[]; includeArchived: boolean };
 const recipientPrimeFilters = ref({
@@ -57,15 +57,18 @@ const recipientPrimeFilters = ref({
 const schedulePrimeFilters = ref({ status: { value: null as ScheduleStatus[] | null, matchMode: 'in' } });
 useSakaiFilterMenu(recipientPrimeFilters);
 useSakaiFilterMenu(schedulePrimeFilters);
-const recipientTable = useServerTable<Recipient, RecipientFilters>({
+const recipientTable = useServerTable<Recipient, RecipientTableFilters>({
   immediate: false,
   initialFilters: { statuses: [], permissionStates: [] },
-  query: (input, signal) => adminApi.queryRecipients(tenantId, input, signal)
+  query: (input, signal) => adminApi.queryRecipients(tenantId, toRecipientQueryInput(input), signal)
 });
 const scheduleTable = useServerTable<Schedule, ScheduleFilters>({
   immediate: false,
   initialFilters: { statuses: [], includeArchived: false },
-  query: (input, signal) => adminApi.querySchedules(tenantId, input, signal)
+  query: async (input, signal) => {
+    const result = await adminApi.querySchedules(tenantId, input, signal);
+    return { ...result, data: result.data.map((item) => normalizeScheduleTableRow(item)) };
+  }
 });
 const recipients = recipientTable.rows;
 const schedules = scheduleTable.rows;

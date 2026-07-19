@@ -1,7 +1,7 @@
 ---
 status: current
 last_verified: 2026-07-19
-source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue, src/composables/useServerTable.ts]
+source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/TenantDetail.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue, src/composables/useServerTable.ts, src/utils/adminTableFilters.ts]
 tags: [frontend, viewer, admin, routing]
 ---
 
@@ -87,7 +87,9 @@ Permission and schedule selection are different concepts:
   Apply; applying or clearing resets to page one and aborts obsolete requests.
 - Recipient tables return an exact filtered total for PrimeVue pagination. Search,
   status, and permission filters are evaluated before paging, while selections
-  outside the visible page remain intact.
+  outside the visible page remain intact. The recipient endpoint keeps its
+  bounded flat query contract, so the shared table envelope must be adapted at
+  the view boundary rather than forwarded verbatim.
 - Schedule tables filter by name, lifecycle status, and archived visibility on
   the server. Selecting `ARCHIVED` explicitly enables archived rows.
 - Small catalog/picker tables use local PrimeVue filtering and 25/50/100-row
@@ -97,6 +99,9 @@ Permission and schedule selection are different concepts:
   and selection columns are never filterable.
 - Every table keeps numeric/action/select alignment semantics and must preserve
   loading, empty, denied, and error states at mobile and desktop widths.
+- Required array fields from table APIs are normalized defensively before
+  rendering; one malformed collection must not crash the whole tenant detail
+  page while the backend contract is being repaired.
 
 ## Viewer Entry
 
