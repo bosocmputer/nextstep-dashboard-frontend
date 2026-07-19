@@ -22,6 +22,14 @@ function json(data: unknown, status = 200) {
   return { status, contentType: 'application/json', body: JSON.stringify(data) };
 }
 
+function tableResult<T>(data: T[], page = 0, pageSize = 25, total = data.length) {
+  return { data, page, pageSize, total, totalPages: total ? Math.ceil(total / pageSize) : 0 };
+}
+
+function isTableQuery(url: string) {
+  return new URL(url).pathname.endsWith('/query');
+}
+
 function unauthorized() {
   return json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required.', requestId: 'e2e', retryable: false } }, 401);
 }
@@ -37,7 +45,10 @@ function captureUnexpectedConsoleErrors(page: Page, allowedStatusCodes: number[]
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.route(`**${api}/admin/operational-incidents**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/operational-incidents**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([]) : { data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/tenants/*/recipients/*/permission-dependencies`, (route) => route.fulfill(json({
+    recipientId: '33333333-3333-4333-8333-333333333333', permissionsVersion: 1, items: []
+  })));
   await page.route(`**${api}/admin/tenants/*/dashboard-refresh-policy`, (route) => route.fulfill(json({
     tenantId, fastIntervalMinutes: 5, standardIntervalMinutes: 15, heavyIntervalMinutes: 30, version: 0
   })));
@@ -60,7 +71,7 @@ async function mockAdminLogin(page: Page) {
     operationalReservePercent: 10, syncedAt: '2026-07-10T12:00:00Z'
   })));
   await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json(adminReportCatalog)));
-  await page.route(`**${api}/admin/operational-incidents**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/operational-incidents**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([]) : { data: [], page: { hasMore: false } })));
 }
 
 async function mockEmptyExecutiveOverview(page: Page) {
@@ -208,10 +219,8 @@ test('admin operation tables identify the tenant and LINE recipient', async ({ p
   const pageInfo = { hasMore: false };
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
   await page.route(`**${api}/admin/reports`, (route) => route.fulfill(json(adminReportCatalog)));
-  await page.route(`**${api}/admin/tenants**`, (route) => route.fulfill(json({
-    data: [{ id: tenantId, slug: 'sample-shop', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' }],
-    page: pageInfo
-  })));
+  const tenantRows = [{ id: tenantId, slug: 'sample-shop', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE', accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z' }];
+  await page.route(`**${api}/admin/tenants**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult(tenantRows) : { data: tenantRows, page: pageInfo })));
   const failedRun = {
     id: '77777777-7777-4777-8777-777777777777', tenantId, tenantName: 'ร้านตัวอย่าง',
     reportKey: 'stock_balance', status: 'FAILED', periodPreset: 'YESTERDAY', dateFrom: '2026-07-10', dateTo: '2026-07-10',
@@ -234,16 +243,12 @@ test('admin operation tables identify the tenant and LINE recipient', async ({ p
     if (pathname.endsWith(failedRun.id)) {
       return route.fulfill(json({ ...failedRun, triggerKind: 'SCHEDULED', connectionChangedSinceFailure: false, impact: { reportsTotal: 10, reportsSucceeded: 0, reportsFailed: 1, reportsCancelled: 9, notificationOutcome: 'NOT_CREATED_INCOMPLETE_REPORT_SET' } }));
     }
-    return route.fulfill(json({ data: [failedRun], page: pageInfo }));
+    return route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([failedRun]) : { data: [failedRun], page: pageInfo }));
   });
-  await page.route(`**${api}/admin/line-deliveries**`, (route) => route.fulfill(json({
-    data: [{ id: '88888888-8888-4888-8888-888888888888', tenantId, tenantName: 'ร้านตัวอย่าง', recipientDisplayName: 'เจ้าของร้าน', status: 'ACCEPTED', attempt: 1, acceptedAt: '2026-07-10T15:02:00Z', createdAt: '2026-07-10T15:01:00Z', expiresAt: '2027-07-10T15:01:00Z' }],
-    page: pageInfo
-  })));
-  await page.route(`**${api}/admin/audit-logs**`, (route) => route.fulfill(json({
-    data: [{ id: '99999999-9999-4999-8999-999999999999', tenantId, tenantName: 'ร้านตัวอย่าง', actorType: 'ADMIN', action: 'SCHEDULE_TEST_SEND_ENQUEUED', resourceType: 'SCHEDULE', result: 'SUCCESS', createdAt: '2026-07-10T15:01:00Z' }],
-    page: pageInfo
-  })));
+  const deliveryRows = [{ id: '88888888-8888-4888-8888-888888888888', tenantId, tenantName: 'ร้านตัวอย่าง', recipientDisplayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services'], reportCount: 1, status: 'ACCEPTED', attempt: 1, acceptedAt: '2026-07-10T15:02:00Z', createdAt: '2026-07-10T15:01:00Z', expiresAt: '2027-07-10T15:01:00Z' }];
+  await page.route(`**${api}/admin/line-deliveries**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult(deliveryRows) : { data: deliveryRows, page: pageInfo })));
+  const auditRows = [{ id: '99999999-9999-4999-8999-999999999999', tenantId, tenantName: 'ร้านตัวอย่าง', actorType: 'ADMIN', action: 'SCHEDULE_TEST_SEND_ENQUEUED', resourceType: 'SCHEDULE', result: 'SUCCESS', createdAt: '2026-07-10T15:01:00Z' }];
+  await page.route(`**${api}/admin/audit-logs**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult(auditRows) : { data: auditRows, page: pageInfo })));
 
   await page.goto('/admin/report-runs');
   await expect(page.getByRole('columnheader', { name: 'ร้านค้า' })).toBeVisible();
@@ -293,15 +298,16 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
       await route.fulfill(json(incident()));
       return;
     }
-    if (url.pathname.endsWith('/occurrences')) {
-      await route.fulfill(json({ data: [{
+    if (url.pathname.endsWith('/occurrences') || url.pathname.endsWith('/occurrences/query')) {
+      const occurrences = [{
         id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', tenantId: incidentTenantId, tenantName: 'ร้านตัวอย่างหนึ่ง', reportKey: 'stock_balance',
         sourceKind: 'REPORT', safeErrorCode: 'SML_UNREACHABLE', observedAt: '2026-07-16T01:00:00Z',
         smlConnectionReference: {
           endpointUrlAtFailure: 'http://sml.example.test:8092', currentEndpointUrl: 'http://sml.example.test:8092', endpointHost: 'sml.example.test:8092',
           versionAtFailure: 2, currentVersion: 2, status: 'EXACT_VERSION', schemeSecurity: 'HTTP'
         }
-      }], page: { hasMore: false } }));
+      }];
+      await route.fulfill(json(url.pathname.endsWith('/query') ? tableResult(occurrences) : { data: occurrences, page: { hasMore: false } }));
       return;
     }
     if (url.pathname.endsWith(incidentId)) {
@@ -318,7 +324,7 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
       }] }));
       return;
     }
-    await route.fulfill(json({ data: [incident()], page: { hasMore: false } }));
+    await route.fulfill(json(url.pathname.endsWith('/query') ? tableResult([incident()]) : { data: [incident()], page: { hasMore: false } }));
   });
   await page.route(`**${api}/admin/tenants/${incidentTenantId}/sml-connection/test`, async (route) => {
     connectionTestCount++;
@@ -389,6 +395,10 @@ test('tenant form creates an internal slug and uses the admin-selected access en
   await mockAdminLogin(page);
   let createRequests = 0;
   await page.route(`**${api}/admin/tenants**`, async (route) => {
+    if (isTableQuery(route.request().url())) {
+      await route.fulfill(json(tableResult([])));
+      return;
+    }
     if (route.request().method() === 'POST') {
       createRequests++;
       expect(route.request().postDataJSON()).toEqual({ name: 'ร้านทดสอบ', accessEndsAt: '2027-12-31T16:59:59.999Z' });
@@ -411,6 +421,42 @@ test('tenant form creates an internal slug and uses the admin-selected access en
   await expect.poll(() => createRequests).toBe(1);
 });
 
+test('server-side column filter waits for Apply before querying', async ({ page }) => {
+  await mockAdminLogin(page);
+  const queryBodies: unknown[] = [];
+  await page.route(`**${api}/admin/tenants/query`, async (route) => {
+    queryBodies.push(route.request().postDataJSON());
+    await route.fulfill(json(tableResult([])));
+  });
+  await page.goto('/admin/login');
+  await page.getByLabel('รหัสผ่าน').fill('local-e2e-password');
+  await page.getByRole('button', { name: 'เข้าสู่ระบบ' }).click();
+  await page.goto('/admin/tenants');
+  await expect.poll(() => queryBodies.length).toBe(1);
+
+  const statusHeader = page.getByRole('columnheader', { name: /สถานะ/ });
+  await statusHeader.getByRole('button', { name: 'แสดงเมนูตัวกรอง' }).click();
+  await page.getByRole('dialog').locator('.p-multiselect').click();
+  await page.getByRole('option', { name: 'ใช้งาน', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => queryBodies.length).toBe(1);
+
+  await statusHeader.getByRole('button', { name: 'ซ่อนเมนูตัวกรอง' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await statusHeader.getByRole('button', { name: 'แสดงเมนูตัวกรอง' }).click();
+  await page.getByRole('button', { name: 'ใช้ตัวกรอง' }).click();
+  await expect.poll(() => queryBodies.length).toBe(2);
+  expect(queryBodies[1]).toMatchObject({ page: 0, pageSize: 25, filters: { statuses: [] } });
+
+  await statusHeader.getByRole('button', { name: 'แสดงเมนูตัวกรอง' }).click();
+  await page.getByRole('dialog').locator('.p-multiselect').click();
+  await page.getByRole('option', { name: 'ใช้งาน', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'ใช้ตัวกรอง' }).click();
+  await expect.poll(() => queryBodies.length).toBe(3);
+  expect(queryBodies[2]).toMatchObject({ page: 0, pageSize: 25, filters: { statuses: ['ACTIVE'] } });
+});
+
 test('tenant detail restores the editable SML URL, removes duplicate entity header, and keeps the tenant menu active', async ({ page }) => {
   const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
@@ -423,8 +469,8 @@ test('tenant detail restores the editable SML URL, removes duplicate entity head
     isConfigured: true, endpointUrl: 'http://43.229.149.11:8080', endpointHost: '43.229.149.11:8080',
     databaseName: 'WAWA2', configFileName: 'SMLConfigDATA.xml', readinessStatus: 'READY', version: 2
   })));
-  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
-  await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([]) : { data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([]) : { data: [], page: { hasMore: false } })));
 
   await page.goto(`/admin/tenants/${tenantId}?tab=sml`);
 
@@ -445,8 +491,8 @@ test('an unconfigured tenant starts with the standard SMLConfigDATA filename', a
   await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({
     error: { code: 'SML_CONNECTION_NOT_FOUND', message: 'SML connection is not configured.', requestId: 'e2e', retryable: false }
   }, 404)));
-  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
-  await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, (route) => route.fulfill(json({ data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([]) : { data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([]) : { data: [], page: { hasMore: false } })));
 
   await page.goto(`/admin/tenants/${tenantId}?tab=sml`);
 
@@ -737,7 +783,10 @@ test('mobile report details use stacked rows without horizontal overflow', async
       expect(route.request().postDataJSON()).toEqual({ filters: [], page: 0, pageSize: 25 });
       return route.fulfill(json({
         runId, columns: ['doc_no', 'total_amount', 'last_status'], data: [{ doc_no: 'IV-001', total_amount: '1250.00', last_status: 'USER5' }],
-        page: 0, pageSize: 25, total: 1
+        rowOrdinals: [1], filterCapabilities: [
+          { columnKey: 'doc_no', dataType: 'IDENTIFIER', operators: ['CONTAINS', 'EQUALS'], globalSearchable: true },
+          { columnKey: 'total_amount', dataType: 'NUMBER', operators: ['EQUALS', 'GTE', 'LTE'], globalSearchable: false }
+        ], page: 0, pageSize: 25, total: 1, totalPages: 1
       }));
     }
     if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(salesDashboard()));
@@ -838,10 +887,8 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
     }));
   });
   await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({ error: { code: 'SML_NOT_CONFIGURED', message: 'Not configured', requestId: 'e2e', retryable: false } }, 404)));
-  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json({
-    data: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services'], permissionsVersion: 1, createdAt: '2026-07-01T00:00:00Z' }],
-    page: { hasMore: false }
-  })));
+  const recipientRows = [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', reportKeys: ['sales_goods_services'], permissionsVersion: 1, createdAt: '2026-07-01T00:00:00Z' }];
+  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? { ...tableResult(recipientRows), selected: [] } : { data: recipientRows, page: { hasMore: false } })));
   await page.route(`**${api}/admin/tenants/${tenantId}/schedule-recipient-options/query`, (route) => route.fulfill(json({
     data: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', eligible: true, missingReportKeys: [] }],
     selected: [{ id: recipientId, status: 'ACTIVE', displayName: 'เจ้าของร้าน', eligible: true, missingReportKeys: [] }],
@@ -905,6 +952,13 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
       await route.fulfill(json({ ...schedule, status: scheduleStatus, version: scheduleVersion }));
       return;
     }
+    if (isTableQuery(route.request().url())) {
+      const input = route.request().postDataJSON() as { filters?: { includeArchived?: boolean } };
+      const includeArchived = input.filters?.includeArchived === true;
+      const rows = scheduleStatus === 'ARCHIVED' && !includeArchived ? [] : [{ ...schedule, status: scheduleStatus, version: scheduleVersion, ...(scheduleStatus === 'ARCHIVED' ? { archivedAt: '2026-07-11T12:00:00Z', nextOccurrences: [], readinessBlockers: [] } : {}) }];
+      await route.fulfill(json(tableResult(rows)));
+      return;
+    }
     const includeArchived = new URL(route.request().url()).searchParams.get('includeArchived') === 'true';
     await route.fulfill(json({
       data: scheduleStatus === 'ARCHIVED' && !includeArchived ? [] : [{ ...schedule, status: scheduleStatus, version: scheduleVersion, ...(scheduleStatus === 'ARCHIVED' ? { archivedAt: '2026-07-11T12:00:00Z', nextOccurrences: [], readinessBlockers: [] } : {}) }],
@@ -959,7 +1013,7 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   await page.getByRole('button', { name: 'ลบตารางส่งรายงาน', exact: true }).last().click();
   await expect(page.getByText('ลบตารางส่งรายงานแล้ว')).toBeVisible();
   expect(archiveRequests).toBe(1);
-  await page.getByText('แสดงรายการที่ลบแล้ว').click();
+  await page.getByText('รวมรายการที่ลบแล้ว').click();
   await expect(page.getByText('ลบแล้ว', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'กู้คืนเป็นฉบับร่าง' }).click();
   await expect(page.getByText('กู้คืนตารางส่งรายงาน')).toBeVisible();

@@ -1,7 +1,7 @@
 ---
 status: current
 last_verified: 2026-07-19
-source_of_truth: [src/api/client.ts, src/api/index.ts, src/views/viewer/ExecutiveOverview.vue, src/views/viewer/ViewerReport.vue]
+source_of_truth: [src/api/client.ts, src/api/index.ts, src/views/viewer/ExecutiveOverview.vue, src/views/viewer/ViewerReport.vue, src/composables/useServerTable.ts]
 tags: [frontend, requests, idempotency, snapshots]
 ---
 
@@ -55,8 +55,9 @@ Long-lived pages that react to route, tenant, report, period, or run changes mus
 
 - Text filter drafts do not append old and new results. Applying a filter resets
   to page one, aborts the prior request, and replaces the visible page atomically.
-- Cursor-backed tables retain only the cursor chain needed for previous/next;
-  exact-page tables use server totals and 25/50/100 page sizes.
+- Server-backed tables use exact totals and 25/50/100 page sizes. A concurrent
+  deletion can clamp an empty page to the last valid page once; it must not
+  create an unbounded request loop.
 - POST query endpoints are read-only in business semantics but still use the
   normal authenticated CSRF transport because the HTTP method is unsafe.
 

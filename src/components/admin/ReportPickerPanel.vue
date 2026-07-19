@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import type { DataTableFilterEvent } from 'primevue/datatable';
 import type { AdminReportDefinition, ReportKey } from '@/api';
+import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 
 const props = withDefaults(defineProps<{
   definitions: AdminReportDefinition[];
@@ -12,10 +15,14 @@ const props = withDefaults(defineProps<{
 }>(), { maxSelected: 0, ordered: false, disabled: false, lockedKeys: () => [] });
 
 const emit = defineEmits<{ 'update:modelValue': [value: ReportKey[]] }>();
-const search = ref('');
-const category = ref<string>();
 const selectedOnly = ref(false);
 const limitMessage = ref('');
+const tableFilters = ref({
+  global: { value: null as string | null, matchMode: 'contains' },
+  categoryLabel: { value: null as string[] | null, matchMode: 'in' }
+});
+useSakaiFilterMenu(tableFilters);
+const filteredResult = ref<AdminReportDefinition[] | null>(null);
 
 const selectedSet = computed(() => new Set<ReportKey>(props.modelValue));
 const lockedSet = computed(() => new Set<ReportKey>(props.lockedKeys));
@@ -23,16 +30,12 @@ const definitionsByKey = computed(() => new Map(props.definitions.map((item) => 
 const categories = computed(() => {
   const labels = new Map<string, string>();
   props.definitions.forEach((item) => labels.set(item.category, item.categoryLabel));
-  return [{ label: 'ทุกหมวด', value: undefined }, ...Array.from(labels, ([value, label]) => ({ value, label }))];
+  return Array.from(labels, ([, label]) => ({ value: label, label }));
 });
-const filtered = computed(() => {
-  const needle = search.value.trim().toLocaleLowerCase('th-TH');
-  return props.definitions.filter((item) =>
-    (!category.value || item.category === category.value) &&
-    (!selectedOnly.value || selectedSet.value.has(item.reportKey)) &&
-    (!needle || item.label.toLocaleLowerCase('th-TH').includes(needle) || item.categoryLabel.toLocaleLowerCase('th-TH').includes(needle))
-  );
-});
+const tableSource = computed(() => selectedOnly.value ? props.definitions.filter((item) => selectedSet.value.has(item.reportKey)) : props.definitions);
+const visibleFiltered = computed(() => filteredResult.value ?? tableSource.value);
+const globalSearch = computed({ get: () => tableFilters.value.global.value ?? '', set: (value: string) => { tableFilters.value.global.value = value || null; } });
+const hasFilters = computed(() => Boolean(globalSearch.value || tableFilters.value.categoryLabel.value?.length || selectedOnly.value));
 const selectedDefinitions = computed(() => props.modelValue
   .map((key) => definitionsByKey.value.get(key))
   .filter((item): item is AdminReportDefinition => !!item));
@@ -62,17 +65,27 @@ function selectFiltered() {
   if (props.disabled) return;
   const next = [...props.modelValue];
   const nextSet = new Set(next);
-  for (const item of filtered.value) {
+  for (const item of visibleFiltered.value) {
     if (item.status !== 'ACTIVE' || nextSet.has(item.reportKey)) continue;
     if (props.maxSelected > 0 && next.length >= props.maxSelected) break;
     next.push(item.reportKey);
     nextSet.add(item.reportKey);
   }
-  if (props.maxSelected > 0 && filtered.value.some((item) => item.status === 'ACTIVE' && !nextSet.has(item.reportKey))) {
+  if (props.maxSelected > 0 && visibleFiltered.value.some((item) => item.status === 'ACTIVE' && !nextSet.has(item.reportKey))) {
     limitMessage.value = `เลือกได้สูงสุด ${props.maxSelected} รายงาน`;
   }
   emit('update:modelValue', next);
 }
+
+function captureFiltered(event: DataTableFilterEvent) {
+  filteredResult.value = ((event as DataTableFilterEvent & { filteredValue?: AdminReportDefinition[] }).filteredValue ?? tableSource.value);
+}
+function clearFilters() {
+  tableFilters.value = { global: { value: null, matchMode: 'contains' }, categoryLabel: { value: null, matchMode: 'in' } };
+  selectedOnly.value = false;
+  filteredResult.value = null;
+}
+watch([tableSource, () => props.definitions], () => { filteredResult.value = null; });
 
 function move(index: number, direction: -1 | 1) {
   if (props.disabled) return;
@@ -86,26 +99,16 @@ function move(index: number, direction: -1 | 1) {
 
 <template>
   <div class="flex flex-col gap-4">
-    <Toolbar class="border-0 p-0">
-      <template #start>
-        <div class="flex flex-wrap items-center gap-2">
-          <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" aria-label="ค้นหารายงาน" placeholder="ค้นหาชื่อรายงาน" :disabled="disabled" /></IconField>
-          <Select v-model="category" aria-label="กรองหมวดรายงาน" :options="categories" option-label="label" option-value="value" class="w-48" :disabled="disabled" />
-          <div class="flex items-center gap-2"><Checkbox v-model="selectedOnly" input-id="selected-only" binary :disabled="disabled" /><label for="selected-only">เฉพาะที่เลือก</label></div>
-        </div>
-      </template>
-      <template #end><div class="flex flex-wrap gap-2"><Button label="เลือกผลที่กรอง" icon="pi pi-check-square" outlined class="touch-action" :disabled="disabled" @click="selectFiltered" /><Button label="ล้างที่เลือก" icon="pi pi-times" text severity="secondary" class="touch-action" :disabled="disabled || !modelValue.length" @click="setSelection([])" /></div></template>
-    </Toolbar>
-
     <Message v-if="limitMessage" severity="warn" :closable="false">{{ limitMessage }}</Message>
     <div class="grid grid-cols-1 gap-5" :class="ordered ? 'xl:grid-cols-[minmax(0,1fr)_22rem]' : ''">
-      <DataTable :value="filtered" data-key="reportKey" paginator :rows="25" :rows-per-page-options="[25, 50, 100]" paginator-template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" striped-rows responsive-layout="scroll">
+      <DataTable v-model:filters="tableFilters" :value="tableSource" data-key="reportKey" :global-filter-fields="['label', 'categoryLabel']" filter-display="menu" row-hover show-gridlines paginator :rows="25" :rows-per-page-options="[25, 50, 100]" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" striped-rows responsive-layout="scroll" @filter="captureFiltered">
+        <template #header><SakaiTableHeader v-model:global-search="globalSearch" :has-filters="hasFilters" search-label="ค้นหารายงาน" search-placeholder="ค้นหารายงาน" @clear="clearFilters"><template #start><div class="flex items-center gap-2"><Checkbox v-model="selectedOnly" input-id="selected-only" binary :disabled="disabled" /><label for="selected-only">เฉพาะที่เลือก</label></div><Button label="เลือกผลที่กรอง" icon="pi pi-check-square" outlined class="touch-action" :disabled="disabled" @click="selectFiltered" /><Button label="ล้างที่เลือก" icon="pi pi-times" text severity="secondary" class="touch-action" :disabled="disabled || !modelValue.length" @click="setSelection([])" /></template></SakaiTableHeader></template>
         <Column header="เลือก" style="width: 5rem" header-class="table-select-column" body-class="table-select-column">
           <template #body="{ data }"><Checkbox :model-value="selectedSet.has(data.reportKey)" binary :disabled="disabled || lockedSet.has(data.reportKey) || (data.status === 'DEPRECATED' && !selectedSet.has(data.reportKey))" :aria-label="lockedSet.has(data.reportKey) ? `${data.label} ถูกใช้โดยตารางส่ง LINE ที่กำลังใช้งาน` : `เลือก ${data.label}`" @update:model-value="toggle(data, $event)" /></template>
         </Column>
         <Column field="label" header="รายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span><Tag v-if="lockedSet.has(data.reportKey)" value="ใช้ในตาราง Active" severity="info" class="ml-2" /><Tag v-if="data.status === 'DEPRECATED'" value="เลิกใช้" severity="warn" class="ml-2" /></template></Column>
-        <Column field="categoryLabel" header="หมวด"><template #body="{ data }"><Tag :value="data.categoryLabel" severity="secondary" /></template></Column>
-        <template #empty><div class="py-8 text-center text-muted-color">ไม่พบรายงานที่ตรงกับเงื่อนไข</div></template>
+        <Column field="categoryLabel" header="หมวด" :show-filter-match-modes="false"><template #body="{ data }"><Tag :value="data.categoryLabel" severity="secondary" /></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="categories" option-label="label" option-value="value" placeholder="ทุกหมวด" /></template></Column>
+        <template #empty><div class="py-8 text-center text-muted-color">ไม่พบรายงานที่ตรงกับเงื่อนไข <Button v-if="hasFilters" label="ล้างตัวกรอง" text size="small" @click="clearFilters" /></div></template>
       </DataTable>
 
       <div v-if="ordered" class="border border-surface rounded-md p-4 self-start">

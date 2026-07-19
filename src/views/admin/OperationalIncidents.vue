@@ -1,33 +1,35 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { ApiError, adminApi, type OperationalIncident, type OperationalIncidentSeverity, type OperationalIncidentStatus } from '@/api';
-import CursorPaginator from '@/components/admin/CursorPaginator.vue';
-import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
-import { errorMessage, formatDateTime } from '@/utils/format';
-
-const rows = ref<OperationalIncident[]>([]);
-const loading = ref(false);
-const error = ref('');
-const status = ref<OperationalIncidentStatus>();
-const severity = ref<OperationalIncidentSeverity>();
-const scope = ref<'ACTIVE' | 'ALL'>('ACTIVE');
-const pagination = reactive(createCursorPagination());
-let generation = 0;
-let controller: AbortController | undefined;
+import { computed, ref } from 'vue';
+import type { DataTableFilterEvent } from 'primevue/datatable';
+import { adminApi, type OperationalIncident, type OperationalIncidentSeverity, type OperationalIncidentStatus } from '@/api';
+import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import { useServerTable } from '@/composables/useServerTable';
+import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
+import { formatDateTime } from '@/utils/format';
 
 const statusOptions = [
-  { label: 'ทุกสถานะ', value: undefined },
   { label: 'ยังไม่รับทราบ', value: 'OPEN' },
   { label: 'รับทราบแล้ว', value: 'ACKNOWLEDGED' },
   { label: 'ระบบยืนยันว่าหายแล้ว', value: 'RESOLVED' },
   { label: 'ยอมรับความเสี่ยง', value: 'CLOSED_ACCEPTED' }
 ];
 const severityOptions = [
-  { label: 'ทุกระดับ', value: undefined },
   { label: 'P1 · แจ้ง Telegram', value: 'P1' },
   { label: 'P2 · ติดตามในระบบ', value: 'P2' }
 ];
-const scopeOptions = [{ label: 'ปัญหาที่ยังไม่หาย', value: 'ACTIVE' }, { label: 'รวมประวัติที่จบแล้ว', value: 'ALL' }];
+const rootCauseOptions = [{ label: 'Java Web Service / SML', value: 'SML_CONNECTIVITY' }, { label: 'ข้อมูลรายงาน', value: 'REPORT_DATA' }, { label: 'การส่ง LINE', value: 'LINE_DELIVERY' }, { label: 'ระบบ Nextstep', value: 'PLATFORM' }, { label: 'ทรัพยากร Server', value: 'CAPACITY' }];
+type RootCause = OperationalIncident['rootCause'];
+type IncidentFilters = { statuses: OperationalIncidentStatus[]; severities: OperationalIncidentSeverity[]; rootCauses: RootCause[]; activeOnly: boolean };
+const primeFilters = ref({ severity: { value: null as OperationalIncidentSeverity[] | null, matchMode: 'in' }, rootCause: { value: null as RootCause[] | null, matchMode: 'in' }, status: { value: null as OperationalIncidentStatus[] | null, matchMode: 'in' } });
+useSakaiFilterMenu(primeFilters);
+const table = useServerTable<OperationalIncident, IncidentFilters>({ initialFilters: { statuses: [], severities: [], rootCauses: [], activeOnly: true }, query: (input, signal) => adminApi.queryIncidents(input, signal) });
+const rows = table.rows; const loading = table.loading; const error = table.error;
+const showHistory = ref(false);
+const hasFilters = computed(() => Boolean(table.appliedGlobalSearch.value || table.appliedFilters.value.statuses.length || table.appliedFilters.value.severities.length || table.appliedFilters.value.rootCauses.length || !table.appliedFilters.value.activeOnly));
+function filterValue<T>(event: DataTableFilterEvent, key: string): T | undefined { return (event.filters[key] as { value?: T } | undefined)?.value; }
+function applyPrimeFilters(event: DataTableFilterEvent) { table.draftFilters.value = { statuses: filterValue<OperationalIncidentStatus[] | null>(event, 'status') ?? [], severities: filterValue<OperationalIncidentSeverity[] | null>(event, 'severity') ?? [], rootCauses: filterValue<RootCause[] | null>(event, 'rootCause') ?? [], activeOnly: !showHistory.value }; void table.applyFilters(); }
+function toggleHistory() { table.draftFilters.value.activeOnly = !showHistory.value; void table.applyFilters(); }
+function clearTableFilters() { Object.values(primeFilters.value).forEach((filter) => { filter.value = null; }); showHistory.value = false; void table.clearFilters(); }
 
 function statusLabel(value: OperationalIncidentStatus) {
   return ({ OPEN: 'ยังไม่รับทราบ', ACKNOWLEDGED: 'รับทราบแล้ว', RESOLVED: 'ระบบยืนยันว่าหายแล้ว', CLOSED_ACCEPTED: 'ยอมรับความเสี่ยง' } as const)[value];
@@ -60,36 +62,6 @@ function tenantExamplesLabel(item: OperationalIncident) {
     : examples.join(' · ');
 }
 
-async function load(reset = false) {
-  if (reset) resetCursorPagination(pagination);
-  generation++;
-  controller?.abort(reset ? 'filters-changed' : 'page-changed');
-  controller = new AbortController();
-  const requestGeneration = generation;
-  loading.value = true;
-  error.value = '';
-  try {
-    const page = await adminApi.incidents({
-      cursor: pagination.cursor,
-      status: status.value,
-      severity: severity.value,
-      scope: scope.value,
-      pageSize: pagination.pageSize
-    }, controller.signal);
-    if (requestGeneration !== generation) return;
-    rows.value = page.data;
-    acceptCursorPage(pagination, page.page.nextCursor ?? undefined, page.page.hasMore);
-  } catch (cause) {
-    if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause);
-  } finally {
-    if (requestGeneration === generation) loading.value = false;
-  }
-}
-function changePage(direction: 'previous' | 'next') { if (moveCursorPage(pagination, direction)) void load(); }
-function changePageSize(value: number) { resizeCursorPagination(pagination, value); void load(); }
-
-onMounted(() => void load(true));
-onBeforeUnmount(() => controller?.abort('unmounted'));
 </script>
 
 <template>
@@ -98,22 +70,12 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
     P1 แจ้ง Telegram เมื่อเปิดโหมดส่ง ส่วน P2 เก็บไว้ตรวจสอบในหน้านี้ ระบบจะเปลี่ยนเป็น “หายแล้ว” เมื่อมีหลักฐานจากระบบเท่านั้น
   </Message>
   <div class="card table-card">
-    <Toolbar class="mb-6 border-0 p-0">
-      <template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template>
-      <template #end>
-        <form class="flex flex-col md:flex-row gap-3" @submit.prevent="load(true)">
-          <Select v-model="severity" :options="severityOptions" option-label="label" option-value="value" aria-label="กรองระดับเหตุสำคัญ" />
-          <Select v-model="scope" :options="scopeOptions" option-label="label" option-value="value" aria-label="กรองเหตุที่ยังไม่หายหรือประวัติทั้งหมด" />
-          <Select v-model="status" :options="statusOptions" option-label="label" option-value="value" aria-label="กรองสถานะเหตุสำคัญ" />
-          <Button type="submit" label="กรอง" icon="pi pi-filter" />
-        </form>
-      </template>
-    </Toolbar>
-    <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
-    <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
-      <Column field="severity" header="ระดับ"><template #body="{ data }"><Tag :severity="data.severity === 'P1' ? 'danger' : 'warn'" :value="data.severity" /></template></Column>
+    <Message v-if="error" severity="error" :closable="false" class="mb-4">โหลดข้อมูลใหม่ไม่สำเร็จ ข้อมูลเดิมยังแสดงอยู่ · {{ error }}</Message>
+    <DataTable v-model:filters="primeFilters" :value="rows" :loading="loading" data-key="id" lazy paginator :first="table.page.value * table.pageSize.value" :rows="table.pageSize.value" :total-records="table.total.value" :rows-per-page-options="[25, 50, 100]" filter-display="menu" row-hover show-gridlines scrollable current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" @page="table.changePage" @filter="applyPrimeFilters">
+      <template #header><SakaiTableHeader v-model:global-search="table.globalSearch.value" :loading="loading" :has-filters="hasFilters" @clear="clearTableFilters"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="table.refresh()" /><div class="flex items-center gap-2"><Checkbox v-model="showHistory" binary input-id="incident-history" @change="toggleHistory" /><label for="incident-history">รวมประวัติที่จบแล้ว</label></div></template></SakaiTableHeader></template>
+      <Column field="severity" header="ระดับ" :show-filter-match-modes="false"><template #body="{ data }"><Tag :severity="data.severity === 'P1' ? 'danger' : 'warn'" :value="data.severity" /></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="severityOptions" option-label="label" option-value="value" placeholder="ทุกระดับ" /></template></Column>
       <Column field="presentation.titleTh" header="เกิดอะไรขึ้น"><template #body="{ data }"><div class="max-w-96"><div class="font-semibold">{{ data.presentation.titleTh }}</div><small class="text-muted-color">อ้างอิง {{ data.alertRef }}</small></div></template></Column>
-      <Column header="ส่วนที่ควรตรวจสอบ"><template #body="{ data }"><div class="max-w-72"><span>{{ checkArea(data) }}</span><small v-if="measurementLabel(data)" class="block text-muted-color">{{ measurementLabel(data) }}</small></div></template></Column>
+      <Column field="rootCause" header="ส่วนที่ควรตรวจสอบ" :show-filter-match-modes="false"><template #body="{ data }"><div class="max-w-72"><span>{{ checkArea(data) }}</span><small v-if="measurementLabel(data)" class="block text-muted-color">{{ measurementLabel(data) }}</small></div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="rootCauseOptions" option-label="label" option-value="value" placeholder="ทุกส่วน" /></template></Column>
       <Column field="activeAffectedCount" header="ผลกระทบที่ยังไม่หาย">
         <template #body="{ data }">
           <div>{{ impactLabel(data) }}</div>
@@ -122,10 +84,9 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
         </template>
       </Column>
       <Column field="lastSeenAt" header="พบล่าสุด"><template #body="{ data }">{{ formatDateTime(data.lastSeenAt) }}</template></Column>
-      <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="statusSeverity(data.status)" :value="statusLabel(data.status)" /></template></Column>
+      <Column field="status" header="สถานะ" :show-filter-match-modes="false"><template #body="{ data }"><Tag :severity="statusSeverity(data.status)" :value="statusLabel(data.status)" /></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="statusOptions" option-label="label" option-value="value" placeholder="ทุกสถานะ" /></template></Column>
       <Column header="" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button as="router-link" :to="`/admin/operational-incidents/${data.id}`" icon="pi pi-chevron-right" text rounded aria-label="เปิดรายละเอียดเหตุสำคัญ" /></template></Column>
-      <template #empty><div class="py-8 text-center text-muted-color">ไม่พบเหตุสำคัญตามตัวกรองนี้</div></template>
+      <template #empty><div class="py-8 text-center text-muted-color">ไม่พบเหตุสำคัญตามตัวกรองนี้ <Button v-if="hasFilters" label="ล้างตัวกรอง" text size="small" @click="clearTableFilters" /></div></template>
     </DataTable>
-    <CursorPaginator :page="pagination.page" :page-size="pagination.pageSize" :item-count="rows.length" :has-next="pagination.hasNext" :disabled="loading" @previous="changePage('previous')" @next="changePage('next')" @update:page-size="changePageSize" />
   </div>
 </template>

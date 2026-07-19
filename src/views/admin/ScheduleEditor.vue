@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import type { DataTableFilterEvent } from 'primevue/datatable';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { adminApi, ApiError, type AdminReportCatalog, type FlexPreview, type Schedule, type ScheduleInput, type ScheduleRecipientOption, type Tenant } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import LineFlexPreview from '@/components/LineFlexPreview.vue';
 import ReportPickerPanel from '@/components/admin/ReportPickerPanel.vue';
+import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 import { beginAdminTenantContext, setAdminTenantContext } from '@/stores/adminTenantContext';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 import { errorMessage, formatDateTime } from '@/utils/format';
@@ -21,11 +24,20 @@ const editing = computed(() => !!scheduleId);
 const tenant = ref<Tenant>();
 const schedule = ref<Schedule>();
 const recipients = ref<ScheduleRecipientOption[]>([]);
+const selectedRecipientOptions = ref<ScheduleRecipientOption[]>([]);
 const recipientSearch = ref('');
 const recipientPage = ref(0);
-const recipientPageSize = ref(25);
+const recipientPageSize = ref<25 | 50 | 100>(25);
 const recipientTotal = ref(0);
 const loadingRecipients = ref(false);
+type RecipientStatus = 'PENDING' | 'ACTIVE';
+type EligibilityState = 'ELIGIBLE' | 'NOT_ACTIVE' | 'MISSING_PERMISSIONS';
+const recipientPrimeFilters = ref({
+  status: { value: null as RecipientStatus[] | null, matchMode: 'in' },
+  eligibility: { value: null as EligibilityState[] | null, matchMode: 'in' }
+});
+useSakaiFilterMenu(recipientPrimeFilters);
+const appliedRecipientFilters = ref<{ statuses: RecipientStatus[]; eligibilityStates: EligibilityState[] }>({ statuses: [], eligibilityStates: [] });
 const catalog = ref<AdminReportCatalog>();
 const preview = ref<FlexPreview>();
 const loading = ref(true);
@@ -48,8 +60,11 @@ const presets = schedulePeriodOptions;
 const fingerprint = computed(() => JSON.stringify({ ...form, daysOfWeek: [...form.daysOfWeek].sort(), reportKeys: [...form.reportKeys], recipientIds: [...form.recipientIds].sort() }));
 const dirty = computed(() => !!baseline.value && fingerprint.value !== baseline.value);
 const selectedRecipientSet = computed(() => new Set(form.recipientIds));
+const recipientOptionsById = computed(() => new Map([...selectedRecipientOptions.value, ...recipients.value].map((item) => [item.id, item])));
 const maxReports = computed(() => catalog.value?.limits.maxScheduleReports ?? 10);
-const invalidSelectedRecipients = computed(() => form.recipientIds.filter((id) => recipients.value.find((item) => item.id === id)?.eligible !== true));
+const invalidSelectedRecipients = computed(() => form.recipientIds.filter((id) => recipientOptionsById.value.get(id)?.eligible !== true));
+const invalidSelectedOptions = computed(() => invalidSelectedRecipients.value.map((id) => recipientOptionsById.value.get(id)).filter((item): item is ScheduleRecipientOption => Boolean(item)));
+const recipientHasFilters = computed(() => Boolean(recipientSearch.value.trim() || appliedRecipientFilters.value.statuses.length || appliedRecipientFilters.value.eligibilityStates.length));
 const scheduleTimingValid = computed(() => form.daysOfWeek.length > 0 && /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(form.localTime));
 const definitionsByKey = computed(() => new Map(catalog.value?.data.map((item) => [item.reportKey, item]) ?? []));
 const periodModesReady = computed(() => form.reportKeys.every((key) => ['DATE_RANGE', 'AS_OF_DATE', 'CURRENT_ONLY'].includes(definitionsByKey.value.get(key)?.periodMode ?? '')));
@@ -109,7 +124,7 @@ async function load() {
 }
 
 async function loadRecipientOptions(resetPage = false) {
-  if (!form.reportKeys.length) { recipients.value = []; recipientTotal.value = 0; return; }
+  if (!form.reportKeys.length) { recipients.value = []; selectedRecipientOptions.value = []; recipientTotal.value = 0; return; }
   if (resetPage) recipientPage.value = 0;
   recipientController?.abort('recipient-options-replaced');
   const requestController = new AbortController();
@@ -117,21 +132,42 @@ async function loadRecipientOptions(resetPage = false) {
   const generation = ++recipientGeneration;
   loadingRecipients.value = true;
   try {
+    const normalizedSearch = recipientSearch.value.trim();
     const result = await adminApi.scheduleRecipientOptions(tenantId, {
-      reportKeys: [...form.reportKeys], selectedRecipientIds: [...form.recipientIds], search: recipientSearch.value.trim(), page: recipientPage.value, pageSize: recipientPageSize.value
+      reportKeys: [...form.reportKeys], selectedRecipientIds: [...form.recipientIds],
+      globalSearch: normalizedSearch.length >= 2 ? normalizedSearch : undefined,
+      statuses: appliedRecipientFilters.value.statuses,
+      eligibilityStates: appliedRecipientFilters.value.eligibilityStates,
+      page: recipientPage.value, pageSize: recipientPageSize.value
     }, requestController.signal);
     if (generation !== recipientGeneration) return;
-    const merged = new Map([...result.selected, ...result.data].map((item) => [item.id, item]));
-    recipients.value = [...merged.values()];
+    recipients.value = result.data;
+    selectedRecipientOptions.value = result.selected;
     recipientTotal.value = result.total;
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) toast.add({ severity: 'error', summary: 'โหลดความพร้อมผู้รับไม่สำเร็จ', detail: errorMessage(cause), life: 5000 });
   } finally { if (generation === recipientGeneration) loadingRecipients.value = false; }
 }
 
+function recipientFilterValue<T>(event: DataTableFilterEvent, key: string): T | undefined { return (event.filters[key] as { value?: T } | undefined)?.value; }
+function applyRecipientFilters(event: DataTableFilterEvent) {
+  appliedRecipientFilters.value = {
+    statuses: recipientFilterValue<RecipientStatus[] | null>(event, 'status') ?? [],
+    eligibilityStates: recipientFilterValue<EligibilityState[] | null>(event, 'eligibility') ?? []
+  };
+  void loadRecipientOptions(true);
+}
+function clearRecipientFilters() {
+  recipientPrimeFilters.value.status.value = null;
+  recipientPrimeFilters.value.eligibility.value = null;
+  appliedRecipientFilters.value = { statuses: [], eligibilityStates: [] };
+  recipientSearch.value = '';
+  void loadRecipientOptions(true);
+}
+
 function changeRecipientPage(event: { page: number; rows: number }) {
   recipientPage.value = event.rows === recipientPageSize.value ? event.page : 0;
-  recipientPageSize.value = event.rows;
+  recipientPageSize.value = event.rows as 25 | 50 | 100;
   void loadRecipientOptions();
 }
 
@@ -189,7 +225,11 @@ function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value) { event.preve
 function onVisibilityChange() { if (!document.hidden && form.reportKeys.length) void loadRecipientOptions(); }
 watch(() => [form.periodPreset, form.localTime, ...form.daysOfWeek, ...form.reportKeys], () => { previewController?.abort('preview-input-changed'); preview.value = undefined; });
 watch(() => [...form.reportKeys], () => { serverConflict.value = undefined; conflictAcknowledged.value = false; void loadRecipientOptions(true); });
-watch(recipientSearch, () => { clearTimeout(recipientSearchTimer); recipientSearchTimer = setTimeout(() => { void loadRecipientOptions(true); }, 250); });
+watch(recipientSearch, (value) => {
+  clearTimeout(recipientSearchTimer);
+  if (value.trim().length === 1) return;
+  recipientSearchTimer = setTimeout(() => { void loadRecipientOptions(true); }, 400);
+});
 watch(form, () => { if (!saving.value) actionKey = ''; }, { deep: true });
 onBeforeRouteLeave(() => !dirty.value || window.confirm('มีตารางส่งรายงานที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่'));
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); window.addEventListener('focus', onVisibilityChange); document.addEventListener('visibilitychange', onVisibilityChange); void load(); });
@@ -211,11 +251,10 @@ onBeforeUnmount(() => { controller.abort('unmount'); previewController?.abort('u
       </div>
 
       <div class="card">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">2. ผู้รับ LINE</h2><p class="text-muted-color mt-1 mb-0">ผู้รับต้องยืนยัน LINE และมีสิทธิ์เปิดดู Dashboard ครบทุกรายงานที่เลือก</p></div><div class="flex flex-wrap gap-2"><IconField><InputIcon class="pi pi-search" /><InputText v-model="recipientSearch" placeholder="ค้นหาชื่อผู้รับ" aria-label="ค้นหาผู้รับ" /></IconField><Button v-if="invalidSelectedRecipients.length" label="นำผู้รับที่ไม่พร้อมออก" icon="pi pi-user-minus" severity="warn" outlined class="touch-action" @click="removeInvalidRecipients" /></div></div>
-        <Message v-if="invalidSelectedRecipients.length" severity="error" :closable="false" class="mb-4">ผู้รับที่เลือกไว้ {{ invalidSelectedRecipients.length }} คนไม่พร้อม ระบบคงรายการไว้ให้ตรวจสอบและจะยังไม่อนุญาตให้บันทึก</Message>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold m-0">2. ผู้รับ LINE</h2><p class="text-muted-color mt-1 mb-0">ผู้รับต้องยืนยัน LINE และมีสิทธิ์เปิดดู Dashboard ครบทุกรายงานที่เลือก</p></div><Button v-if="invalidSelectedRecipients.length" label="นำผู้รับที่ไม่พร้อมออก" icon="pi pi-user-minus" severity="warn" outlined class="touch-action" @click="removeInvalidRecipients" /></div>
+        <Message v-if="invalidSelectedRecipients.length" severity="error" :closable="false" class="mb-4"><strong>ผู้รับที่เลือกไว้ {{ invalidSelectedRecipients.length }} คนไม่พร้อม</strong><div class="mt-1">ระบบคงรายการไว้แม้อยู่คนละหน้าหรือไม่ตรงกับตัวกรอง และจะยังไม่อนุญาตให้บันทึก</div><ul v-if="invalidSelectedOptions.length" class="mt-2 mb-0 pl-5"><li v-for="item in invalidSelectedOptions" :key="item.id">{{ item.displayName }}</li></ul></Message>
         <Message v-if="!form.reportKeys.length" severity="info" :closable="false">เลือกรายงานในขั้นตอนที่ 1 ก่อน ระบบจึงจะตรวจความพร้อมของผู้รับได้</Message>
-        <DataTable v-else :value="recipients" data-key="id" striped-rows responsive-layout="scroll" :loading="loadingRecipients"><Column header="เลือก" style="width:5rem" header-class="table-select-column" body-class="table-select-column"><template #body="{ data }"><Checkbox :model-value="selectedRecipientSet.has(data.id)" binary :disabled="readOnly || !data.eligible" :aria-label="`เลือกผู้รับ ${data.displayName}`" @update:model-value="toggleRecipient(data, $event)" /></template></Column><Column field="displayName" header="ผู้รับ" /><Column header="ความพร้อม"><template #body="{ data }"><Tag v-if="data.status !== 'ACTIVE'" value="ยังไม่ยืนยัน LINE" severity="warn" /><Tag v-else-if="!data.eligible" :value="`ขาดสิทธิ์ ${data.missingReportKeys.length} รายงาน`" severity="danger" /><Tag v-else value="พร้อมรับรายงานครบ" severity="success" /></template></Column><Column header="การจัดการ" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><RouterLink v-if="data.missingReportKeys.length" :to="{ name: 'admin-recipient-permissions', params: { tenantId, recipientId: data.id } }" target="_blank" rel="noopener noreferrer" class="permission-link"><i class="pi pi-external-link" /> แก้สิทธิ์</RouterLink></template></Column><template #empty><div class="py-8 text-center text-muted-color">ไม่พบผู้รับที่ตรงกับเงื่อนไข</div></template></DataTable>
-        <div v-if="form.reportKeys.length" class="mt-3"><small class="text-muted-color">พบ {{ recipientTotal.toLocaleString('th-TH') }} คน · เลือกแล้ว {{ form.recipientIds.length.toLocaleString('th-TH') }} คน</small><Paginator :first="recipientPage * recipientPageSize" :rows="recipientPageSize" :total-records="recipientTotal" :rows-per-page-options="[25, 50, 100]" template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" :pt="{ root: { 'aria-label': 'เปลี่ยนหน้ารายชื่อผู้รับ' } }" @page="changeRecipientPage" /></div>
+        <DataTable v-else v-model:filters="recipientPrimeFilters" :value="recipients" data-key="id" lazy paginator :first="recipientPage * recipientPageSize" :rows="recipientPageSize" :total-records="recipientTotal" :rows-per-page-options="[25, 50, 100]" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" filter-display="menu" row-hover show-gridlines striped-rows responsive-layout="scroll" :loading="loadingRecipients" @page="changeRecipientPage" @filter="applyRecipientFilters"><template #header><SakaiTableHeader v-model:global-search="recipientSearch" :loading="loadingRecipients" :has-filters="recipientHasFilters" @clear="clearRecipientFilters"><template #start><small class="text-muted-color">เลือกแล้ว {{ form.recipientIds.length.toLocaleString('th-TH') }} คน</small></template></SakaiTableHeader></template><Column header="เลือก" style="width:5rem" header-class="table-select-column" body-class="table-select-column"><template #body="{ data }"><Checkbox :model-value="selectedRecipientSet.has(data.id)" binary :disabled="readOnly || !data.eligible" :aria-label="`เลือกผู้รับ ${data.displayName}`" @update:model-value="toggleRecipient(data, $event)" /></template></Column><Column field="displayName" header="ผู้รับ" /><Column field="status" header="สถานะ LINE" :show-filter-match-modes="false"><template #body="{ data }"><Tag :value="data.status === 'ACTIVE' ? 'ใช้งาน' : 'ยังไม่ยืนยัน LINE'" :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" /></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="[{ label: 'ใช้งาน', value: 'ACTIVE' }, { label: 'ยังไม่ยืนยัน LINE', value: 'PENDING' }]" option-label="label" option-value="value" placeholder="ทุกสถานะ" /></template></Column><Column field="eligibility" header="ความพร้อม" :show-filter-match-modes="false"><template #body="{ data }"><Tag v-if="data.status !== 'ACTIVE'" value="ยังไม่ยืนยัน LINE" severity="warn" /><Tag v-else-if="!data.eligible" :value="`ขาดสิทธิ์ ${data.missingReportKeys.length} รายงาน`" severity="danger" /><Tag v-else value="พร้อมรับรายงานครบ" severity="success" /></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="[{ label: 'พร้อมรับรายงานครบ', value: 'ELIGIBLE' }, { label: 'ยังไม่ยืนยัน LINE', value: 'NOT_ACTIVE' }, { label: 'ขาดสิทธิ์รายงาน', value: 'MISSING_PERMISSIONS' }]" option-label="label" option-value="value" placeholder="ทุกความพร้อม" /></template></Column><Column header="การจัดการ" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><RouterLink v-if="data.missingReportKeys.length" :to="{ name: 'admin-recipient-permissions', params: { tenantId, recipientId: data.id } }" target="_blank" rel="noopener noreferrer" class="permission-link"><i class="pi pi-external-link" /> แก้สิทธิ์</RouterLink></template></Column><template #empty><div class="py-8 text-center text-muted-color">ไม่พบผู้รับที่ตรงกับตัวกรอง <Button v-if="recipientHasFilters" label="ล้างตัวกรอง" text size="small" @click="clearRecipientFilters" /></div></template></DataTable>
       </div>
 
       <div class="card">

@@ -1,7 +1,7 @@
 ---
 status: current
 last_verified: 2026-07-19
-source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue]
+source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue, src/composables/useServerTable.ts]
 tags: [frontend, viewer, admin, routing]
 ---
 
@@ -82,8 +82,9 @@ Permission and schedule selection are different concepts:
 
 ## Admin Table Navigation
 
-- Admin history tables use server-side filtering and bounded cursor pagination;
-  changing filters resets the cursor chain and aborts obsolete requests.
+- Admin history tables use typed server-side filtering, exact totals, and
+  numbered 25/50/100-row pagination. Column values remain draft state until
+  Apply; applying or clearing resets to page one and aborts obsolete requests.
 - Recipient tables return an exact filtered total for PrimeVue pagination. Search,
   status, and permission filters are evaluated before paging, while selections
   outside the visible page remain intact.
@@ -91,6 +92,9 @@ Permission and schedule selection are different concepts:
   the server. Selecting `ARCHIVED` explicitly enables archived rows.
 - Small catalog/picker tables use local PrimeVue filtering and 25/50/100-row
   pagination because their full bounded catalogs are already in browser memory.
+- All PrimeVue tables follow the shared Sakai filter-menu/header interaction.
+  Numeric, selection, and action columns keep their semantic alignment; action
+  and selection columns are never filterable.
 - Every table keeps numeric/action/select alignment semantics and must preserve
   loading, empty, denied, and error states at mobile and desktop widths.
 

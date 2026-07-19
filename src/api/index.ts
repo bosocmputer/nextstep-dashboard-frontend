@@ -7,6 +7,8 @@ import type {
   DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot,
   DeliveryContext, DeliveryReportContext, PermissionDependencies, ScheduleRecipientOptions, ScheduleRecipientOptionsInput,
   OperationalIncident, OperationalIncidentDetail, OperationalIncidentPage, OperationalIncidentStatus, OperationalIncidentSeverity, OperationalIncidentOccurrencePage, RecipientQueryInput, RecipientQueryResult
+  , TenantsTableQueryInput, TenantsTableQueryResult, SchedulesTableQueryInput, SchedulesTableQueryResult, ReportRunsTableQueryInput, ReportRunsTableQueryResult,
+  DeliveriesTableQueryInput, DeliveriesTableQueryResult, AuditTableQueryInput, AuditTableQueryResult, IncidentsTableQueryInput, IncidentsTableQueryResult, OccurrencesTableQueryInput, OccurrencesTableQueryResult
 } from './types';
 
 const api = '/api/v1';
@@ -18,6 +20,7 @@ export const adminApi = {
   rotatePassword: (currentPassword: string, newPassword: string) => apiRequest<AdminSession>(`${api}/auth/admin/password`, { method: 'PUT', scope: 'admin', body: { currentPassword, newPassword } }),
   reports: (signal?: AbortSignal) => apiRequest<AdminReportCatalog>(`${api}/admin/reports`, { signal }),
   listTenants: (filters: { cursor?: string; pageSize?: number; status?: string; search?: string } = {}, signal?: AbortSignal) => apiRequest<TenantPage>(`${api}/admin/tenants${queryString(filters)}`, { signal }),
+  queryTenants: (input: TenantsTableQueryInput, signal?: AbortSignal) => apiRequest<TenantsTableQueryResult>(`${api}/admin/tenants/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   createTenant: (input: TenantInput, idempotencyKey = newIdempotencyKey('tenant')) => apiRequest<Tenant>(`${api}/admin/tenants`, { method: 'POST', scope: 'admin', idempotencyKey, body: input }),
   getTenant: (tenantId: string) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`),
   updateTenant: (tenantId: string, input: TenantPatch) => apiRequest<Tenant>(`${api}/admin/tenants/${tenantId}`, { method: 'PATCH', scope: 'admin', body: input }),
@@ -34,9 +37,10 @@ export const adminApi = {
   reissueRecipientInvitation: (tenantId: string, recipientId: string, idempotencyKey = newIdempotencyKey('recipient-reissue')) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/invitation`, { method: 'POST', scope: 'admin', idempotencyKey }),
   replacePermissions: (tenantId: string, recipientId: string, reportKeys: ReportKey[], version: number) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/permissions`, { method: 'PUT', scope: 'admin', body: { reportKeys, version } }),
   permissionDependencies: (tenantId: string, recipientId: string, signal?: AbortSignal) => apiRequest<PermissionDependencies>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/permission-dependencies`, { signal }),
-  scheduleRecipientOptions: (tenantId: string, input: ScheduleRecipientOptionsInput, signal?: AbortSignal) => apiRequest<ScheduleRecipientOptions>(`${api}/admin/tenants/${tenantId}/schedule-recipient-options/query`, { method: 'POST', body: input, signal }),
+  scheduleRecipientOptions: (tenantId: string, input: ScheduleRecipientOptionsInput, signal?: AbortSignal) => apiRequest<ScheduleRecipientOptions>(`${api}/admin/tenants/${tenantId}/schedule-recipient-options/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   revokeRecipient: (tenantId: string, recipientId: string) => apiRequest<void>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}`, { method: 'DELETE', scope: 'admin' }),
   listSchedules: (tenantId: string, filters: { cursor?: string; pageSize?: number; includeArchived?: boolean; status?: string; search?: string } = {}, signal?: AbortSignal) => apiRequest<SchedulePage>(`${api}/admin/tenants/${tenantId}/schedules${queryString({ ...filters, pageSize: filters.pageSize ?? 25, includeArchived: filters.includeArchived ? 'true' : 'false' })}`, { signal }),
+  querySchedules: (tenantId: string, input: SchedulesTableQueryInput, signal?: AbortSignal) => apiRequest<SchedulesTableQueryResult>(`${api}/admin/tenants/${tenantId}/schedules/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   getSchedule: (tenantId: string, scheduleId: string, signal?: AbortSignal) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}`, { signal }),
   createSchedule: (tenantId: string, input: ScheduleInput, idempotencyKey = newIdempotencyKey('schedule')) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules`, { method: 'POST', scope: 'admin', idempotencyKey, body: input }),
   previewSchedule: (tenantId: string, input: FlexPreviewInput, signal?: AbortSignal) => apiRequest<FlexPreview>(`${api}/admin/tenants/${tenantId}/schedules/preview`, { method: 'POST', scope: 'admin', body: input, signal }),
@@ -48,12 +52,17 @@ export const adminApi = {
   testSendSchedule: (tenantId: string, scheduleId: string, idempotencyKey = newIdempotencyKey('schedule-test-send')) => apiRequest<NotificationExecution>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/test-send`, { method: 'POST', scope: 'admin', idempotencyKey }),
   lineQuota: () => apiRequest<LineQuotaStatus>(`${api}/admin/line-quota`),
   reportRuns: (filters: { cursor?: string; pageSize?: number; tenantId?: string; status?: string; reportKey?: ReportKey; source?: string; dateFrom?: string; dateTo?: string } = {}, signal?: AbortSignal) => apiRequest<ReportRunPage>(`${api}/admin/report-runs${queryString({ ...filters, pageSize: filters.pageSize ?? 25 })}`, { signal }),
+  queryReportRuns: (input: ReportRunsTableQueryInput, signal?: AbortSignal) => apiRequest<ReportRunsTableQueryResult>(`${api}/admin/report-runs/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   reportRun: (runId: string, signal?: AbortSignal) => apiRequest<ReportRunDetail>(`${api}/admin/report-runs/${runId}`, { signal }),
   deliveries: (filters: { cursor?: string; pageSize?: number; tenantId?: string; status?: string; recipientId?: string; dateFrom?: string; dateTo?: string } = {}, signal?: AbortSignal) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: filters.pageSize ?? 25 })}`, { signal }),
+  queryDeliveries: (input: DeliveriesTableQueryInput, signal?: AbortSignal) => apiRequest<DeliveriesTableQueryResult>(`${api}/admin/line-deliveries/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   audit: (filters: { cursor?: string; pageSize?: number; tenantId?: string; actorType?: string; action?: string; result?: string; dateFrom?: string; dateTo?: string } = {}, signal?: AbortSignal) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: filters.pageSize ?? 25 })}`, { signal }),
+  queryAudit: (input: AuditTableQueryInput, signal?: AbortSignal) => apiRequest<AuditTableQueryResult>(`${api}/admin/audit-logs/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   incidents: (filters: { cursor?: string; status?: OperationalIncidentStatus; severity?: OperationalIncidentSeverity; scope?: 'ACTIVE' | 'ALL'; pageSize?: number } = {}, signal?: AbortSignal) => apiRequest<OperationalIncidentPage>(`${api}/admin/operational-incidents${queryString({ ...filters, scope: filters.scope ?? 'ACTIVE', pageSize: filters.pageSize ?? 50 })}`, { signal }),
+  queryIncidents: (input: IncidentsTableQueryInput, signal?: AbortSignal) => apiRequest<IncidentsTableQueryResult>(`${api}/admin/operational-incidents/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   incident: (incidentId: string, signal?: AbortSignal) => apiRequest<OperationalIncidentDetail>(`${api}/admin/operational-incidents/${incidentId}`, { signal }),
   incidentOccurrences: (incidentId: string, cursor?: string, signal?: AbortSignal, pageSize = 25) => apiRequest<OperationalIncidentOccurrencePage>(`${api}/admin/operational-incidents/${incidentId}/occurrences${queryString({ cursor, pageSize })}`, { signal }),
+  queryIncidentOccurrences: (incidentId: string, input: OccurrencesTableQueryInput, signal?: AbortSignal) => apiRequest<OccurrencesTableQueryResult>(`${api}/admin/operational-incidents/${incidentId}/occurrences/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   acknowledgeIncident: (incident: OperationalIncident) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/acknowledge`, { method: 'POST', scope: 'admin', body: { version: incident.version } }),
   acceptIncidentRisk: (incident: OperationalIncident, reason: string) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/accept-risk`, { method: 'POST', scope: 'admin', body: { version: incident.version, reason } })
 };

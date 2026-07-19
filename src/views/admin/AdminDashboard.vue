@@ -3,11 +3,17 @@ import { computed, onMounted, ref } from 'vue';
 import { apiRequest } from '@/api/client';
 import { adminApi, type AdminReportDefinition, type LineQuotaStatus } from '@/api';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
+import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 
 const ready = ref<'checking' | 'ready' | 'unavailable'>('checking');
 const lineQuota = ref<LineQuotaStatus>();
 const reportDefinitions = ref<AdminReportDefinition[]>([]);
-const reportFilters = ref({ global: { value: null as string | null, matchMode: 'contains' } });
+const reportFilters = ref({
+  global: { value: null as string | null, matchMode: 'contains' },
+  categoryLabel: { value: null as string[] | null, matchMode: 'in' }
+});
+useSakaiFilterMenu(reportFilters);
 onMounted(async () => {
   const [healthResult, quotaResult, reportResult] = await Promise.allSettled([
     apiRequest('/api/v1/health/ready', { timeoutMs: 3000 }), adminApi.lineQuota(), loadAdminReportCatalog()
@@ -36,6 +42,12 @@ const quotaSeverity = computed(() => {
   }
   return 'success';
 });
+const reportSearch = computed({ get: () => reportFilters.value.global.value ?? '', set: (value: string) => { reportFilters.value.global.value = value || null; } });
+const reportCategories = computed(() => [...new Set(reportDefinitions.value.map((item) => item.categoryLabel))].map((value) => ({ label: value, value })));
+const hasReportFilters = computed(() => Boolean(reportSearch.value || reportFilters.value.categoryLabel.value?.length));
+function clearReportFilters() {
+  reportFilters.value = { global: { value: null, matchMode: 'contains' }, categoryLabel: { value: null, matchMode: 'in' } };
+}
 
 const shortcuts = [
   { label: 'จัดการร้านค้า', detail: 'SML ผู้รับ และตารางส่งรายงาน', icon: 'pi-building', to: '/admin/tenants' },
@@ -63,12 +75,13 @@ const shortcuts = [
       <div class="flex items-start justify-between gap-4"><div><h2 class="text-lg font-semibold mt-0 mb-2">{{ item.label }}</h2><p class="m-0 text-muted-color">{{ item.detail }}</p></div><span class="grid place-items-center w-11 h-11 rounded-md bg-primary-50 dark:bg-primary-950 text-primary"><i :class="['pi', item.icon]" /></span></div>
     </RouterLink>
   </div>
-  <div class="card">
-    <div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 class="text-xl font-semibold m-0">รายงานที่รองรับ</h2><p class="text-muted-color mt-1 mb-0">ใช้เฉพาะคำสั่ง SQL ที่ระบบตรวจสอบไว้ล่วงหน้า</p></div><div class="flex items-center gap-3"><IconField><InputIcon class="pi pi-search" /><InputText v-model="reportFilters.global.value" placeholder="ค้นหารายงานหรือหมวด" aria-label="ค้นหารายงานที่รองรับ" /></IconField><Badge :value="reportDefinitions.length" /></div></div>
-    <DataTable v-model:filters="reportFilters" :value="reportDefinitions" data-key="reportKey" :global-filter-fields="['label', 'categoryLabel']" paginator :rows="25" :rows-per-page-options="[25, 50, 100]" paginator-template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" striped-rows responsive-layout="scroll">
+  <div class="card table-card">
+    <div class="mb-4"><h2 class="text-xl font-semibold m-0">รายงานที่รองรับ</h2><p class="text-muted-color mt-1 mb-0">ใช้เฉพาะคำสั่ง SQL ที่ระบบตรวจสอบไว้ล่วงหน้า</p></div>
+    <DataTable v-model:filters="reportFilters" :value="reportDefinitions" data-key="reportKey" :global-filter-fields="['label', 'categoryLabel']" filter-display="menu" row-hover show-gridlines paginator :rows="25" :rows-per-page-options="[25, 50, 100]" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" striped-rows responsive-layout="scroll">
+      <template #header><SakaiTableHeader v-model:global-search="reportSearch" :has-filters="hasReportFilters" @clear="clearReportFilters"><template #start><Badge :value="reportDefinitions.length" /></template></SakaiTableHeader></template>
       <Column field="label" header="ชื่อรายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span></template></Column>
-      <Column field="categoryLabel" header="หมวด"><template #body="{ data }"><Tag severity="secondary" :value="data.categoryLabel" /></template></Column>
-      <template #empty>ยังไม่มีนิยามรายงาน</template>
+      <Column field="categoryLabel" header="หมวด" :show-filter-match-modes="false"><template #body="{ data }"><Tag severity="secondary" :value="data.categoryLabel" /></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="reportCategories" option-label="label" option-value="value" placeholder="ทุกหมวด" /></template></Column>
+      <template #empty><div class="py-8 text-center text-muted-color">ไม่พบรายงานที่ตรงกับตัวกรอง <Button v-if="hasReportFilters" label="ล้างตัวกรอง" text size="small" @click="clearReportFilters" /></div></template>
     </DataTable>
   </div>
 </template>

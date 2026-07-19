@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import type { DataTableFilterEvent } from 'primevue/datatable';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { useConfirm } from 'primevue/useconfirm';
-import { ApiError, adminApi, type AdminReportDefinition, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentOccurrence, type OperationalIncidentStatus, type SMLConnectionTestResult } from '@/api';
+import { ApiError, adminApi, type AdminReportDefinition, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentOccurrence, type OperationalIncidentStatus, type ReportKey, type SMLConnectionTestResult } from '@/api';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
-import CursorPaginator from '@/components/admin/CursorPaginator.vue';
-import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
+import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import { useServerTable } from '@/composables/useServerTable';
+import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 import {
   buildCodexIncidentText, causalChain, evidenceLevelLabel, eventKindLabel, formatDurationMs,
   lineImpactLabel, reportImpactLabel, sourceKindLabel, triggerKindLabel
@@ -24,17 +26,33 @@ const error = ref('');
 const acceptDialog = ref(false);
 const acceptReason = ref('');
 const reportDefinitions = ref<AdminReportDefinition[]>([]);
-const occurrences = ref<OperationalIncidentOccurrence[]>([]);
-const occurrencePagination = reactive(createCursorPagination());
-const occurrenceLoading = ref(false);
-const eventFilters = ref({ global: { value: null as string | null, matchMode: 'contains' } });
+const eventFilters = ref({
+  global: { value: null as string | null, matchMode: 'contains' },
+  eventKind: { value: null as string[] | null, matchMode: 'in' },
+  sourceKind: { value: null as string[] | null, matchMode: 'in' }
+});
 const testingTenantId = ref('');
 const testResults = ref<Record<string, SMLConnectionTestResult>>({});
 let controller: AbortController | undefined;
-let occurrenceController: AbortController | undefined;
-let occurrenceGeneration = 0;
 
 const incidentId = computed(() => String(route.params.incidentId || ''));
+type OccurrenceSource = OperationalIncidentOccurrence['sourceKind'];
+type OccurrenceFilters = { reportKeys: ReportKey[]; sourceKinds: OccurrenceSource[]; safeErrorCodes: string[]; dateFrom?: string; dateTo?: string };
+const occurrencePrimeFilters = ref({
+  reportKey: { value: null as string[] | null, matchMode: 'in' },
+  sourceKind: { value: null as OccurrenceSource[] | null, matchMode: 'in' },
+  safeErrorCode: { value: null as string[] | null, matchMode: 'in' },
+  observedAt: { value: null as Date[] | null, matchMode: 'between' }
+});
+useSakaiFilterMenu(eventFilters);
+useSakaiFilterMenu(occurrencePrimeFilters);
+const occurrenceTable = useServerTable<OperationalIncidentOccurrence, OccurrenceFilters>({
+  immediate: false,
+  initialFilters: { reportKeys: [], sourceKinds: [], safeErrorCodes: [] },
+  query: (input, signal) => adminApi.queryIncidentOccurrences(incidentId.value, input, signal)
+});
+const occurrences = occurrenceTable.rows;
+const occurrenceLoading = occurrenceTable.loading;
 const canAcknowledge = computed(() => incident.value?.status === 'OPEN');
 const canAcceptRisk = computed(() => incident.value?.status === 'OPEN' || incident.value?.status === 'ACKNOWLEDGED');
 const unsafeReason = computed(() => /(https?:\/\/|\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b|\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b|\b[0-9]{8,}\b|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b[0-9]{5,16}:[A-Za-z0-9_-]{24,}\b|(?:deliveryRef|[?&]ref)=)/i.test(acceptReason.value));
@@ -43,6 +61,30 @@ const reportDefinitionByKey = computed(() => new Map(reportDefinitions.value.map
 const primaryEvent = computed(() => incident.value?.events.find((event) => event.failureEvidence && !event.isDownstream) ?? incident.value?.events.find((event) => event.failureEvidence));
 const chain = computed(() => causalChain(primaryEvent.value));
 const affectedLabel = computed(() => incident.value?.causeBreakdown?.[0]?.affectedLabelTh ?? 'ส่วนที่ได้รับผล');
+const eventGlobalSearch = computed({
+  get: () => eventFilters.value.global.value ?? '',
+  set: (value: string) => { eventFilters.value.global.value = value || null; }
+});
+const eventHasFilters = computed(() => Boolean(eventGlobalSearch.value || eventFilters.value.eventKind.value?.length || eventFilters.value.sourceKind.value?.length));
+const occurrenceHasFilters = computed(() => Boolean(
+  occurrenceTable.appliedGlobalSearch.value || occurrenceTable.appliedFilters.value.reportKeys.length ||
+  occurrenceTable.appliedFilters.value.sourceKinds.length || occurrenceTable.appliedFilters.value.safeErrorCodes.length ||
+  occurrenceTable.appliedFilters.value.dateFrom || occurrenceTable.appliedFilters.value.dateTo
+));
+const eventKindOptions = computed(() => [...new Set(incident.value?.events.map((item) => item.eventKind) ?? [])].map((value) => ({ label: eventKindLabel(value), value })));
+const sourceKindOptions = computed(() => [...new Set([
+  ...(incident.value?.events.map((item) => item.sourceKind) ?? []),
+  ...occurrences.value.map((item) => item.sourceKind)
+])].map((value) => ({ label: sourceKindLabel(value), value })));
+const reportOptions = computed(() => reportDefinitions.value.map((item) => ({ label: item.label, value: item.reportKey })));
+const safeErrorOptions = computed(() => {
+  const labels = new Map<string, string>();
+  for (const item of occurrences.value) {
+    if (!item.safeErrorCode || labels.has(item.safeErrorCode)) continue;
+    labels.set(item.safeErrorCode, item.failureEvidence?.presentation.titleTh ?? 'ปัญหาที่ระบบบันทึกไว้');
+  }
+  return [...labels].map(([value, label]) => ({ label, value }));
+});
 
 function statusLabel(value: OperationalIncidentStatus) {
   return ({ OPEN: 'ยังไม่รับทราบ', ACKNOWLEDGED: 'รับทราบแล้ว', RESOLVED: 'ระบบยืนยันว่าหายแล้ว', CLOSED_ACCEPTED: 'ยอมรับความเสี่ยง' } as const)[value];
@@ -60,13 +102,13 @@ function eventTitle(event: OperationalIncidentEvent) {
 
 async function load() {
   controller?.abort('superseded');
-  occurrenceController?.abort('incident-reloaded');
   controller = new AbortController();
   loading.value = true;
   error.value = '';
   try {
     incident.value = await adminApi.incident(incidentId.value, controller.signal);
-    void loadOccurrences(true);
+    occurrenceTable.page.value = 0;
+    void occurrenceTable.refresh();
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause);
   } finally {
@@ -74,26 +116,37 @@ async function load() {
   }
 }
 
-async function loadOccurrences(reset = false) {
-  if (reset) resetCursorPagination(occurrencePagination);
-  occurrenceGeneration++;
-  occurrenceController?.abort(reset ? 'occurrences-reloaded' : 'occurrence-page-changed');
-  occurrenceController = new AbortController();
-  const requestGeneration = occurrenceGeneration;
-  occurrenceLoading.value = true;
-  try {
-    const page = await adminApi.incidentOccurrences(incidentId.value, occurrencePagination.cursor, occurrenceController.signal, occurrencePagination.pageSize);
-    if (requestGeneration !== occurrenceGeneration) return;
-    occurrences.value = page.data;
-    acceptCursorPage(occurrencePagination, page.page.nextCursor ?? undefined, page.page.hasMore);
-  } catch (cause) {
-    if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause);
-  } finally {
-    if (requestGeneration === occurrenceGeneration) occurrenceLoading.value = false;
-  }
+function dateFilterValue(value: unknown): string | undefined {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return undefined;
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
-function changeOccurrencePage(direction: 'previous' | 'next') { if (moveCursorPage(occurrencePagination, direction)) void loadOccurrences(); }
-function changeOccurrencePageSize(value: number) { resizeCursorPagination(occurrencePagination, value); void loadOccurrences(); }
+function occurrenceFilterValue<T>(event: DataTableFilterEvent, key: string): T | undefined {
+  return (event.filters[key] as { value?: T } | undefined)?.value;
+}
+function applyOccurrenceFilters(event: DataTableFilterEvent) {
+  const dates = occurrenceFilterValue<Date[] | null>(event, 'observedAt') ?? [];
+  occurrenceTable.draftFilters.value = {
+    reportKeys: occurrenceFilterValue<ReportKey[] | null>(event, 'reportKey') ?? [],
+    sourceKinds: occurrenceFilterValue<OccurrenceSource[] | null>(event, 'sourceKind') ?? [],
+    safeErrorCodes: occurrenceFilterValue<string[] | null>(event, 'safeErrorCode') ?? [],
+    dateFrom: dateFilterValue(dates[0]), dateTo: dateFilterValue(dates[1] ?? dates[0])
+  };
+  void occurrenceTable.applyFilters();
+}
+function clearOccurrenceFilters() {
+  Object.values(occurrencePrimeFilters.value).forEach((filter) => { filter.value = null; });
+  void occurrenceTable.clearFilters();
+}
+function clearEventFilters() {
+  eventFilters.value = {
+    global: { value: null, matchMode: 'contains' },
+    eventKind: { value: null, matchMode: 'in' },
+    sourceKind: { value: null, matchMode: 'in' }
+  };
+}
 
 function displayEndpoint(item: OperationalIncidentOccurrence) {
   return item.smlConnectionReference?.currentEndpointUrl || item.smlConnectionReference?.endpointUrlAtFailure || '';
@@ -167,7 +220,6 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   controller?.abort('unmounted');
-  occurrenceController?.abort('unmounted');
 });
 </script>
 
@@ -229,12 +281,12 @@ onBeforeUnmount(() => {
     <section class="card table-card">
       <h2 class="text-lg mt-0 mb-1">หลักฐานตามลำดับเวลา</h2>
       <p class="text-muted-color mt-0 mb-4">แสดงข้อเท็จจริงที่ระบบบันทึกในเวลาที่เกิดเหตุ โดยไม่คาดเดาว่า Server ปิดหรือ Network ถูกบล็อก</p>
-      <DataTable v-model:filters="eventFilters" :value="incident.events" data-key="id" striped-rows scrollable paginator :rows="25" :rows-per-page-options="[25, 50, 100]" :global-filter-fields="['eventKind', 'tenantName', 'reportKey', 'sourceKind']" paginator-template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink">
-        <template #header><div class="flex justify-end"><IconField><InputIcon class="pi pi-search" /><InputText v-model="eventFilters.global.value" aria-label="ค้นหาหลักฐานในตาราง" placeholder="ค้นหาในหลักฐาน" /></IconField></div></template>
+      <DataTable v-model:filters="eventFilters" :value="incident.events" data-key="id" filter-display="menu" row-hover show-gridlines striped-rows scrollable paginator :rows="25" :rows-per-page-options="[25, 50, 100]" :global-filter-fields="['eventKind', 'tenantName', 'reportKey', 'sourceKind']" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport">
+        <template #header><SakaiTableHeader v-model:global-search="eventGlobalSearch" :has-filters="eventHasFilters" @clear="clearEventFilters" /></template>
         <Column field="observedAt" header="เวลา"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template></Column>
-        <Column field="eventKind" header="เกิดอะไรขึ้น"><template #body="{ data }"><div class="event-description"><span class="font-semibold">{{ eventTitle(data) }}</span><small>{{ eventKindLabel(data.eventKind) }} · {{ evidenceLevelLabel(data.failureEvidence?.level) }}</small></div></template></Column>
+        <Column field="eventKind" header="เกิดอะไรขึ้น" :show-filter-match-modes="false"><template #body="{ data }"><div class="event-description"><span class="font-semibold">{{ eventTitle(data) }}</span><small>{{ eventKindLabel(data.eventKind) }} · {{ evidenceLevelLabel(data.failureEvidence?.level) }}</small></div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="eventKindOptions" option-label="label" option-value="value" placeholder="ทุกเหตุการณ์" /></template></Column>
         <Column field="tenantName" header="ร้าน/รายงาน"><template #body="{ data }"><div class="event-description"><span>{{ data.tenantName || 'ระบบส่วนกลาง' }}</span><small>{{ reportLabel(data) }}</small></div></template></Column>
-        <Column field="sourceKind" header="แหล่งงาน"><template #body="{ data }"><div class="event-description"><span>{{ sourceKindLabel(data.sourceKind) }}</span><small>{{ triggerKindLabel(data.triggerKind) }}</small></div></template></Column>
+        <Column field="sourceKind" header="แหล่งงาน" :show-filter-match-modes="false"><template #body="{ data }"><div class="event-description"><span>{{ sourceKindLabel(data.sourceKind) }}</span><small>{{ triggerKindLabel(data.triggerKind) }}</small></div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="sourceKindOptions" option-label="label" option-value="value" placeholder="ทุกแหล่งงาน" /></template></Column>
         <Column header="ขั้นตอนและระยะเวลา"><template #body="{ data }"><div class="event-description"><span>{{ data.failureEvidence?.presentation.stageTh || 'ไม่มีรายละเอียดขั้นตอนเพิ่มเติม' }}</span><small>{{ formatDurationMs(data.failureEvidence?.durationMs) }}</small></div></template></Column>
         <Column header="ผลกระทบ"><template #body="{ data }"><div class="event-description"><span>{{ reportImpactLabel(data.impact) }}</span><small>{{ lineImpactLabel(data.impact?.notificationOutcome) }}</small></div></template></Column>
       </DataTable>
@@ -243,9 +295,14 @@ onBeforeUnmount(() => {
     <section class="card table-card">
       <h2 class="text-lg mt-0 mb-1">เหตุที่ได้รับผลและการตรวจ Java Web Service</h2>
       <p class="text-muted-color mt-0 mb-4">การเปิด URL จาก Browser ยืนยันได้เฉพาะเครื่องของคุณ ส่วนการทดสอบจาก Server Dashboard จะติดต่อ Java Web Service จริงด้วยคำสั่ง read-only ขนาดเล็ก และไม่ทำให้ Incident เปลี่ยนเป็น “หายแล้ว”</p>
-      <DataTable :value="occurrences" :loading="occurrenceLoading" data-key="id" striped-rows scrollable>
+      <Message v-if="occurrenceTable.error.value" severity="error" :closable="false" class="mb-4">โหลดข้อมูลใหม่ไม่สำเร็จ ข้อมูลเดิมยังแสดงอยู่ · {{ occurrenceTable.error.value }}</Message>
+      <DataTable v-model:filters="occurrencePrimeFilters" :value="occurrences" :loading="occurrenceLoading" data-key="id" lazy paginator :first="occurrenceTable.page.value * occurrenceTable.pageSize.value" :rows="occurrenceTable.pageSize.value" :total-records="occurrenceTable.total.value" :rows-per-page-options="[25, 50, 100]" filter-display="menu" row-hover show-gridlines striped-rows scrollable current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" @page="occurrenceTable.changePage" @filter="applyOccurrenceFilters">
+        <template #header><SakaiTableHeader v-model:global-search="occurrenceTable.globalSearch.value" :loading="occurrenceLoading" :has-filters="occurrenceHasFilters" @clear="clearOccurrenceFilters"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="occurrenceLoading" @click="occurrenceTable.refresh()" /></template></SakaiTableHeader></template>
         <Column field="tenantName" header="ร้าน/รายงาน"><template #body="{ data }"><div class="event-description"><span>{{ data.tenantName || 'ระบบส่วนกลาง' }}</span><small>{{ data.reportKey ? (reportDefinitionByKey.get(data.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : sourceKindLabel(data.sourceKind) }}</small></div></template></Column>
-        <Column field="observedAt" header="เวลา"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template></Column>
+        <Column field="reportKey" header="รายงาน" :show-filter-match-modes="false"><template #body="{ data }">{{ data.reportKey ? (reportDefinitionByKey.get(data.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : '—' }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="reportOptions" option-label="label" option-value="value" filter placeholder="ทุกรายงาน" /></template></Column>
+        <Column field="sourceKind" header="แหล่งงาน" :show-filter-match-modes="false"><template #body="{ data }">{{ sourceKindLabel(data.sourceKind) }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="sourceKindOptions" option-label="label" option-value="value" placeholder="ทุกแหล่งงาน" /></template></Column>
+        <Column field="safeErrorCode" header="สาเหตุ" :show-filter-match-modes="false"><template #body="{ data }">{{ data.failureEvidence?.presentation.titleTh || 'ปัญหาที่ระบบบันทึกไว้' }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="safeErrorOptions" option-label="label" option-value="value" filter placeholder="ทุกสาเหตุ" /></template></Column>
+        <Column field="observedAt" header="เวลา" :show-filter-match-modes="false"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template><template #filter="{ filterModel }"><DatePicker v-model="filterModel.value" selection-mode="range" date-format="dd/mm/yy" placeholder="เลือกช่วงวันที่" /></template></Column>
         <Column header="URL Java Web Service">
           <template #body="{ data }">
             <div v-if="data.smlConnectionReference && displayEndpoint(data)" class="endpoint-cell">
@@ -272,9 +329,8 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </Column>
-        <template #empty><div class="py-6 text-center text-muted-color">ไม่มีเหตุรายรายการที่แสดงได้</div></template>
+        <template #empty><div class="py-6 text-center text-muted-color">ไม่พบเหตุที่ตรงกับตัวกรอง <Button v-if="occurrenceHasFilters" label="ล้างตัวกรอง" text size="small" @click="clearOccurrenceFilters" /></div></template>
       </DataTable>
-      <CursorPaginator :page="occurrencePagination.page" :page-size="occurrencePagination.pageSize" :item-count="occurrences.length" :has-next="occurrencePagination.hasNext" :disabled="occurrenceLoading" @previous="changeOccurrencePage('previous')" @next="changeOccurrencePage('next')" @update:page-size="changeOccurrencePageSize" />
     </section>
 
     <section v-if="primaryEvent?.failureEvidence" class="card">

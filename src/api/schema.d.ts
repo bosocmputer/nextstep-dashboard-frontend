@@ -149,6 +149,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/tenants/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Numbered server-side filtering for the tenant DataTable. This endpoint never contacts SML. */
+        post: operations["queryTenants"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/tenants/{tenantId}": {
         parameters: {
             query?: never;
@@ -424,6 +441,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/tenants/{tenantId}/schedules/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Numbered server-side filtering for one tenant's schedules. */
+        post: operations["querySchedules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/tenants/{tenantId}/schedules/{scheduleId}/restore": {
         parameters: {
             query?: never;
@@ -491,6 +525,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/report-runs/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["queryAdminReportRuns"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/line-quota": {
         parameters: {
             query?: never;
@@ -534,6 +584,38 @@ export interface paths {
         get: operations["listAuditLogs"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/line-deliveries/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["queryLineDeliveries"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/audit-logs/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["queryAuditLogs"];
         delete?: never;
         options?: never;
         head?: never;
@@ -909,6 +991,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/operational-incidents/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["queryOperationalIncidents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/operational-incidents/{incidentId}/occurrences": {
         parameters: {
             query?: never;
@@ -935,6 +1033,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["acknowledgeOperationalIncident"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/operational-incidents/{incidentId}/occurrences/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["queryOperationalIncidentOccurrences"];
         delete?: never;
         options?: never;
         head?: never;
@@ -982,6 +1096,142 @@ export interface components {
         PageInfo: {
             nextCursor?: string | null;
             hasMore: boolean;
+        };
+        TableQueryPageMeta: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            total: number;
+            totalPages: number;
+        };
+        TableQueryCommonInput: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            globalSearch?: string;
+            filters: Record<string, never>;
+        };
+        TenantsTableQueryInput: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            globalSearch?: string;
+            filters: {
+                statuses?: components["schemas"]["TenantStatus"][];
+                smlReadiness?: ("UNCONFIGURED" | "READY" | "FAILED")[];
+            };
+        };
+        TenantsTableQueryResult: components["schemas"]["TableQueryPageMeta"] & {
+            data: components["schemas"]["Tenant"][];
+        };
+        SchedulesTableQueryInput: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            globalSearch?: string;
+            filters: {
+                statuses?: ("DRAFT" | "ACTIVE" | "PAUSED" | "EXPIRED" | "ARCHIVED")[];
+                includeArchived?: boolean;
+            };
+        };
+        SchedulesTableQueryResult: components["schemas"]["TableQueryPageMeta"] & {
+            data: components["schemas"]["Schedule"][];
+        };
+        ReportRunsTableQueryInput: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            globalSearch?: string;
+            filters: {
+                /** Format: uuid */
+                tenantId?: string;
+                statuses?: components["schemas"]["ReportRunStatus"][];
+                reportKeys?: components["schemas"]["ReportKey"][];
+                sources?: ("DASHBOARD" | "SCHEDULE" | "BACKGROUND")[];
+                /** Format: date */
+                dateFrom?: string;
+                /** Format: date */
+                dateTo?: string;
+            };
+        };
+        ReportRunsTableQueryResult: components["schemas"]["TableQueryPageMeta"] & {
+            data: components["schemas"]["ReportRun"][];
+        };
+        DeliveriesTableQueryInput: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            globalSearch?: string;
+            filters: {
+                /** Format: uuid */
+                tenantId?: string;
+                /** Format: uuid */
+                recipientId?: string;
+                statuses?: ("PENDING" | "SENDING" | "ACCEPTED" | "RETRY_WAIT" | "UNCERTAIN" | "FAILED_PERMANENT")[];
+                reportKeys?: components["schemas"]["ReportKey"][];
+                /** Format: date */
+                dateFrom?: string;
+                /** Format: date */
+                dateTo?: string;
+            };
+        };
+        DeliveriesTableQueryResult: components["schemas"]["TableQueryPageMeta"] & {
+            data: components["schemas"]["Delivery"][];
+        };
+        AuditTableQueryInput: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            globalSearch?: string;
+            filters: {
+                /** Format: uuid */
+                tenantId?: string;
+                actorTypes?: ("ADMIN" | "VIEWER" | "WORKER" | "SYSTEM")[];
+                actions?: string[];
+                results?: ("SUCCESS" | "DENIED" | "FAILED")[];
+                /** Format: date */
+                dateFrom?: string;
+                /** Format: date */
+                dateTo?: string;
+            };
+        };
+        AuditTableQueryResult: components["schemas"]["TableQueryPageMeta"] & {
+            data: components["schemas"]["AuditEvent"][];
+        };
+        IncidentsTableQueryInput: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            globalSearch?: string;
+            filters: {
+                statuses?: components["schemas"]["OperationalIncidentStatus"][];
+                severities?: components["schemas"]["OperationalIncidentSeverity"][];
+                rootCauses?: ("SML_CONNECTIVITY" | "REPORT_DATA" | "LINE_DELIVERY" | "PLATFORM" | "CAPACITY")[];
+                activeOnly?: boolean;
+            };
+        };
+        IncidentsTableQueryResult: components["schemas"]["TableQueryPageMeta"] & {
+            data: components["schemas"]["OperationalIncident"][];
+        };
+        OccurrencesTableQueryInput: {
+            page: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
+            globalSearch?: string;
+            filters: {
+                /** Format: uuid */
+                tenantId?: string;
+                reportKeys?: components["schemas"]["ReportKey"][];
+                sourceKinds?: ("NOTIFICATION" | "DELIVERY" | "REPORT" | "WORKER" | "SML_CIRCUIT" | "HOST" | "BACKUP" | "DATABASE")[];
+                safeErrorCodes?: string[];
+                /** Format: date */
+                dateFrom?: string;
+                /** Format: date */
+                dateTo?: string;
+            };
+        };
+        OccurrencesTableQueryResult: components["schemas"]["TableQueryPageMeta"] & {
+            data: components["schemas"]["OperationalIncidentOccurrence"][];
         };
         AdminLoginInput: {
             username: string;
@@ -1145,19 +1395,25 @@ export interface components {
             page: components["schemas"]["PageInfo"];
         };
         RecipientQueryInput: {
-            search: string;
+            search?: string;
+            globalSearch?: string;
             /** @enum {string} */
             status?: "PENDING" | "ACTIVE";
+            statuses?: ("PENDING" | "ACTIVE")[];
             /** @enum {string} */
             permissionState?: "WITH_REPORTS" | "WITHOUT_REPORTS";
+            permissionStates?: ("WITH_REPORTS" | "WITHOUT_REPORTS")[];
             page: number;
-            pageSize: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
         };
         RecipientQueryResult: {
             data: components["schemas"]["Recipient"][];
             page: number;
-            pageSize: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
             total: number;
+            totalPages: number;
             hasMore: boolean;
         };
         PermissionUpdate: {
@@ -1182,9 +1438,13 @@ export interface components {
         ScheduleRecipientOptionsInput: {
             reportKeys: components["schemas"]["ReportKey"][];
             selectedRecipientIds: string[];
-            search: string;
+            search?: string;
+            globalSearch?: string;
+            statuses?: ("PENDING" | "ACTIVE")[];
+            eligibilityStates?: ("ELIGIBLE" | "NOT_ACTIVE" | "MISSING_PERMISSIONS")[];
             page: number;
-            pageSize: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
         };
         ScheduleRecipientOption: components["schemas"]["Recipient"] & {
             eligible: boolean;
@@ -1196,6 +1456,7 @@ export interface components {
             page: number;
             pageSize: number;
             total: number;
+            totalPages: number;
             hasMore: boolean;
         };
         /** @enum {string} */
@@ -1490,13 +1751,16 @@ export interface components {
         ReportRowFilter: {
             columnKey: string;
             /** @enum {string} */
-            operator: "CONTAINS" | "EQUALS" | "GTE" | "LTE";
+            operator: "CONTAINS" | "EQUALS" | "GTE" | "LTE" | "BETWEEN";
             value: string;
+            valueTo?: string;
         };
         ReportRowQueryInput: {
+            globalSearch?: string;
             filters: components["schemas"]["ReportRowFilter"][];
             page: number;
-            pageSize: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
         };
         ReportRowQueryPage: {
             /** Format: uuid */
@@ -1505,8 +1769,17 @@ export interface components {
             data: {
                 [key: string]: unknown;
             }[];
+            rowOrdinals: number[];
+            filterCapabilities: {
+                columnKey: string;
+                /** @enum {string} */
+                dataType: "TEXT" | "IDENTIFIER" | "DATE" | "NUMBER";
+                operators: ("CONTAINS" | "EQUALS" | "GTE" | "LTE" | "BETWEEN")[];
+                globalSearchable: boolean;
+            }[];
             page: number;
-            pageSize: number;
+            /** @enum {integer} */
+            pageSize: 25 | 50 | 100;
             total: number;
         };
         ReportPeriod: {
@@ -2394,6 +2667,33 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    queryTenants: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TenantsTableQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact tenant page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantsTableQueryResult"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     getTenant: {
         parameters: {
             query?: never;
@@ -3076,6 +3376,35 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    querySchedules: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchedulesTableQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact schedule page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulesTableQueryResult"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     restoreSchedule: {
         parameters: {
             query: {
@@ -3188,6 +3517,33 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    queryAdminReportRuns: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportRunsTableQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact report-run page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRunsTableQueryResult"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     getLineQuota: {
         parameters: {
             query?: never;
@@ -3267,6 +3623,60 @@ export interface operations {
                     "application/json": components["schemas"]["AuditPage"];
                 };
             };
+        };
+    };
+    queryLineDeliveries: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliveriesTableQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact delivery page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveriesTableQueryResult"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    queryAuditLogs: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditTableQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact audit-event page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTableQueryResult"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
         };
     };
     exchangeLineSession: {
@@ -3892,6 +4302,33 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    queryOperationalIncidents: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IncidentsTableQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact operational-incident page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentsTableQueryResult"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     listOperationalIncidentOccurrences: {
         parameters: {
             query?: {
@@ -3947,6 +4384,36 @@ export interface operations {
                 };
             };
             409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    queryOperationalIncidentOccurrences: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                incidentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OccurrencesTableQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact root-occurrence page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OccurrencesTableQueryResult"];
+                };
+            };
+            404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
         };
     };
