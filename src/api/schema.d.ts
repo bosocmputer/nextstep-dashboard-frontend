@@ -1677,6 +1677,8 @@ export interface components {
             tenantName?: string;
             reportKey: components["schemas"]["ReportKey"];
             status: components["schemas"]["ReportRunStatus"];
+            /** @enum {string} */
+            source: "DASHBOARD" | "SCHEDULE" | "BACKGROUND";
             /**
              * @description Operational lease health for Admin monitoring.
              * @enum {string}
