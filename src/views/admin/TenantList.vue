@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { useConfirm } from 'primevue/useconfirm';
@@ -7,16 +7,16 @@ import { ApiError, adminApi, type Tenant, type TenantInput } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { errorMessage, formatDate } from '@/utils/format';
 import { statusLabel as operationalStatusLabel } from '@/utils/status';
+import CursorPaginator from '@/components/admin/CursorPaginator.vue';
+import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
 
 const router = useRouter();
 const toast = useToast();
 const confirm = useConfirm();
 const tenants = ref<Tenant[]>([]);
 const loading = ref(false);
-const loadingMore = ref(false);
 const error = ref('');
-const cursor = ref<string | undefined>();
-const hasMore = ref(false);
+const pagination = reactive(createCursorPagination());
 const search = ref('');
 const status = ref<string | undefined>();
 const createOpen = ref(false);
@@ -26,6 +26,7 @@ const createError = ref('');
 let loadGeneration = 0;
 let loadController: AbortController | undefined;
 let createActionKey = '';
+let filterTimer: ReturnType<typeof setTimeout> | undefined;
 
 function bangkokCalendarDate() {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -51,22 +52,24 @@ function bangkokEndOfDayISO(date: Date) {
 const form = reactive<{ name: string; accessEndsAt: Date | null }>({ name: '', accessEndsAt: defaultAccessEndDate() });
 const statusOptions = [{ label: 'ทั้งหมด', value: undefined }, { label: 'ใช้งาน', value: 'ACTIVE' }, { label: 'ปิดใช้งาน', value: 'DISABLED' }, { label: 'หมดอายุ', value: 'EXPIRED' }];
 
-async function load(reset = true) {
-  if (!reset && (loading.value || loadingMore.value)) return;
-  if (reset) { loadGeneration++; loadController?.abort('filters-changed'); loadController = new AbortController(); }
+async function load(reset = false) {
+  if (reset) resetCursorPagination(pagination);
+  loadGeneration++;
+  loadController?.abort(reset ? 'filters-changed' : 'page-changed');
+  loadController = new AbortController();
   const context = loadGeneration;
-  if (reset) loading.value = true;
-  else loadingMore.value = true;
+  loading.value = true;
   error.value = '';
   try {
-    const page = await adminApi.listTenants({ cursor: reset ? undefined : cursor.value, pageSize: 25, status: status.value, search: search.value.trim() || undefined }, loadController?.signal);
+    const page = await adminApi.listTenants({ cursor: pagination.cursor, pageSize: pagination.pageSize, status: status.value, search: search.value.trim() || undefined }, loadController.signal);
     if (context !== loadGeneration) return;
-    tenants.value = reset ? page.data : [...tenants.value, ...page.data];
-    cursor.value = page.page.nextCursor ?? undefined;
-    hasMore.value = page.page.hasMore;
+    tenants.value = page.data;
+    acceptCursorPage(pagination, page.page.nextCursor ?? undefined, page.page.hasMore);
   } catch (cause) { if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause); }
-  finally { if (context === loadGeneration) { loading.value = false; loadingMore.value = false; } }
+  finally { if (context === loadGeneration) loading.value = false; }
 }
+function changePage(direction: 'previous' | 'next') { if (moveCursorPage(pagination, direction)) void load(); }
+function changePageSize(value: number) { resizeCursorPagination(pagination, value); void load(); }
 
 async function createTenant() {
   if (saving.value) return;
@@ -143,7 +146,12 @@ function confirmArchiveTenant(item: Tenant) {
 function statusSeverity(value: Tenant['status']) { return value === 'ACTIVE' ? 'success' : value === 'EXPIRED' ? 'danger' : 'secondary'; }
 function statusLabel(value: Tenant['status']) { return value === 'ACTIVE' ? 'ใช้งาน' : value === 'EXPIRED' ? 'หมดอายุ' : 'ปิดใช้งาน'; }
 watch(form, () => { if (!saving.value) createActionKey = ''; }, { deep: true });
-onMounted(() => load());
+watch([search, status], () => {
+  if (filterTimer) clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => void load(true), 300);
+});
+onMounted(() => load(true));
+onBeforeUnmount(() => { if (filterTimer) clearTimeout(filterTimer); loadController?.abort('unmounted'); });
 </script>
 
 <template>
@@ -152,7 +160,7 @@ onMounted(() => load());
     <Toolbar class="mb-6 border-0 p-0">
       <template #start><Button label="เพิ่มร้านค้า" icon="pi pi-plus" @click="openCreateDialog" /></template>
       <template #end>
-        <form class="flex flex-col md:flex-row gap-3 w-full md:w-auto" @submit.prevent="load()">
+        <form class="flex flex-col md:flex-row gap-3 w-full md:w-auto" @submit.prevent="load(true)">
           <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" aria-label="ค้นหาร้านค้าด้วยชื่อ" placeholder="ค้นหาชื่อร้าน" /></IconField>
           <Select v-model="status" aria-label="กรองสถานะร้านค้า" :options="statusOptions" option-label="label" option-value="value" placeholder="ทุกสถานะ" class="md:w-44" />
           <Button type="submit" label="ค้นหา" icon="pi pi-search" outlined />
@@ -168,7 +176,7 @@ onMounted(() => load());
       <Column header="จัดการ" style="width: 8rem" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><div class="flex items-center justify-end gap-1"><Button icon="pi pi-chevron-right" text rounded class="touch-action" :aria-label="`เปิดร้าน ${data.name}`" v-tooltip.top="'เปิดรายละเอียดร้าน'" @click="router.push(`/admin/tenants/${data.id}`)" /><Button icon="pi pi-trash" severity="danger" text rounded class="touch-action" :aria-label="`ลบร้าน ${data.name}`" v-tooltip.top="'ลบร้านค้า'" :loading="archivingTenantId === data.id" :disabled="Boolean(archivingTenantId)" @click="confirmArchiveTenant(data)" /></div></template></Column>
       <template #empty><div class="py-8 text-center text-muted-color">ไม่พบร้านค้าที่ตรงกับเงื่อนไข</div></template>
     </DataTable>
-    <div v-if="hasMore" class="table-footer text-center"><Button label="โหลดเพิ่มเติม" icon="pi pi-angle-down" outlined :loading="loadingMore" @click="load(false)" /></div>
+    <CursorPaginator :page="pagination.page" :page-size="pagination.pageSize" :item-count="tenants.length" :has-next="pagination.hasNext" :disabled="loading" @previous="changePage('previous')" @next="changePage('next')" @update:page-size="changePageSize" />
   </div>
 
   <Dialog v-model:visible="createOpen" modal header="เพิ่มร้านค้า" class="responsive-dialog" :style="{ width: '34rem' }">

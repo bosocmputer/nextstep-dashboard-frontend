@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { ApiError, adminApi, type OperationalIncident, type OperationalIncidentSeverity, type OperationalIncidentStatus } from '@/api';
+import CursorPaginator from '@/components/admin/CursorPaginator.vue';
+import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
 import { errorMessage, formatDateTime } from '@/utils/format';
 
 const rows = ref<OperationalIncident[]>([]);
@@ -9,8 +11,7 @@ const error = ref('');
 const status = ref<OperationalIncidentStatus>();
 const severity = ref<OperationalIncidentSeverity>();
 const scope = ref<'ACTIVE' | 'ALL'>('ACTIVE');
-const cursor = ref<string>();
-const hasMore = ref(false);
+const pagination = reactive(createCursorPagination());
 let generation = 0;
 let controller: AbortController | undefined;
 
@@ -59,35 +60,35 @@ function tenantExamplesLabel(item: OperationalIncident) {
     : examples.join(' · ');
 }
 
-async function load(reset = true) {
-  if (!reset && loading.value) return;
-  if (reset) {
-    generation++;
-    controller?.abort('filters-changed');
-    controller = new AbortController();
-  }
+async function load(reset = false) {
+  if (reset) resetCursorPagination(pagination);
+  generation++;
+  controller?.abort(reset ? 'filters-changed' : 'page-changed');
+  controller = new AbortController();
   const requestGeneration = generation;
   loading.value = true;
   error.value = '';
   try {
     const page = await adminApi.incidents({
-      cursor: reset ? undefined : cursor.value,
+      cursor: pagination.cursor,
       status: status.value,
       severity: severity.value,
-      scope: scope.value
-    }, controller?.signal);
+      scope: scope.value,
+      pageSize: pagination.pageSize
+    }, controller.signal);
     if (requestGeneration !== generation) return;
-    rows.value = reset ? page.data : [...rows.value, ...page.data];
-    cursor.value = page.page.nextCursor ?? undefined;
-    hasMore.value = page.page.hasMore;
+    rows.value = page.data;
+    acceptCursorPage(pagination, page.page.nextCursor ?? undefined, page.page.hasMore);
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause);
   } finally {
     if (requestGeneration === generation) loading.value = false;
   }
 }
+function changePage(direction: 'previous' | 'next') { if (moveCursorPage(pagination, direction)) void load(); }
+function changePageSize(value: number) { resizeCursorPagination(pagination, value); void load(); }
 
-onMounted(() => void load());
+onMounted(() => void load(true));
 onBeforeUnmount(() => controller?.abort('unmounted'));
 </script>
 
@@ -100,7 +101,7 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
     <Toolbar class="mb-6 border-0 p-0">
       <template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template>
       <template #end>
-        <form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()">
+        <form class="flex flex-col md:flex-row gap-3" @submit.prevent="load(true)">
           <Select v-model="severity" :options="severityOptions" option-label="label" option-value="value" aria-label="กรองระดับเหตุสำคัญ" />
           <Select v-model="scope" :options="scopeOptions" option-label="label" option-value="value" aria-label="กรองเหตุที่ยังไม่หายหรือประวัติทั้งหมด" />
           <Select v-model="status" :options="statusOptions" option-label="label" option-value="value" aria-label="กรองสถานะเหตุสำคัญ" />
@@ -125,6 +126,6 @@ onBeforeUnmount(() => controller?.abort('unmounted'));
       <Column header="" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button as="router-link" :to="`/admin/operational-incidents/${data.id}`" icon="pi pi-chevron-right" text rounded aria-label="เปิดรายละเอียดเหตุสำคัญ" /></template></Column>
       <template #empty><div class="py-8 text-center text-muted-color">ไม่พบเหตุสำคัญตามตัวกรองนี้</div></template>
     </DataTable>
-    <div v-if="hasMore" class="table-footer text-center"><Button label="โหลดเพิ่มเติม" outlined :loading="loading" @click="load(false)" /></div>
+    <CursorPaginator :page="pagination.page" :page-size="pagination.pageSize" :item-count="rows.length" :has-next="pagination.hasNext" :disabled="loading" @previous="changePage('previous')" @next="changePage('next')" @update:page-size="changePageSize" />
   </div>
 </template>

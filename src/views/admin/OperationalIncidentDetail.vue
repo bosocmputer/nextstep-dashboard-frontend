@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { useConfirm } from 'primevue/useconfirm';
 import { ApiError, adminApi, type AdminReportDefinition, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentOccurrence, type OperationalIncidentStatus, type SMLConnectionTestResult } from '@/api';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
+import CursorPaginator from '@/components/admin/CursorPaginator.vue';
+import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
 import {
   buildCodexIncidentText, causalChain, evidenceLevelLabel, eventKindLabel, formatDurationMs,
   lineImpactLabel, reportImpactLabel, sourceKindLabel, triggerKindLabel
@@ -23,9 +25,9 @@ const acceptDialog = ref(false);
 const acceptReason = ref('');
 const reportDefinitions = ref<AdminReportDefinition[]>([]);
 const occurrences = ref<OperationalIncidentOccurrence[]>([]);
-const occurrenceCursor = ref<string>();
-const occurrenceHasMore = ref(false);
+const occurrencePagination = reactive(createCursorPagination());
 const occurrenceLoading = ref(false);
+const eventFilters = ref({ global: { value: null as string | null, matchMode: 'contains' } });
 const testingTenantId = ref('');
 const testResults = ref<Record<string, SMLConnectionTestResult>>({});
 let controller: AbortController | undefined;
@@ -73,26 +75,25 @@ async function load() {
 }
 
 async function loadOccurrences(reset = false) {
-  if (!reset && (occurrenceLoading.value || !occurrenceHasMore.value)) return;
-  if (reset) {
-    occurrenceGeneration++;
-    occurrenceController?.abort('occurrences-reloaded');
-    occurrenceController = new AbortController();
-  }
+  if (reset) resetCursorPagination(occurrencePagination);
+  occurrenceGeneration++;
+  occurrenceController?.abort(reset ? 'occurrences-reloaded' : 'occurrence-page-changed');
+  occurrenceController = new AbortController();
   const requestGeneration = occurrenceGeneration;
   occurrenceLoading.value = true;
   try {
-    const page = await adminApi.incidentOccurrences(incidentId.value, reset ? undefined : occurrenceCursor.value, occurrenceController?.signal);
+    const page = await adminApi.incidentOccurrences(incidentId.value, occurrencePagination.cursor, occurrenceController.signal, occurrencePagination.pageSize);
     if (requestGeneration !== occurrenceGeneration) return;
-    occurrences.value = reset ? page.data : [...occurrences.value, ...page.data];
-    occurrenceCursor.value = page.page.nextCursor ?? undefined;
-    occurrenceHasMore.value = page.page.hasMore;
+    occurrences.value = page.data;
+    acceptCursorPage(occurrencePagination, page.page.nextCursor ?? undefined, page.page.hasMore);
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause);
   } finally {
     if (requestGeneration === occurrenceGeneration) occurrenceLoading.value = false;
   }
 }
+function changeOccurrencePage(direction: 'previous' | 'next') { if (moveCursorPage(occurrencePagination, direction)) void loadOccurrences(); }
+function changeOccurrencePageSize(value: number) { resizeCursorPagination(occurrencePagination, value); void loadOccurrences(); }
 
 function displayEndpoint(item: OperationalIncidentOccurrence) {
   return item.smlConnectionReference?.currentEndpointUrl || item.smlConnectionReference?.endpointUrlAtFailure || '';
@@ -228,7 +229,8 @@ onBeforeUnmount(() => {
     <section class="card table-card">
       <h2 class="text-lg mt-0 mb-1">หลักฐานตามลำดับเวลา</h2>
       <p class="text-muted-color mt-0 mb-4">แสดงข้อเท็จจริงที่ระบบบันทึกในเวลาที่เกิดเหตุ โดยไม่คาดเดาว่า Server ปิดหรือ Network ถูกบล็อก</p>
-      <DataTable :value="incident.events" data-key="id" striped-rows scrollable>
+      <DataTable v-model:filters="eventFilters" :value="incident.events" data-key="id" striped-rows scrollable paginator :rows="25" :rows-per-page-options="[25, 50, 100]" :global-filter-fields="['eventKind', 'tenantName', 'reportKey', 'sourceKind']" paginator-template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink">
+        <template #header><div class="flex justify-end"><IconField><InputIcon class="pi pi-search" /><InputText v-model="eventFilters.global.value" aria-label="ค้นหาหลักฐานในตาราง" placeholder="ค้นหาในหลักฐาน" /></IconField></div></template>
         <Column field="observedAt" header="เวลา"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template></Column>
         <Column field="eventKind" header="เกิดอะไรขึ้น"><template #body="{ data }"><div class="event-description"><span class="font-semibold">{{ eventTitle(data) }}</span><small>{{ eventKindLabel(data.eventKind) }} · {{ evidenceLevelLabel(data.failureEvidence?.level) }}</small></div></template></Column>
         <Column field="tenantName" header="ร้าน/รายงาน"><template #body="{ data }"><div class="event-description"><span>{{ data.tenantName || 'ระบบส่วนกลาง' }}</span><small>{{ reportLabel(data) }}</small></div></template></Column>
@@ -272,7 +274,7 @@ onBeforeUnmount(() => {
         </Column>
         <template #empty><div class="py-6 text-center text-muted-color">ไม่มีเหตุรายรายการที่แสดงได้</div></template>
       </DataTable>
-      <div v-if="occurrenceHasMore" class="table-footer text-center"><Button label="โหลดเหตุเพิ่มเติม" outlined :loading="occurrenceLoading" @click="loadOccurrences(false)" /></div>
+      <CursorPaginator :page="occurrencePagination.page" :page-size="occurrencePagination.pageSize" :item-count="occurrences.length" :has-next="occurrencePagination.hasNext" :disabled="occurrenceLoading" @previous="changeOccurrencePage('previous')" @next="changeOccurrencePage('next')" @update:page-size="changeOccurrencePageSize" />
     </section>
 
     <section v-if="primaryEvent?.failureEvidence" class="card">

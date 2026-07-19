@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-17
+last_verified: 2026-07-19
 source_of_truth: [src/api/client.ts, src/api/index.ts, src/views/viewer/ExecutiveOverview.vue, src/views/viewer/ViewerReport.vue]
 tags: [frontend, requests, idempotency, snapshots]
 ---
@@ -45,6 +45,20 @@ Long-lived pages that react to route, tenant, report, period, or run changes mus
 - Overview refresh replaces a complete result set atomically; partial output must be labelled and never mixed silently with another period.
 - `runId`, `refreshId`, `snapshotRunId`, and `deliveryId` identify resources but are never authorization tokens.
 - Delivery routes are read-only snapshot flows.
+- Report detail filtering and exact page navigation call the stored-row query
+  endpoint only. They never start a run, revalidate a snapshot, or contact SML.
+  Filters are typed from the approved report presentation, unsafe technical
+  columns are not offered, and every page response is guarded by tenant,
+  report, run, and generation identity.
+
+## Table Query Safety
+
+- Text filter drafts do not append old and new results. Applying a filter resets
+  to page one, aborts the prior request, and replaces the visible page atomically.
+- Cursor-backed tables retain only the cursor chain needed for previous/next;
+  exact-page tables use server totals and 25/50/100 page sizes.
+- POST query endpoints are read-only in business semantics but still use the
+  normal authenticated CSRF transport because the HTTP method is unsafe.
 
 Admin operational incident reads are `no-store`. Their acknowledge and
 accepted-risk mutations use the shared Admin CSRF policy and optimistic version;

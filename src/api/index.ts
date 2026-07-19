@@ -1,12 +1,12 @@
 import { apiRequest, newIdempotencyKey, queryString } from './client';
 import type {
   AdminReportCatalog, AdminSession, AuditPage, CreateReportRunInput, DataPage, DeliveryPage, Recipient, RecipientPage, ReportDefinition,
-  FlexPreview, FlexPreviewInput, LineQuotaStatus, NotificationExecution, ReportKey, ReportRowPage, ReportRun, ReportRunDetail, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
+  FlexPreview, FlexPreviewInput, LineQuotaStatus, NotificationExecution, ReportKey, ReportRowPage, ReportRowQueryInput, ReportRowQueryPage, ReportRun, ReportRunDetail, ReportRunPage, Schedule, ScheduleInput, SchedulePage, SchedulePatch,
   SMLConnectionInput, SMLConnectionStatus, SMLConnectionTestResult, Tenant, TenantInput, TenantPage, TenantPatch,
   DashboardRefresh, DashboardRefreshInput, DashboardRefreshResult, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant,
   DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot,
   DeliveryContext, DeliveryReportContext, PermissionDependencies, ScheduleRecipientOptions, ScheduleRecipientOptionsInput,
-  OperationalIncident, OperationalIncidentDetail, OperationalIncidentPage, OperationalIncidentStatus, OperationalIncidentSeverity, OperationalIncidentOccurrencePage
+  OperationalIncident, OperationalIncidentDetail, OperationalIncidentPage, OperationalIncidentStatus, OperationalIncidentSeverity, OperationalIncidentOccurrencePage, RecipientQueryInput, RecipientQueryResult
 } from './types';
 
 const api = '/api/v1';
@@ -28,6 +28,7 @@ export const adminApi = {
   replaceSML: (tenantId: string, input: SMLConnectionInput) => apiRequest<SMLConnectionStatus>(`${api}/admin/tenants/${tenantId}/sml-connection`, { method: 'PUT', scope: 'admin', body: input }),
   testSML: (tenantId: string) => apiRequest<SMLConnectionTestResult>(`${api}/admin/tenants/${tenantId}/sml-connection/test`, { method: 'POST', scope: 'admin', timeoutMs: 35_000 }),
   listRecipients: (tenantId: string, cursor?: string) => apiRequest<RecipientPage>(`${api}/admin/tenants/${tenantId}/recipients${queryString({ cursor, pageSize: 100 })}`),
+  queryRecipients: (tenantId: string, input: RecipientQueryInput, signal?: AbortSignal) => apiRequest<RecipientQueryResult>(`${api}/admin/tenants/${tenantId}/recipients/query`, { method: 'POST', scope: 'admin', body: input, signal }),
   getRecipient: (tenantId: string, recipientId: string, signal?: AbortSignal) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}`, { signal }),
   inviteRecipient: (tenantId: string, invitationLabel: string, idempotencyKey = newIdempotencyKey('recipient')) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients`, { method: 'POST', scope: 'admin', idempotencyKey, body: { invitationLabel } }),
   reissueRecipientInvitation: (tenantId: string, recipientId: string, idempotencyKey = newIdempotencyKey('recipient-reissue')) => apiRequest<Recipient>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/invitation`, { method: 'POST', scope: 'admin', idempotencyKey }),
@@ -35,7 +36,7 @@ export const adminApi = {
   permissionDependencies: (tenantId: string, recipientId: string, signal?: AbortSignal) => apiRequest<PermissionDependencies>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}/permission-dependencies`, { signal }),
   scheduleRecipientOptions: (tenantId: string, input: ScheduleRecipientOptionsInput, signal?: AbortSignal) => apiRequest<ScheduleRecipientOptions>(`${api}/admin/tenants/${tenantId}/schedule-recipient-options/query`, { method: 'POST', body: input, signal }),
   revokeRecipient: (tenantId: string, recipientId: string) => apiRequest<void>(`${api}/admin/tenants/${tenantId}/recipients/${recipientId}`, { method: 'DELETE', scope: 'admin' }),
-  listSchedules: (tenantId: string, cursor?: string, includeArchived = false) => apiRequest<SchedulePage>(`${api}/admin/tenants/${tenantId}/schedules${queryString({ cursor, pageSize: 100, includeArchived: includeArchived ? 'true' : 'false' })}`),
+  listSchedules: (tenantId: string, filters: { cursor?: string; pageSize?: number; includeArchived?: boolean; status?: string; search?: string } = {}, signal?: AbortSignal) => apiRequest<SchedulePage>(`${api}/admin/tenants/${tenantId}/schedules${queryString({ ...filters, pageSize: filters.pageSize ?? 25, includeArchived: filters.includeArchived ? 'true' : 'false' })}`, { signal }),
   getSchedule: (tenantId: string, scheduleId: string, signal?: AbortSignal) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}`, { signal }),
   createSchedule: (tenantId: string, input: ScheduleInput, idempotencyKey = newIdempotencyKey('schedule')) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules`, { method: 'POST', scope: 'admin', idempotencyKey, body: input }),
   previewSchedule: (tenantId: string, input: FlexPreviewInput, signal?: AbortSignal) => apiRequest<FlexPreview>(`${api}/admin/tenants/${tenantId}/schedules/preview`, { method: 'POST', scope: 'admin', body: input, signal }),
@@ -46,13 +47,13 @@ export const adminApi = {
   restoreSchedule: (tenantId: string, scheduleId: string, version: number) => apiRequest<Schedule>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/restore${queryString({ version })}`, { method: 'POST', scope: 'admin' }),
   testSendSchedule: (tenantId: string, scheduleId: string, idempotencyKey = newIdempotencyKey('schedule-test-send')) => apiRequest<NotificationExecution>(`${api}/admin/tenants/${tenantId}/schedules/${scheduleId}/test-send`, { method: 'POST', scope: 'admin', idempotencyKey }),
   lineQuota: () => apiRequest<LineQuotaStatus>(`${api}/admin/line-quota`),
-  reportRuns: (filters: { cursor?: string; tenantId?: string; status?: string } = {}, signal?: AbortSignal) => apiRequest<ReportRunPage>(`${api}/admin/report-runs${queryString({ ...filters, pageSize: 50 })}`, { signal }),
+  reportRuns: (filters: { cursor?: string; pageSize?: number; tenantId?: string; status?: string; reportKey?: ReportKey; source?: string; dateFrom?: string; dateTo?: string } = {}, signal?: AbortSignal) => apiRequest<ReportRunPage>(`${api}/admin/report-runs${queryString({ ...filters, pageSize: filters.pageSize ?? 25 })}`, { signal }),
   reportRun: (runId: string, signal?: AbortSignal) => apiRequest<ReportRunDetail>(`${api}/admin/report-runs/${runId}`, { signal }),
-  deliveries: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: 50 })}`, { signal }),
-  audit: (filters: { cursor?: string; tenantId?: string } = {}, signal?: AbortSignal) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: 50 })}`, { signal }),
+  deliveries: (filters: { cursor?: string; pageSize?: number; tenantId?: string; status?: string; recipientId?: string; dateFrom?: string; dateTo?: string } = {}, signal?: AbortSignal) => apiRequest<DeliveryPage>(`${api}/admin/line-deliveries${queryString({ ...filters, pageSize: filters.pageSize ?? 25 })}`, { signal }),
+  audit: (filters: { cursor?: string; pageSize?: number; tenantId?: string; actorType?: string; action?: string; result?: string; dateFrom?: string; dateTo?: string } = {}, signal?: AbortSignal) => apiRequest<AuditPage>(`${api}/admin/audit-logs${queryString({ ...filters, pageSize: filters.pageSize ?? 25 })}`, { signal }),
   incidents: (filters: { cursor?: string; status?: OperationalIncidentStatus; severity?: OperationalIncidentSeverity; scope?: 'ACTIVE' | 'ALL'; pageSize?: number } = {}, signal?: AbortSignal) => apiRequest<OperationalIncidentPage>(`${api}/admin/operational-incidents${queryString({ ...filters, scope: filters.scope ?? 'ACTIVE', pageSize: filters.pageSize ?? 50 })}`, { signal }),
   incident: (incidentId: string, signal?: AbortSignal) => apiRequest<OperationalIncidentDetail>(`${api}/admin/operational-incidents/${incidentId}`, { signal }),
-  incidentOccurrences: (incidentId: string, cursor?: string, signal?: AbortSignal) => apiRequest<OperationalIncidentOccurrencePage>(`${api}/admin/operational-incidents/${incidentId}/occurrences${queryString({ cursor, pageSize: 50 })}`, { signal }),
+  incidentOccurrences: (incidentId: string, cursor?: string, signal?: AbortSignal, pageSize = 25) => apiRequest<OperationalIncidentOccurrencePage>(`${api}/admin/operational-incidents/${incidentId}/occurrences${queryString({ cursor, pageSize })}`, { signal }),
   acknowledgeIncident: (incident: OperationalIncident) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/acknowledge`, { method: 'POST', scope: 'admin', body: { version: incident.version } }),
   acceptIncidentRisk: (incident: OperationalIncident, reason: string) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/accept-risk`, { method: 'POST', scope: 'admin', body: { version: incident.version, reason } })
 };
@@ -78,6 +79,7 @@ export const viewerApi = {
   run: (tenantId: string, reportKey: ReportKey, runId: string, signal?: AbortSignal) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}`, { signal }),
   dashboard: (tenantId: string, reportKey: ReportKey, runId: string, signal?: AbortSignal) => apiRequest<ReportDashboard>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/dashboard`, { signal }),
   rows: (tenantId: string, reportKey: ReportKey, runId: string, cursor?: string, pageSize = 25, signal?: AbortSignal) => apiRequest<ReportRowPage>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/rows${queryString({ cursor, pageSize })}`, { signal }),
+  queryRows: (tenantId: string, reportKey: ReportKey, runId: string, input: ReportRowQueryInput, signal?: AbortSignal) => apiRequest<ReportRowQueryPage>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/rows/query`, { method: 'POST', scope: 'viewer', body: input, signal }),
   cancelRun: (tenantId: string, reportKey: ReportKey, runId: string) => apiRequest<ReportRun>(`${api}/viewer/tenants/${tenantId}/reports/${reportKey}/runs/${runId}/cancel`, { method: 'POST', scope: 'viewer' })
 };
 

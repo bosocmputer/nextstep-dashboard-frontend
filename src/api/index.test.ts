@@ -38,6 +38,17 @@ describe('adminApi recipients', () => {
     expect(options?.method ?? 'GET').toBe('GET');
   });
 
+  it('queries an exact recipient page with Admin CSRF protection', async () => {
+    document.cookie = 'nextstep_admin_csrf=csrf-value; path=/';
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [], page: 0, pageSize: 25, total: 0, hasMore: false }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    await adminApi.queryRecipients('tenant-1', { search: 'ผู้บริหาร', status: 'ACTIVE', permissionState: 'WITH_REPORTS', page: 0, pageSize: 25 });
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/v1/admin/tenants/tenant-1/recipients/query');
+    expect(options?.method).toBe('POST');
+    expect((options?.headers as Headers).get('X-CSRF-Token')).toBe('csrf-value');
+    expect(options?.body).toBe(JSON.stringify({ search: 'ผู้บริหาร', status: 'ACTIVE', permissionState: 'WITH_REPORTS', page: 0, pageSize: 25 }));
+  });
+
   it('queries schedule recipient eligibility through the read-only body endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [], selected: [], page: 0, pageSize: 25, total: 0, hasMore: false }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     await adminApi.scheduleRecipientOptions('tenant-1', { reportKeys: ['sales_goods_services'], selectedRecipientIds: [], search: '', page: 0, pageSize: 25 });
@@ -77,7 +88,7 @@ describe('adminApi operational incidents', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: [], page: { hasMore: false } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     await adminApi.incidentOccurrences('11111111-1111-4111-8111-111111111111', 'cursor-value');
     const [url] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('/api/v1/admin/operational-incidents/11111111-1111-4111-8111-111111111111/occurrences?cursor=cursor-value&pageSize=50');
+    expect(url).toBe('/api/v1/admin/operational-incidents/11111111-1111-4111-8111-111111111111/occurrences?cursor=cursor-value&pageSize=25');
   });
 
   it('acknowledges by optimistic version with admin CSRF protection', async () => {
@@ -130,5 +141,18 @@ describe('viewerApi delivery contexts', () => {
     expect(url).toBe('/api/v1/viewer/tenants/tenant-id/deliveries/delivery-id/reports/sales_goods_services');
     expect(options?.method ?? 'GET').toBe('GET');
     expect(String(url)).not.toMatch(/runs|revalidations/);
+  });
+
+  it('filters only stored report rows with Viewer CSRF protection', async () => {
+    document.cookie = 'nextstep_viewer_csrf=viewer-csrf; path=/';
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ runId: 'run-id', columns: ['ic_code'], data: [], page: 0, pageSize: 25, total: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await viewerApi.queryRows('tenant-id', 'stock_balance', 'run-id', { filters: [{ columnKey: 'ic_code', operator: 'CONTAINS', value: '001' }], page: 0, pageSize: 25 });
+
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/v1/viewer/tenants/tenant-id/reports/stock_balance/runs/run-id/rows/query');
+    expect(options?.method).toBe('POST');
+    expect((options?.headers as Headers).get('X-CSRF-Token')).toBe('viewer-csrf');
+    expect(String(url)).not.toContain('revalidations');
   });
 });

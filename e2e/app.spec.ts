@@ -332,8 +332,13 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
   await expect(page.getByRole('heading', { name: 'เหตุสำคัญ' })).toBeVisible();
   await expect(page.getByText('NST-ABC123DEF456')).toBeVisible();
   await expect(page.getByText('ร้านตัวอย่างหนึ่ง · ร้านตัวอย่างสอง และอีก 1 ร้าน')).toBeVisible();
-  await page.getByLabel('เปิดรายละเอียดเหตุสำคัญ').click();
-  await expect(page).toHaveURL(`/admin/operational-incidents/${incidentId}`);
+  const incidentRow = page.getByRole('row').filter({ hasText: 'NST-ABC123DEF456' });
+  const openIncident = incidentRow.getByLabel('เปิดรายละเอียดเหตุสำคัญ');
+  await expect(openIncident).toBeVisible();
+  await Promise.all([
+    page.waitForURL(`/admin/operational-incidents/${incidentId}`),
+    openIncident.click()
+  ]);
   await expect(page.getByRole('heading', { name: 'รายละเอียดเหตุสำคัญ' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'ลำดับสาเหตุและผลกระทบ' })).toBeVisible();
@@ -728,10 +733,11 @@ test('mobile report details use stacked rows without horizontal overflow', async
   })));
   await page.route(`**${api}/viewer/tenants/${tenantId}/reports/sales_goods_services/runs**`, (route) => {
     if (route.request().url().includes('/rows')) {
-      expect(route.request().url()).toContain('pageSize=25');
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().postDataJSON()).toEqual({ filters: [], page: 0, pageSize: 25 });
       return route.fulfill(json({
         runId, columns: ['doc_no', 'total_amount', 'last_status'], data: [{ doc_no: 'IV-001', total_amount: '1250.00', last_status: 'USER5' }],
-        page: { hasMore: false }
+        page: 0, pageSize: 25, total: 1
       }));
     }
     if (route.request().url().endsWith('/dashboard')) return route.fulfill(json(salesDashboard()));
@@ -962,7 +968,7 @@ test('admin edits a schedule on a full page and previews the exact single Flex c
   expect(restoreRequests).toBe(1);
 
   await page.getByRole('tab', { name: 'ข้อมูลร้าน' }).click();
-  await page.getByLabel('สถานะ').click();
+  await page.getByLabel('สถานะ', { exact: true }).click();
   await page.getByRole('option', { name: 'DISABLED' }).click();
   await page.getByRole('button', { name: 'บันทึกข้อมูลร้าน' }).click();
   await expect(page.getByText('ยืนยันการเปลี่ยนสิทธิ์ร้าน')).toBeVisible();

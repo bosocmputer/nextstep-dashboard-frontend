@@ -237,6 +237,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/tenants/{tenantId}/recipients/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Searches the bounded encrypted recipient set and returns an exact page without exposing encrypted fields. */
+        post: operations["queryRecipients"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/tenants/{tenantId}/recipients/{recipientId}/permissions": {
         parameters: {
             query?: never;
@@ -827,6 +844,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/viewer/tenants/{tenantId}/reports/{reportKey}/runs/{runId}/rows/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Filters and page-navigates stored rows from an existing run. This endpoint never contacts SML or starts a report run. */
+        post: operations["queryViewerReportRows"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/viewer/tenants/{tenantId}/reports/{reportKey}/runs/{runId}/cancel": {
         parameters: {
             query?: never;
@@ -1109,6 +1143,22 @@ export interface components {
         RecipientPage: {
             data: components["schemas"]["Recipient"][];
             page: components["schemas"]["PageInfo"];
+        };
+        RecipientQueryInput: {
+            search: string;
+            /** @enum {string} */
+            status?: "PENDING" | "ACTIVE";
+            /** @enum {string} */
+            permissionState?: "WITH_REPORTS" | "WITHOUT_REPORTS";
+            page: number;
+            pageSize: number;
+        };
+        RecipientQueryResult: {
+            data: components["schemas"]["Recipient"][];
+            page: number;
+            pageSize: number;
+            total: number;
+            hasMore: boolean;
         };
         PermissionUpdate: {
             reportKeys: components["schemas"]["ReportKey"][];
@@ -1436,6 +1486,28 @@ export interface components {
                 [key: string]: unknown;
             }[];
             page: components["schemas"]["PageInfo"];
+        };
+        ReportRowFilter: {
+            columnKey: string;
+            /** @enum {string} */
+            operator: "CONTAINS" | "EQUALS" | "GTE" | "LTE";
+            value: string;
+        };
+        ReportRowQueryInput: {
+            filters: components["schemas"]["ReportRowFilter"][];
+            page: number;
+            pageSize: number;
+        };
+        ReportRowQueryPage: {
+            /** Format: uuid */
+            runId: string;
+            columns: string[];
+            data: {
+                [key: string]: unknown;
+            }[];
+            page: number;
+            pageSize: number;
+            total: number;
         };
         ReportPeriod: {
             /** @enum {string} */
@@ -2588,6 +2660,33 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    queryRecipients: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipientQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact recipient query page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipientQueryResult"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     replaceRecipientPermissions: {
         parameters: {
             query?: never;
@@ -2756,6 +2855,9 @@ export interface operations {
                 pageSize?: components["parameters"]["PageSize"];
                 /** @description Include soft-deleted schedules retained for audit history. */
                 includeArchived?: boolean;
+                status?: "DRAFT" | "ACTIVE" | "PAUSED" | "EXPIRED" | "ARCHIVED";
+                /** @description Case-insensitive schedule name search. */
+                search?: string;
             };
             header?: never;
             path: {
@@ -3039,6 +3141,12 @@ export interface operations {
                 pageSize?: components["parameters"]["PageSize"];
                 tenantId?: string;
                 status?: components["schemas"]["ReportRunStatus"];
+                reportKey?: components["schemas"]["ReportKey"];
+                source?: "DASHBOARD" | "SCHEDULE" | "BACKGROUND";
+                /** @description Start date in Asia/Bangkok. */
+                dateFrom?: string;
+                /** @description Inclusive end date in Asia/Bangkok. */
+                dateTo?: string;
             };
             header?: never;
             path?: never;
@@ -3106,6 +3214,12 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 pageSize?: components["parameters"]["PageSize"];
                 tenantId?: string;
+                status?: "PENDING" | "SENDING" | "ACCEPTED" | "RETRY_WAIT" | "UNCERTAIN" | "FAILED_PERMANENT";
+                recipientId?: string;
+                /** @description Start date in Asia/Bangkok. */
+                dateFrom?: string;
+                /** @description Inclusive end date in Asia/Bangkok. */
+                dateTo?: string;
             };
             header?: never;
             path?: never;
@@ -3130,6 +3244,13 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 pageSize?: components["parameters"]["PageSize"];
                 tenantId?: string;
+                actorType?: "ADMIN" | "VIEWER" | "WORKER" | "SYSTEM";
+                action?: string;
+                result?: "SUCCESS" | "DENIED" | "FAILED";
+                /** @description Start date in Asia/Bangkok. */
+                dateFrom?: string;
+                /** @description Inclusive end date in Asia/Bangkok. */
+                dateTo?: string;
             };
             header?: never;
             path?: never;
@@ -3659,6 +3780,37 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             410: components["responses"]["Gone"];
+        };
+    };
+    queryViewerReportRows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: components["parameters"]["TenantID"];
+                reportKey: components["parameters"]["ReportKey"];
+                runId: components["parameters"]["RunID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportRowQueryInput"];
+            };
+        };
+        responses: {
+            /** @description Exact page of stored report rows matching typed filters. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRowQueryPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            410: components["responses"]["Gone"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     cancelViewerReportRun: {
