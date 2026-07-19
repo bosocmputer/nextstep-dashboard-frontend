@@ -8,6 +8,8 @@ import { newIdempotencyKey } from '@/api/client';
 import { beginAdminTenantContext, setAdminTenantContext } from '@/stores/adminTenantContext';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
+import CursorPaginator from '@/components/admin/CursorPaginator.vue';
+import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
 
 const route = useRoute();
 const router = useRouter();
@@ -20,6 +22,15 @@ const tenant = ref<Tenant>();
 const sml = ref<SMLConnectionStatus>();
 const recipients = ref<Recipient[]>([]);
 const schedules = ref<Schedule[]>([]);
+const recipientPage = ref(0);
+const recipientPageSize = ref(25);
+const recipientTotal = ref(0);
+const recipientSearch = ref('');
+const recipientStatus = ref<string>();
+const recipientPermissionState = ref<string>();
+const schedulePagination = reactive(createCursorPagination());
+const scheduleSearch = ref('');
+const scheduleStatus = ref<string>();
 const refreshPolicy = ref<DashboardRefreshPolicy>();
 const showArchived = ref(false);
 const loading = ref(true);
@@ -45,6 +56,11 @@ let inviteActionKey = '';
 const reissueActionKeys = new Map<string, string>();
 const testSendActionKeys = new Map<string, string>();
 let scheduleLoadGeneration = 0;
+let recipientLoadGeneration = 0;
+let recipientController: AbortController | undefined;
+let scheduleController: AbortController | undefined;
+let recipientFilterTimer: ReturnType<typeof setTimeout> | undefined;
+let scheduleFilterTimer: ReturnType<typeof setTimeout> | undefined;
 
 const tenantForm = reactive({ name: '', status: 'DISABLED' as Tenant['status'], accessEndsAt: new Date(), version: 1 });
 const smlForm = reactive({ endpointUrl: '', configFileName: 'SMLConfigDATA.xml', databaseName: '', version: 0 });
@@ -89,7 +105,10 @@ async function load() {
     Object.assign(tenantForm, { name: tenant.value.name, status: tenant.value.status, accessEndsAt: new Date(tenant.value.accessEndsAt), version: tenant.value.version });
     tenantBaseline.value = tenantFingerprint.value;
     const [smlResult, recipientResult, scheduleResult, policyResult] = await Promise.allSettled([
-      adminApi.getSML(tenantId), adminApi.listRecipients(tenantId), adminApi.listSchedules(tenantId, undefined, showArchived.value), adminApi.getDashboardRefreshPolicy(tenantId)
+      adminApi.getSML(tenantId),
+      adminApi.queryRecipients(tenantId, { search: '', page: 0, pageSize: recipientPageSize.value }),
+      adminApi.listSchedules(tenantId, { pageSize: schedulePagination.pageSize, includeArchived: showArchived.value }),
+      adminApi.getDashboardRefreshPolicy(tenantId)
     ]);
     if (smlResult.status === 'fulfilled') {
       sml.value = smlResult.value;
@@ -99,8 +118,14 @@ async function load() {
     } else if (smlResult.reason instanceof ApiError && smlResult.reason.status === 404) {
       smlBaseline.value = smlFingerprint.value; smlLoaded.value = true;
     } else throw smlResult.reason;
-    recipients.value = recipientResult.status === 'fulfilled' ? recipientResult.value.data : [];
-    schedules.value = scheduleResult.status === 'fulfilled' ? scheduleResult.value.data : [];
+    if (recipientResult.status === 'fulfilled') {
+      recipients.value = recipientResult.value.data;
+      recipientTotal.value = recipientResult.value.total;
+    } else throw recipientResult.reason;
+    if (scheduleResult.status === 'fulfilled') {
+      schedules.value = scheduleResult.value.data;
+      acceptCursorPage(schedulePagination, scheduleResult.value.page.nextCursor ?? undefined, scheduleResult.value.page.hasMore);
+    } else throw scheduleResult.reason;
     if (policyResult.status === 'fulfilled') {
       applyRefreshPolicy(policyResult.value);
     } else throw policyResult.reason;
@@ -221,7 +246,7 @@ async function invite() {
     const created = await adminApi.inviteRecipient(tenantId, inviteLabel.value.trim(), inviteActionKey);
     inviteActionKey = '';
     inviteURL.value = created.invitationUrl ?? '';
-    recipients.value = (await adminApi.listRecipients(tenantId)).data;
+    await loadRecipients(true);
     toast.add({ severity: 'success', summary: 'สร้างคำเชิญแล้ว', life: 2500 });
   } catch (cause) { if (!(cause instanceof ApiError) || !cause.retryable) inviteActionKey = ''; toast.add({ severity: 'error', summary: 'สร้างคำเชิญไม่สำเร็จ', detail: errorMessage(cause), life: 5000 }); }
   finally { inviting.value = false; }
@@ -254,7 +279,7 @@ async function reissueInvitation(item: Recipient) {
   } catch (cause) {
     if (!(cause instanceof ApiError) || !cause.retryable) reissueActionKeys.delete(item.id);
     if (cause instanceof ApiError && (cause.code === 'INVITATION_NOT_PENDING' || cause.code === 'RECIPIENT_NOT_FOUND')) {
-      try { recipients.value = (await adminApi.listRecipients(tenantId)).data; } catch { /* retain the current table and surface the mutation error below */ }
+      try { await loadRecipients(); } catch { /* retain the current table and surface the mutation error below */ }
     }
     toast.add({ severity: 'error', summary: 'สร้างลิงก์เชิญใหม่ไม่สำเร็จ', detail: errorMessage(cause), life: 5000 });
   } finally {
@@ -281,7 +306,7 @@ async function revokeRecipient(item: Recipient) {
   revokingRecipientId.value = item.id;
   try {
     await adminApi.revokeRecipient(tenantId, item.id);
-    recipients.value = recipients.value.filter((recipient) => recipient.id !== item.id);
+    await loadRecipients();
     toast.add({
       severity: 'success',
       summary: item.status === 'PENDING' ? 'ยกเลิกคำเชิญแล้ว' : 'ลบผู้รับแล้ว',
@@ -305,6 +330,27 @@ async function revokeRecipient(item: Recipient) {
   } finally {
     if (revokingRecipientId.value === item.id) revokingRecipientId.value = '';
   }
+}
+
+async function loadRecipients(resetPage = false) {
+  if (resetPage) recipientPage.value = 0;
+  const generation = ++recipientLoadGeneration;
+  recipientController?.abort(resetPage ? 'recipient-filters-changed' : 'recipient-page-changed');
+  recipientController = new AbortController();
+  const result = await adminApi.queryRecipients(tenantId, {
+    search: recipientSearch.value.trim(), status: recipientStatus.value as 'PENDING' | 'ACTIVE' | undefined,
+    permissionState: recipientPermissionState.value as 'WITH_REPORTS' | 'WITHOUT_REPORTS' | undefined,
+    page: recipientPage.value, pageSize: recipientPageSize.value
+  }, recipientController.signal);
+  if (generation !== recipientLoadGeneration) return;
+  recipients.value = result.data;
+  recipientTotal.value = result.total;
+}
+
+function changeRecipientPage(event: { page: number; rows: number }) {
+  recipientPage.value = event.rows === recipientPageSize.value ? event.page : 0;
+  recipientPageSize.value = event.rows;
+  void loadRecipients();
 }
 
 function confirmRevokeRecipient(item: Recipient) {
@@ -340,15 +386,26 @@ async function changeScheduleState(item: Schedule) {
   finally { changingScheduleId.value = ''; }
 }
 
-async function refreshSchedules() {
+async function refreshSchedules(reset = false) {
+  if (reset) resetCursorPagination(schedulePagination);
   const generation = ++scheduleLoadGeneration;
+  scheduleController?.abort(reset ? 'schedule-filters-changed' : 'schedule-page-changed');
+  scheduleController = new AbortController();
   try {
-    const page = await adminApi.listSchedules(tenantId, undefined, showArchived.value);
-    if (generation === scheduleLoadGeneration) schedules.value = page.data;
+    const page = await adminApi.listSchedules(tenantId, {
+      cursor: schedulePagination.cursor, pageSize: schedulePagination.pageSize, includeArchived: showArchived.value,
+      status: scheduleStatus.value, search: scheduleSearch.value.trim() || undefined
+    }, scheduleController.signal);
+    if (generation === scheduleLoadGeneration) {
+      schedules.value = page.data;
+      acceptCursorPage(schedulePagination, page.page.nextCursor ?? undefined, page.page.hasMore);
+    }
   } catch (cause) {
-    if (generation === scheduleLoadGeneration) toast.add({ severity: 'error', summary: 'โหลดตารางส่งรายงานไม่ได้', detail: errorMessage(cause), life: 5000 });
+    if (generation === scheduleLoadGeneration && !(cause instanceof ApiError && cause.code === 'CANCELLED')) toast.add({ severity: 'error', summary: 'โหลดตารางส่งรายงานไม่ได้', detail: errorMessage(cause), life: 5000 });
   }
 }
+function changeSchedulePage(direction: 'previous' | 'next') { if (moveCursorPage(schedulePagination, direction)) void refreshSchedules(); }
+function changeSchedulePageSize(value: number) { resizeCursorPagination(schedulePagination, value); void refreshSchedules(); }
 
 async function archiveSchedule(item: Schedule) {
   if (changingScheduleId.value || item.status === 'ACTIVE' || item.status === 'ARCHIVED') return;
@@ -454,11 +511,28 @@ function blockerLabel(code: string) {
   return ({ TENANT_INACTIVE: 'ร้านยังไม่เปิดใช้งานหรือหมดอายุ', SML_NOT_READY: 'SML ยังไม่พร้อม', RECIPIENT_NOT_ACTIVE: 'มีผู้รับที่ยังไม่ยืนยัน LINE', RECIPIENT_PERMISSION_MISMATCH: 'สิทธิ์ผู้รับไม่ตรงกับรายงาน', LINE_NOT_CONFIGURED: 'LINE OA ยังไม่พร้อม' } as Record<string, string>)[code] ?? code;
 }
 watch(inviteLabel, () => { if (!inviting.value) inviteActionKey = ''; });
-watch(showArchived, () => { if (!loading.value) void refreshSchedules(); });
+watch([recipientSearch, recipientStatus, recipientPermissionState], () => {
+  if (recipientFilterTimer) clearTimeout(recipientFilterTimer);
+  recipientFilterTimer = setTimeout(() => { if (!loading.value) void loadRecipients(true); }, 300);
+});
+watch([showArchived, scheduleSearch, scheduleStatus], () => {
+  if (scheduleStatus.value === 'ARCHIVED' && !showArchived.value) {
+    showArchived.value = true;
+    return;
+  }
+  if (scheduleFilterTimer) clearTimeout(scheduleFilterTimer);
+  scheduleFilterTimer = setTimeout(() => { if (!loading.value) void refreshSchedules(true); }, 300);
+});
 function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsavedChanges.value) { event.preventDefault(); event.returnValue = ''; } }
 onBeforeRouteLeave(() => !hasUnsavedChanges.value || window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่'));
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void load(); });
-onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', beforeUnload);
+  if (recipientFilterTimer) clearTimeout(recipientFilterTimer);
+  if (scheduleFilterTimer) clearTimeout(scheduleFilterTimer);
+  recipientController?.abort('unmounted');
+  scheduleController?.abort('unmounted');
+});
 </script>
 
 <template>
@@ -487,6 +561,11 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
         <TabPanel value="recipients">
           <Message severity="info" :closable="false" class="mb-5"><strong>ขั้นที่ 1: ให้สิทธิ์เปิดดู Dashboard แก่ผู้รับ</strong><div class="mt-1">สิทธิ์กำหนดเพดานว่าผู้รับเปิดรายงานใดได้ ส่วนรายงานที่จะส่งจริงเลือกอีกครั้งใน “ตารางส่ง LINE”</div></Message>
           <Toolbar class="mb-5 border-0 p-0"><template #start><div><h2 class="text-lg font-semibold m-0">ผู้รับและสิทธิ์เปิดดู Dashboard</h2><p class="text-muted-color mt-1 mb-0">ผู้รับที่รอยืนยันสามารถออกลิงก์เชิญใหม่ได้ ส่วนผู้รับที่ยืนยันแล้วสามารถส่งลิงก์ Dashboard เดิมให้เข้าใช้งานอีกครั้ง</p></div></template><template #end><Button label="เพิ่มผู้รับ LINE" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''; inviteLabel = ''" /></template></Toolbar>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <IconField><InputIcon class="pi pi-search" /><InputText v-model="recipientSearch" aria-label="ค้นหาชื่อผู้รับ" placeholder="ค้นหาชื่อผู้รับ" fluid /></IconField>
+            <Select v-model="recipientStatus" aria-label="กรองสถานะผู้รับ" :options="[{ label: 'รอยืนยัน LINE', value: 'PENDING' }, { label: 'ใช้งาน', value: 'ACTIVE' }]" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" />
+            <Select v-model="recipientPermissionState" aria-label="กรองสิทธิ์รายงาน" :options="[{ label: 'กำหนดรายงานแล้ว', value: 'WITH_REPORTS' }, { label: 'ยังไม่กำหนดรายงาน', value: 'WITHOUT_REPORTS' }]" option-label="label" option-value="value" show-clear placeholder="ทุกสิทธิ์" />
+          </div>
           <DataTable :value="recipients" data-key="id" striped-rows scrollable>
             <Column field="displayName" header="ชื่อ" />
             <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template></Column>
@@ -500,6 +579,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
             </div></template></Column>
             <template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ กด “เพิ่มผู้รับ LINE” เพื่อเริ่มต้น</div></template>
           </DataTable>
+          <Paginator :first="recipientPage * recipientPageSize" :rows="recipientPageSize" :total-records="recipientTotal" :rows-per-page-options="[25, 50, 100]" template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" @page="changeRecipientPage" />
         </TabPanel>
         <TabPanel value="schedules">
           <Message severity="info" :closable="false" class="mb-5"><strong>ขั้นที่ 2–4: เลือกรายงานใน LINE รอบนี้ → เลือกผู้รับ → ตั้งวันเวลา → ตรวจสอบและเปิดใช้งาน</strong><div class="mt-1">การเลือกรายงานในตารางส่งไม่เพิ่มสิทธิ์ ผู้รับทุกคนต้องมีสิทธิ์เปิดดูรายงานนั้นจากแท็บ “ผู้รับและสิทธิ์” ก่อน</div></Message>
@@ -507,6 +587,10 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
             <template #start><p class="m-0 text-muted-color">หนึ่ง LINE Card รองรับสูงสุด 10 รายงาน รายงานละ 2 ตัวเลขสำคัญ</p></template>
             <template #end><div class="flex flex-wrap items-center gap-3"><label class="flex items-center gap-2 cursor-pointer"><Checkbox v-model="showArchived" binary /><span>แสดงรายการที่ลบแล้ว</span></label><Button label="เพิ่มตารางส่งรายงาน" icon="pi pi-calendar-plus" @click="openSchedule()" /></div></template>
           </Toolbar>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+            <IconField><InputIcon class="pi pi-search" /><InputText v-model="scheduleSearch" aria-label="ค้นหาชื่อตารางส่ง LINE" placeholder="ค้นหาชื่อตารางส่ง LINE" fluid /></IconField>
+            <Select v-model="scheduleStatus" aria-label="กรองสถานะตารางส่ง LINE" :options="[{ label: 'ฉบับร่าง', value: 'DRAFT' }, { label: 'ใช้งาน', value: 'ACTIVE' }, { label: 'พักไว้', value: 'PAUSED' }, { label: 'หมดอายุ', value: 'EXPIRED' }, { label: 'ลบแล้ว', value: 'ARCHIVED' }]" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" />
+          </div>
           <DataTable :value="schedules" data-key="id" striped-rows scrollable>
             <Column field="name" header="ชื่อตาราง"><template #body="{ data }"><span class="font-medium">{{ data.name }}</span><div class="text-xs text-muted-color mt-1">{{ data.localTime }} · เวลาไทย</div></template></Column>
             <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : data.status === 'PAUSED' ? 'warn' : 'secondary'" :value="statusLabel(data.status)" /></template></Column>
@@ -525,6 +609,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
             </div></template></Column>
             <template #empty><div class="py-8 text-center text-muted-color">{{ showArchived ? 'ไม่พบตารางส่งรายงาน' : 'ยังไม่มีตารางส่งรายงาน กด “เพิ่มตารางส่งรายงาน” เพื่อเริ่มต้น' }}</div></template>
           </DataTable>
+          <CursorPaginator :page="schedulePagination.page" :page-size="schedulePagination.pageSize" :item-count="schedules.length" :has-next="schedulePagination.hasNext" @previous="changeSchedulePage('previous')" @next="changeSchedulePage('next')" @update:page-size="changeSchedulePageSize" />
         </TabPanel>
       </TabPanels>
     </Tabs></div>

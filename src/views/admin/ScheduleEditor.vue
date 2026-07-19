@@ -23,6 +23,7 @@ const schedule = ref<Schedule>();
 const recipients = ref<ScheduleRecipientOption[]>([]);
 const recipientSearch = ref('');
 const recipientPage = ref(0);
+const recipientPageSize = ref(25);
 const recipientTotal = ref(0);
 const loadingRecipients = ref(false);
 const catalog = ref<AdminReportCatalog>();
@@ -117,7 +118,7 @@ async function loadRecipientOptions(resetPage = false) {
   loadingRecipients.value = true;
   try {
     const result = await adminApi.scheduleRecipientOptions(tenantId, {
-      reportKeys: [...form.reportKeys], selectedRecipientIds: [...form.recipientIds], search: recipientSearch.value.trim(), page: recipientPage.value, pageSize: 100
+      reportKeys: [...form.reportKeys], selectedRecipientIds: [...form.recipientIds], search: recipientSearch.value.trim(), page: recipientPage.value, pageSize: recipientPageSize.value
     }, requestController.signal);
     if (generation !== recipientGeneration) return;
     const merged = new Map([...result.selected, ...result.data].map((item) => [item.id, item]));
@@ -126,6 +127,12 @@ async function loadRecipientOptions(resetPage = false) {
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) toast.add({ severity: 'error', summary: 'โหลดความพร้อมผู้รับไม่สำเร็จ', detail: errorMessage(cause), life: 5000 });
   } finally { if (generation === recipientGeneration) loadingRecipients.value = false; }
+}
+
+function changeRecipientPage(event: { page: number; rows: number }) {
+  recipientPage.value = event.rows === recipientPageSize.value ? event.page : 0;
+  recipientPageSize.value = event.rows;
+  void loadRecipientOptions();
 }
 
 function toggleRecipient(item: ScheduleRecipientOption, checked: boolean) {
@@ -208,7 +215,7 @@ onBeforeUnmount(() => { controller.abort('unmount'); previewController?.abort('u
         <Message v-if="invalidSelectedRecipients.length" severity="error" :closable="false" class="mb-4">ผู้รับที่เลือกไว้ {{ invalidSelectedRecipients.length }} คนไม่พร้อม ระบบคงรายการไว้ให้ตรวจสอบและจะยังไม่อนุญาตให้บันทึก</Message>
         <Message v-if="!form.reportKeys.length" severity="info" :closable="false">เลือกรายงานในขั้นตอนที่ 1 ก่อน ระบบจึงจะตรวจความพร้อมของผู้รับได้</Message>
         <DataTable v-else :value="recipients" data-key="id" striped-rows responsive-layout="scroll" :loading="loadingRecipients"><Column header="เลือก" style="width:5rem" header-class="table-select-column" body-class="table-select-column"><template #body="{ data }"><Checkbox :model-value="selectedRecipientSet.has(data.id)" binary :disabled="readOnly || !data.eligible" :aria-label="`เลือกผู้รับ ${data.displayName}`" @update:model-value="toggleRecipient(data, $event)" /></template></Column><Column field="displayName" header="ผู้รับ" /><Column header="ความพร้อม"><template #body="{ data }"><Tag v-if="data.status !== 'ACTIVE'" value="ยังไม่ยืนยัน LINE" severity="warn" /><Tag v-else-if="!data.eligible" :value="`ขาดสิทธิ์ ${data.missingReportKeys.length} รายงาน`" severity="danger" /><Tag v-else value="พร้อมรับรายงานครบ" severity="success" /></template></Column><Column header="การจัดการ" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><RouterLink v-if="data.missingReportKeys.length" :to="{ name: 'admin-recipient-permissions', params: { tenantId, recipientId: data.id } }" target="_blank" rel="noopener noreferrer" class="permission-link"><i class="pi pi-external-link" /> แก้สิทธิ์</RouterLink></template></Column><template #empty><div class="py-8 text-center text-muted-color">ไม่พบผู้รับที่ตรงกับเงื่อนไข</div></template></DataTable>
-        <div v-if="form.reportKeys.length" class="flex items-center justify-between gap-3 mt-3"><small class="text-muted-color">พบ {{ recipientTotal.toLocaleString('th-TH') }} คน · เลือกแล้ว {{ form.recipientIds.length.toLocaleString('th-TH') }} คน</small><div class="flex gap-2"><Button icon="pi pi-angle-left" text rounded aria-label="หน้าก่อน" :disabled="recipientPage === 0 || loadingRecipients" @click="recipientPage--; loadRecipientOptions()" /><Button icon="pi pi-angle-right" text rounded aria-label="หน้าถัดไป" :disabled="(recipientPage + 1) * 100 >= recipientTotal || loadingRecipients" @click="recipientPage++; loadRecipientOptions()" /></div></div>
+        <div v-if="form.reportKeys.length" class="mt-3"><small class="text-muted-color">พบ {{ recipientTotal.toLocaleString('th-TH') }} คน · เลือกแล้ว {{ form.recipientIds.length.toLocaleString('th-TH') }} คน</small><Paginator :first="recipientPage * recipientPageSize" :rows="recipientPageSize" :total-records="recipientTotal" :rows-per-page-options="[25, 50, 100]" template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" :pt="{ root: { 'aria-label': 'เปลี่ยนหน้ารายชื่อผู้รับ' } }" @page="changeRecipientPage" /></div>
       </div>
 
       <div class="card">

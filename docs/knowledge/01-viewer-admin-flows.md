@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-17
+last_verified: 2026-07-19
 source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue]
 tags: [frontend, viewer, admin, routing]
 ---
@@ -79,6 +79,20 @@ Permission and schedule selection are different concepts:
 - Permission = reports a recipient may open in the tenant dashboard.
 - Schedule report set = reports included in one LINE occurrence.
 - Every selected recipient must have permission for every report selected by an active schedule.
+
+## Admin Table Navigation
+
+- Admin history tables use server-side filtering and bounded cursor pagination;
+  changing filters resets the cursor chain and aborts obsolete requests.
+- Recipient tables return an exact filtered total for PrimeVue pagination. Search,
+  status, and permission filters are evaluated before paging, while selections
+  outside the visible page remain intact.
+- Schedule tables filter by name, lifecycle status, and archived visibility on
+  the server. Selecting `ARCHIVED` explicitly enables archived rows.
+- Small catalog/picker tables use local PrimeVue filtering and 25/50/100-row
+  pagination because their full bounded catalogs are already in browser memory.
+- Every table keeps numeric/action/select alignment semantics and must preserve
+  loading, empty, denied, and error states at mobile and desktop widths.
 
 ## Viewer Entry
 

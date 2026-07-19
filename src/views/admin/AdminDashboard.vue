@@ -7,6 +7,7 @@ import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 const ready = ref<'checking' | 'ready' | 'unavailable'>('checking');
 const lineQuota = ref<LineQuotaStatus>();
 const reportDefinitions = ref<AdminReportDefinition[]>([]);
+const reportFilters = ref({ global: { value: null as string | null, matchMode: 'contains' } });
 onMounted(async () => {
   const [healthResult, quotaResult, reportResult] = await Promise.allSettled([
     apiRequest('/api/v1/health/ready', { timeoutMs: 3000 }), adminApi.lineQuota(), loadAdminReportCatalog()
@@ -63,8 +64,8 @@ const shortcuts = [
     </RouterLink>
   </div>
   <div class="card">
-    <div class="flex items-center justify-between gap-3 mb-4"><div><h2 class="text-xl font-semibold m-0">รายงานที่รองรับ</h2><p class="text-muted-color mt-1 mb-0">ใช้เฉพาะคำสั่ง SQL ที่ระบบตรวจสอบไว้ล่วงหน้า</p></div><Badge :value="reportDefinitions.length" /></div>
-    <DataTable :value="reportDefinitions" data-key="reportKey" striped-rows responsive-layout="scroll">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 class="text-xl font-semibold m-0">รายงานที่รองรับ</h2><p class="text-muted-color mt-1 mb-0">ใช้เฉพาะคำสั่ง SQL ที่ระบบตรวจสอบไว้ล่วงหน้า</p></div><div class="flex items-center gap-3"><IconField><InputIcon class="pi pi-search" /><InputText v-model="reportFilters.global.value" placeholder="ค้นหารายงานหรือหมวด" aria-label="ค้นหารายงานที่รองรับ" /></IconField><Badge :value="reportDefinitions.length" /></div></div>
+    <DataTable v-model:filters="reportFilters" :value="reportDefinitions" data-key="reportKey" :global-filter-fields="['label', 'categoryLabel']" paginator :rows="25" :rows-per-page-options="[25, 50, 100]" paginator-template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" striped-rows responsive-layout="scroll">
       <Column field="label" header="ชื่อรายงาน"><template #body="{ data }"><span class="font-medium">{{ data.label }}</span></template></Column>
       <Column field="categoryLabel" header="หมวด"><template #body="{ data }"><Tag severity="secondary" :value="data.categoryLabel" /></template></Column>
       <template #empty>ยังไม่มีนิยามรายงาน</template>

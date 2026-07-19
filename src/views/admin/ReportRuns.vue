@@ -1,20 +1,31 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { ApiError, adminApi, type AdminReportDefinition, type ReportRun, type ReportRunDetail } from '@/api';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { ApiError, adminApi, type AdminReportDefinition, type ReportKey, type ReportRun, type ReportRunDetail } from '@/api';
+import CursorPaginator from '@/components/admin/CursorPaginator.vue';
 import TenantFilterSelect from '@/components/admin/TenantFilterSelect.vue';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
 import { evidenceLevelLabel, formatDurationMs, lineImpactLabel, reportImpactLabel, transportPhaseLabel, triggerKindLabel } from '@/utils/operationalPresentation';
+import { toDateFilter } from '@/utils/adminTableFilters';
+import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
 
 const rows = ref<ReportRun[]>([]);
 const loading = ref(false);
 const error = ref('');
-const cursor = ref<string>();
-const hasMore = ref(false);
+const pagination = reactive(createCursorPagination());
 const status = ref<string>();
 const tenantId = ref('');
+const reportKey = ref<string>();
+const source = ref<string>();
+const dateFrom = ref<Date>();
+const dateTo = ref<Date>();
 const statuses = ['QUEUED', 'CLAIMED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED'].map((value) => ({ value, label: statusLabel(value) }));
+const sources = [
+  { value: 'SCHEDULE', label: 'ตารางส่ง LINE' },
+  { value: 'DASHBOARD', label: 'ผู้ใช้ Dashboard' },
+  { value: 'BACKGROUND', label: 'อัปเดตเบื้องหลัง' }
+];
 const selected = ref<ReportRun>();
 const detail = ref<ReportRunDetail>();
 const detailVisible = ref(false);
@@ -27,18 +38,27 @@ let controller: AbortController | undefined;
 let detailController: AbortController | undefined;
 let detailGeneration = 0;
 
-async function load(reset = true) {
-  if (!reset && loading.value) return;
-  if (reset) { loadGeneration++; controller?.abort('filters-changed'); controller = new AbortController(); }
+async function load(reset = false) {
+  if (reset) resetCursorPagination(pagination);
+  loadGeneration++;
+  controller?.abort(reset ? 'filters-changed' : 'page-changed');
+  controller = new AbortController();
   const context = loadGeneration;
   loading.value = true; error.value = '';
   try {
-    const page = await adminApi.reportRuns({ cursor: reset ? undefined : cursor.value, tenantId: tenantId.value || undefined, status: status.value }, controller?.signal);
+    const page = await adminApi.reportRuns({
+      cursor: pagination.cursor, pageSize: pagination.pageSize, tenantId: tenantId.value || undefined,
+      status: status.value, reportKey: reportKey.value as ReportKey | undefined, source: source.value,
+      dateFrom: toDateFilter(dateFrom.value), dateTo: toDateFilter(dateTo.value)
+    }, controller.signal);
     if (context !== loadGeneration) return;
-    rows.value = reset ? page.data : [...rows.value, ...page.data]; cursor.value = page.page.nextCursor ?? undefined; hasMore.value = page.page.hasMore;
+    rows.value = page.data;
+    acceptCursorPage(pagination, page.page.nextCursor ?? undefined, page.page.hasMore);
   } catch (cause) { if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause); }
   finally { if (context === loadGeneration) loading.value = false; }
 }
+function changePage(direction: 'previous' | 'next') { if (moveCursorPage(pagination, direction)) void load(); }
+function changePageSize(value: number) { resizeCursorPagination(pagination, value); void load(); }
 function severity(value: string) { return value === 'SUCCEEDED' ? 'success' : value === 'FAILED' ? 'danger' : value === 'RUNNING' || value === 'CLAIMED' ? 'info' : value === 'QUEUED' ? 'warn' : 'secondary'; }
 function runStatusLabel(run: ReportRun) { return run.runtimeStatus === 'STALLED' ? 'งานหยุดค้าง' : statusLabel(run.status); }
 function runSeverity(run: ReportRun) { return run.runtimeStatus === 'STALLED' ? 'danger' : severity(run.status); }
@@ -79,7 +99,7 @@ function closeDetail() {
 }
 onMounted(() => {
   void loadAdminReportCatalog().then((catalog) => { reportDefinitions.value = catalog.data; }).catch(() => undefined);
-  void load();
+  void load(true);
 });
 onBeforeUnmount(() => { controller?.abort('unmounted'); detailController?.abort('unmounted'); });
 </script>
@@ -87,7 +107,16 @@ onBeforeUnmount(() => { controller?.abort('unmounted'); detailController?.abort(
 <template>
   <AppPageHeader title="การสร้างรายงาน" subtitle="ตรวจคิวและผลการทำงาน · เวลาไทย" />
   <div class="card table-card">
-    <Toolbar class="mb-6 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template><template #end><form class="flex flex-col md:flex-row gap-3" @submit.prevent="load()"><TenantFilterSelect v-model="tenantId" /><Select v-model="status" aria-label="กรองสถานะการสร้างรายงาน" :options="statuses" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" class="md:w-48" /><Button type="submit" label="กรอง" icon="pi pi-filter" /></form></template></Toolbar>
+    <Toolbar class="mb-4 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template></Toolbar>
+    <form class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7 gap-3 mb-4" aria-label="ตัวกรองประวัติการสร้างรายงาน" @submit.prevent="load(true)">
+      <TenantFilterSelect v-model="tenantId" />
+      <Select v-model="reportKey" aria-label="กรองรายงาน" :options="reportDefinitions" option-label="label" option-value="reportKey" show-clear placeholder="ทุกรายงาน" />
+      <Select v-model="status" aria-label="กรองสถานะการสร้างรายงาน" :options="statuses" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" />
+      <Select v-model="source" aria-label="กรองแหล่งงาน" :options="sources" option-label="label" option-value="value" show-clear placeholder="ทุกแหล่งงาน" />
+      <DatePicker v-model="dateFrom" aria-label="กรองวันที่เริ่มต้น" date-format="dd/mm/yy" show-icon placeholder="ตั้งแต่วันที่" />
+      <DatePicker v-model="dateTo" aria-label="กรองวันที่สิ้นสุด" date-format="dd/mm/yy" show-icon placeholder="ถึงวันที่" />
+      <Button type="submit" label="ใช้ตัวกรอง" icon="pi pi-filter" />
+    </form>
     <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
     <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
       <Column field="tenantName" header="ร้านค้า" frozen><template #body="{ data }"><span class="font-semibold">{{ data.tenantName || '—' }}</span></template></Column>
@@ -101,7 +130,7 @@ onBeforeUnmount(() => { controller?.abort('unmounted'); detailController?.abort(
       <Column header="" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button icon="pi pi-info-circle" text rounded class="touch-action" aria-label="ดูสาเหตุและหลักฐาน" v-tooltip.top="'ดูสาเหตุและหลักฐาน'" @click="openDetail(data)" /></template></Column>
       <template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีประวัติการสร้างรายงาน</div></template>
     </DataTable>
-    <div v-if="hasMore" class="table-footer text-center"><Button label="โหลดเพิ่มเติม" outlined :loading="loading" @click="load(false)" /></div>
+    <CursorPaginator :page="pagination.page" :page-size="pagination.pageSize" :item-count="rows.length" :has-next="pagination.hasNext" :disabled="loading" @previous="changePage('previous')" @next="changePage('next')" @update:page-size="changePageSize" />
   </div>
   <Dialog :visible="detailVisible" modal header="สาเหตุและหลักฐานการสร้างรายงาน" class="responsive-dialog failure-dialog" :style="{ width: '46rem' }" @update:visible="(value) => { if (!value) closeDetail(); }">
     <div v-if="detailLoading" class="grid gap-3"><Skeleton height="5rem" /><Skeleton height="10rem" /></div>
