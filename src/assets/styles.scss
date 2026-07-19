@@ -38,9 +38,10 @@ button, input, textarea, select { font: inherit; }
 .safe-wrap { overflow-wrap: anywhere; }
 .content-stack { display: grid; gap: 1rem; }
 .technical-detail { font-size: .75rem; color: var(--text-color-secondary); overflow-wrap: anywhere; }
-.table-card { overflow: hidden; }
-.table-card > .p-datatable { margin-inline: -2rem; width: calc(100% + 4rem); }
-.table-card > .p-datatable + .table-footer { margin: 1rem -2rem -2rem; padding: 1rem 2rem; border-top: 1px solid var(--surface-border); }
+.table-card { overflow: visible; }
+.table-card > .p-datatable + .table-footer { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--surface-border); }
+.sakai-table-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.p-datatable-filter-overlay { max-width: min(24rem, calc(100vw - 2rem)); }
 .touch-action { min-width: 44px; min-height: 44px; }
 
 @media (max-width: 767px) {
@@ -48,8 +49,8 @@ button, input, textarea, select { font: inherit; }
   .page-title { font-size: 1.4rem; }
   .responsive-dialog { width: calc(100vw - 2rem) !important; }
   .table-card { padding: 1.25rem; }
-  .table-card > .p-datatable { margin-inline: -1.25rem; width: calc(100% + 2.5rem); }
-  .table-card > .p-datatable + .table-footer { margin: 1rem -1.25rem -1.25rem; padding: 1rem 1.25rem; }
+  .sakai-table-header { flex-direction: column-reverse; align-items: stretch; }
+  .sakai-table-header .p-iconfield, .sakai-table-header .p-inputtext { width: 100%; }
   .entity-back-action .p-button-label { display: none; }
   .entity-back-action.p-button { width: 44px; min-width: 44px; height: 44px; padding: 0; }
 }

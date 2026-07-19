@@ -5,6 +5,8 @@ import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 import ExecutiveChart from '@/components/dashboard/ExecutiveChart.vue';
 import ReportPeriodToolbar from '@/components/dashboard/ReportPeriodToolbar.vue';
+import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import { cloneSakaiFilterState, useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 import { ApiError, reportDefinitionByKey, viewerApi, type CreateReportRunInput, type DashboardSnapshot, type ReportDashboard, type ReportKey, type ReportRowQueryInput, type ReportRun } from '@/api';
 import { newIdempotencyKey } from '@/api/client';
 import { useViewerSession } from '@/stores/viewer';
@@ -33,13 +35,21 @@ const expiredSnapshot = ref<DashboardSnapshot>();
 const rows = ref<Record<string, unknown>[]>([]);
 const columns = ref<string[]>([]);
 const rowPage = ref(0);
-const rowPageSize = ref(25);
+type TablePageSize = 25 | 50 | 100;
+const rowPageSize = ref<TablePageSize>(25);
 const rowTotal = ref(0);
-const rowFilterColumnKey = ref<string>();
-const rowFilterOperator = ref<ReportRowQueryInput['filters'][number]['operator']>('CONTAINS');
-const rowFilterValue = ref('');
 const appliedRowFilters = ref<ReportRowQueryInput['filters']>([]);
+const rowGlobalSearch = ref('');
+const appliedRowGlobalSearch = ref('');
+type RowFilterCapability = { columnKey: string; dataType: 'TEXT' | 'IDENTIFIER' | 'DATE' | 'NUMBER'; operators: ReportRowQueryInput['filters'][number]['operator'][]; globalSearchable: boolean };
+type PrimeRowFilter = { value: string | Date[] | null; matchMode: string };
+const rowFilterCapabilities = ref<RowFilterCapability[]>([]);
+const rowPrimeFilters = ref<Record<string, PrimeRowFilter>>({});
+useSakaiFilterMenu(rowPrimeFilters);
+const rowFilterOperators = ref<Record<string, ReportRowQueryInput['filters'][number]['operator']>>({});
 const rowFilterError = ref('');
+const mobileRowFiltersOpen = ref(false);
+const mobileRowFilterBaseline = ref<{ filters: Record<string, PrimeRowFilter>; operators: Record<string, ReportRowQueryInput['filters'][number]['operator']> }>();
 const rowsLoaded = ref(false);
 const rowsUnavailable = ref(false);
 const activeTab = ref('overview');
@@ -61,6 +71,7 @@ let pollInFlight = false;
 let initializeController: AbortController | undefined;
 let pollController: AbortController | undefined;
 let rowsController: AbortController | undefined;
+let rowSearchTimer: ReturnType<typeof setTimeout> | undefined;
 let runAction: { fingerprint: string; key: string } | undefined;
 
 const active = computed(() => !!run.value && ['QUEUED', 'CLAIMED', 'RUNNING'].includes(run.value.status));
@@ -87,16 +98,9 @@ const displayedPeriodLabel = computed(() => dashboard.value ? `${periodLabel(das
 const columnOptions = computed(() => presentationFor(reportKey.value, columns.value));
 const displayedColumns = computed(() => visibleReportColumns(reportKey.value, columns.value, selectedColumnKeys.value));
 const mobileSummaryColumns = computed(() => displayedColumns.value.filter((column) => column.mobilePriority >= 4).slice(0, 6));
-const rowFilterColumns = computed(() => columnOptions.value.filter((column) => column.defaultVisible && !column.technical && column.dataType !== 'TIME'));
-const activeRowFilterColumn = computed(() => rowFilterColumns.value.find((column) => column.key === rowFilterColumnKey.value));
-const rowFilterOperatorOptions = computed(() => {
-  const type = activeRowFilterColumn.value?.dataType;
-  if (type === 'NUMBER' || type === 'DATE') return [
-    { label: 'เท่ากับ', value: 'EQUALS' }, { label: 'มากกว่าหรือเท่ากับ', value: 'GTE' }, { label: 'น้อยกว่าหรือเท่ากับ', value: 'LTE' }
-  ];
-  return [{ label: 'มีคำว่า', value: 'CONTAINS' }, { label: 'ตรงกับ', value: 'EQUALS' }];
-});
-const rowFilterPlaceholder = computed(() => activeRowFilterColumn.value?.dataType === 'DATE' ? 'YYYY-MM-DD' : activeRowFilterColumn.value?.dataType === 'NUMBER' ? 'กรอกตัวเลข' : 'กรอกคำค้นหา');
+const rowCapabilityByKey = computed(() => new Map(rowFilterCapabilities.value.map((item) => [item.columnKey, item])));
+const filterableDisplayedColumns = computed(() => displayedColumns.value.filter((column) => rowCapabilityByKey.value.has(column.key)));
+const rowHasFilters = computed(() => Boolean(appliedRowGlobalSearch.value || appliedRowFilters.value.length));
 
 async function resolveSnapshot(selection: ReportPeriodSelection) {
   if (!definition.value || loading.value || cacheLoading.value || backgroundRefreshing.value) return;
@@ -306,18 +310,27 @@ async function loadDashboard() {
   }
 }
 
-async function loadRows(pageNumber = 0, pageSize = rowPageSize.value) {
+async function loadRows(pageNumber = 0, pageSize: TablePageSize = rowPageSize.value, allowClamp = true) {
   if (!run.value) return;
   rowsController?.abort('new-page'); rowsController = new AbortController();
   const context = generation; const selectedTenantId = tenantId.value; const selectedReportKey = reportKey.value; const selectedRunId = run.value.id;
   const initializeColumns = columns.value.length === 0;
   loadingRows.value = true;
   try {
-    const page = await viewerApi.queryRows(selectedTenantId, selectedReportKey, selectedRunId, { filters: appliedRowFilters.value, page: pageNumber, pageSize }, rowsController.signal);
+    const page = await viewerApi.queryRows(selectedTenantId, selectedReportKey, selectedRunId, {
+      globalSearch: appliedRowGlobalSearch.value || undefined,
+      filters: appliedRowFilters.value, page: pageNumber, pageSize
+    }, rowsController.signal);
     if (!isCurrent(context, selectedTenantId, selectedReportKey) || run.value?.id !== selectedRunId) return;
-    const keyedRows = page.data.map((row, index) => ({ ...row, __rowKey: `${selectedRunId}:${page.page}:${index}` }));
+    if (allowClamp && page.total > 0 && page.data.length === 0 && pageNumber > 0) {
+      await loadRows(Math.max(0, Math.ceil(page.total / pageSize) - 1), pageSize, false);
+      return;
+    }
+    const keyedRows = page.data.map((row, index) => ({ ...row, __rowKey: `${selectedRunId}:${page.rowOrdinals[index]}` }));
     rows.value = keyedRows;
     columns.value = [...new Set([...columns.value, ...page.columns])];
+    rowFilterCapabilities.value = page.filterCapabilities;
+    initializeRowFilterState(page.filterCapabilities);
     if (initializeColumns) selectedColumnKeys.value = visibleReportColumns(selectedReportKey, columns.value).map((column) => column.key);
     rowPage.value = page.page;
     rowPageSize.value = page.pageSize;
@@ -332,39 +345,110 @@ async function loadRows(pageNumber = 0, pageSize = rowPageSize.value) {
   finally { if (context === generation) loadingRows.value = false; }
 }
 
-function applyRowFilter() {
+function initializeRowFilterState(capabilities: RowFilterCapability[]) {
+  const filters = { ...rowPrimeFilters.value };
+  const operators = { ...rowFilterOperators.value };
+  for (const capability of capabilities) {
+    filters[capability.columnKey] ??= { value: null, matchMode: capability.dataType === 'DATE' ? 'between' : 'contains' };
+    operators[capability.columnKey] ??= capability.dataType === 'DATE' && capability.operators.includes('BETWEEN')
+      ? 'BETWEEN'
+      : capability.operators[0] ?? 'EQUALS';
+  }
+  rowPrimeFilters.value = filters;
+  rowFilterOperators.value = operators;
+}
+
+function bangkokDateValue(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function rowOperatorOptions(capability: RowFilterCapability) {
+  const labels: Record<string, string> = { CONTAINS: 'มีคำว่า', EQUALS: 'เท่ากับ', GTE: 'มากกว่าหรือเท่ากับ', LTE: 'น้อยกว่าหรือเท่ากับ', BETWEEN: 'อยู่ในช่วงวันที่' };
+  return capability.operators.map((value) => ({ label: labels[value] ?? value, value }));
+}
+function dateRowFilterValue(columnKey: string): Date[] | null {
+  const value = rowPrimeFilters.value[columnKey]?.value;
+  return Array.isArray(value) ? value : null;
+}
+function textRowFilterValue(columnKey: string): string {
+  const value = rowPrimeFilters.value[columnKey]?.value;
+  return typeof value === 'string' ? value : '';
+}
+function setRowFilterValue(columnKey: string, value: string | Date[] | null | undefined) {
+  const filter = rowPrimeFilters.value[columnKey];
+  if (filter) filter.value = value ?? null;
+}
+
+function openMobileRowFilters() {
+  mobileRowFilterBaseline.value = {
+    filters: cloneSakaiFilterState(rowPrimeFilters.value),
+    operators: { ...rowFilterOperators.value }
+  };
+  mobileRowFiltersOpen.value = true;
+}
+
+function closeMobileRowFilters(applied = false) {
+  if (!applied && mobileRowFilterBaseline.value) {
+    rowPrimeFilters.value = cloneSakaiFilterState(mobileRowFilterBaseline.value.filters);
+    rowFilterOperators.value = { ...mobileRowFilterBaseline.value.operators };
+  }
+  mobileRowFilterBaseline.value = undefined;
+  mobileRowFiltersOpen.value = false;
+}
+
+function buildAppliedRowFilters(): ReportRowQueryInput['filters'] | undefined {
+  const filters: ReportRowQueryInput['filters'] = [];
   rowFilterError.value = '';
-  const column = activeRowFilterColumn.value;
-  const value = rowFilterValue.value.trim();
-  if (!column || !value) {
-    appliedRowFilters.value = [];
-    void loadRows(0);
-    return;
+  for (const capability of rowFilterCapabilities.value) {
+    const raw = rowPrimeFilters.value[capability.columnKey]?.value;
+    if (raw == null || raw === '') continue;
+    if (capability.dataType === 'DATE') {
+      const range = Array.isArray(raw) ? raw.filter((item): item is Date => item instanceof Date && !Number.isNaN(item.getTime())) : [];
+      if (range.length !== 2) {
+        rowFilterError.value = 'เลือกวันเริ่มต้นและวันสิ้นสุดให้ครบก่อนใช้ตัวกรอง';
+        return undefined;
+      }
+      filters.push({ columnKey: capability.columnKey, operator: 'BETWEEN', value: bangkokDateValue(range[0]!), valueTo: bangkokDateValue(range[1]!) });
+    } else {
+      const value = String(raw).trim();
+      if (!value) continue;
+      if (capability.dataType === 'NUMBER' && !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) {
+        rowFilterError.value = 'กรอกค่าตัวเลขให้ถูกต้อง';
+        return undefined;
+      }
+      filters.push({ columnKey: capability.columnKey, operator: rowFilterOperators.value[capability.columnKey] ?? capability.operators[0] ?? 'EQUALS', value });
+    }
+    if (filters.length > 5) {
+      rowFilterError.value = 'ใช้ตัวกรองพร้อมกันได้สูงสุด 5 คอลัมน์';
+      return undefined;
+    }
   }
-  if (column.dataType === 'DATE' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    rowFilterError.value = 'วันที่ต้องเป็นรูปแบบ YYYY-MM-DD';
-    return;
-  }
-  if (column.dataType === 'NUMBER' && !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) {
-    rowFilterError.value = 'กรอกตัวเลขให้ถูกต้อง';
-    return;
-  }
-  appliedRowFilters.value = [{ columnKey: column.key, operator: rowFilterOperator.value, value }];
+  return filters;
+}
+
+function applyRowFilters() {
+  const filters = buildAppliedRowFilters();
+  if (!filters) return;
+  appliedRowFilters.value = filters;
+  expandedMobileRows.value = new Set();
+  closeMobileRowFilters(true);
   void loadRows(0);
 }
 
 function clearRowFilter() {
-  rowFilterColumnKey.value = undefined;
-  rowFilterOperator.value = 'CONTAINS';
-  rowFilterValue.value = '';
+  for (const filter of Object.values(rowPrimeFilters.value)) filter.value = null;
+  rowGlobalSearch.value = '';
+  appliedRowGlobalSearch.value = '';
+  appliedRowFilters.value = [];
   rowFilterError.value = '';
-  if (appliedRowFilters.value.length) {
-    appliedRowFilters.value = [];
-    void loadRows(0);
-  }
+  expandedMobileRows.value = new Set();
+  mobileRowFilterBaseline.value = undefined;
+  mobileRowFiltersOpen.value = false;
+  void loadRows(0);
 }
 
 function changeRowsPage(event: { page: number; rows: number }) {
+  if (event.rows !== 25 && event.rows !== 50 && event.rows !== 100) return;
   void loadRows(event.rows === rowPageSize.value ? event.page : 0, event.rows);
 }
 
@@ -397,7 +481,13 @@ function toggleMobileRow(row: Record<string, unknown>) {
   if (next.has(key)) next.delete(key); else next.add(key);
   expandedMobileRows.value = next;
 }
-function resetRows() { rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set(); rowPage.value = 0; rowPageSize.value = 25; rowTotal.value = 0; rowFilterColumnKey.value = undefined; rowFilterOperator.value = 'CONTAINS'; rowFilterValue.value = ''; appliedRowFilters.value = []; rowFilterError.value = ''; rowsLoaded.value = false; rowsUnavailable.value = false; }
+function resetRows() {
+  rows.value = []; columns.value = []; selectedColumnKeys.value = []; expandedMobileRows.value = new Set();
+  rowPage.value = 0; rowPageSize.value = 25; rowTotal.value = 0; rowFilterCapabilities.value = [];
+  rowPrimeFilters.value = {}; rowFilterOperators.value = {}; appliedRowFilters.value = [];
+  rowGlobalSearch.value = ''; appliedRowGlobalSearch.value = ''; rowFilterError.value = '';
+  mobileRowFiltersOpen.value = false; rowsLoaded.value = false; rowsUnavailable.value = false;
+}
 async function initialize() {
   stopLifecycle();
   const context = generation;
@@ -430,13 +520,20 @@ async function initialize() {
 }
 
 watch(activeTab, (value) => { if (value === 'detail' && run.value?.status === 'SUCCEEDED' && !rowsLoaded.value && !rowsUnavailable.value) void loadRows(0); });
-watch(activeRowFilterColumn, (column) => {
-  rowFilterOperator.value = column?.dataType === 'NUMBER' || column?.dataType === 'DATE' ? 'EQUALS' : 'CONTAINS';
-  rowFilterError.value = '';
+watch(rowGlobalSearch, (value) => {
+  if (rowSearchTimer) clearTimeout(rowSearchTimer);
+  const normalized = value.trim();
+  if (normalized.length === 1) return;
+  rowSearchTimer = setTimeout(() => {
+    if (normalized === appliedRowGlobalSearch.value) return;
+    appliedRowGlobalSearch.value = normalized;
+    expandedMobileRows.value = new Set();
+    void loadRows(0);
+  }, 400);
 });
 watch([tenantId, reportKey, () => route.query.runId, () => route.query.snapshotRunId], () => void initialize());
 onMounted(() => { document.addEventListener('visibilitychange', handleVisibilityChange); void initialize(); });
-onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleVisibilityChange); forceConfirmOpen.value = false; confirm.close(); stopLifecycle(); });
+onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleVisibilityChange); if (rowSearchTimer) clearTimeout(rowSearchTimer); forceConfirmOpen.value = false; confirm.close(); stopLifecycle(); });
 </script>
 
 <template>
@@ -471,23 +568,29 @@ onBeforeUnmount(() => { document.removeEventListener('visibilitychange', handleV
             <div class="flex flex-wrap gap-2"><MultiSelect v-model="selectedColumnKeys" :options="columnOptions" option-label="label" option-value="key" display="chip" filter aria-label="เลือกคอลัมน์ที่ต้องการแสดง" placeholder="เลือกคอลัมน์" class="w-full sm:w-80"><template #option="{ option }"><div class="flex items-center justify-between gap-3 w-full"><span>{{ option.label }}</span><Tag v-if="option.technical" severity="secondary" value="เทคนิค" /></div></template></MultiSelect><Tag v-if="run.isTruncated" severity="warn" value="ผลลัพธ์ถูกจำกัดตามจำนวนแถวสูงสุด" /></div>
           </div>
           <div class="card table-card report-panel">
-            <form class="report-row-filter" @submit.prevent="applyRowFilter">
-              <Select v-model="rowFilterColumnKey" :options="rowFilterColumns" option-label="label" option-value="key" placeholder="เลือกคอลัมน์ที่ต้องการกรอง" aria-label="เลือกคอลัมน์ที่ต้องการกรอง" class="w-full md:w-64" />
-              <Select v-model="rowFilterOperator" :options="rowFilterOperatorOptions" option-label="label" option-value="value" aria-label="เลือกเงื่อนไขการกรอง" class="w-full md:w-52" :disabled="!rowFilterColumnKey" />
-              <InputText v-model="rowFilterValue" :placeholder="rowFilterPlaceholder" aria-label="ค่าที่ต้องการกรอง" class="w-full md:flex-1" :disabled="!rowFilterColumnKey" />
-              <Button type="submit" label="ใช้ตัวกรอง" icon="pi pi-filter" :loading="loadingRows" :disabled="!rowFilterColumnKey || !rowFilterValue.trim()" />
-              <Button type="button" label="ล้าง" icon="pi pi-filter-slash" text severity="secondary" :disabled="!rowFilterColumnKey && !appliedRowFilters.length" @click="clearRowFilter" />
-            </form>
             <small v-if="rowFilterError" class="block text-red-600 mt-2" role="alert">{{ rowFilterError }}</small>
             <small class="block text-muted-color mt-2">การกรองและเปลี่ยนหน้าอ่านจาก Snapshot ที่บันทึกไว้เท่านั้น ไม่ดึงข้อมูลใหม่จาก SML</small>
-            <div class="hidden md:block mt-4"><DataTable :value="rows" :loading="loadingRows" data-key="__rowKey" scrollable striped-rows><Column v-for="column in displayedColumns" :key="column.key" :field="column.key" :header="column.label" :frozen="column.frozen" align-frozen="left" :header-class="reportColumnClass(column)" :body-class="reportColumnClass(column)"><template #body="{ data }"><span class="safe-wrap" :class="{ 'metric-value': column.dataType === 'NUMBER' }">{{ formatReportCell(data[column.key], column) }}</span></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'ไม่พบข้อมูลที่ตรงกับตัวกรอง' }}</div></template></DataTable></div>
+            <div class="hidden md:block mt-4"><DataTable v-model:filters="rowPrimeFilters" :value="rows" :loading="loadingRows" data-key="__rowKey" lazy paginator :first="rowPage * rowPageSize" :rows="rowPageSize" :total-records="rowTotal" :rows-per-page-options="[25, 50, 100]" filter-display="menu" row-hover show-gridlines scrollable striped-rows current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" @page="changeRowsPage" @filter="applyRowFilters"><template #header><SakaiTableHeader v-model:global-search="rowGlobalSearch" :loading="loadingRows" :has-filters="rowHasFilters" mobile-filters @clear="clearRowFilter" @open-mobile-filters="openMobileRowFilters" /></template><Column v-for="column in displayedColumns" :key="column.key" :field="column.key" :header="column.label" :frozen="column.frozen" align-frozen="left" :header-class="reportColumnClass(column)" :body-class="reportColumnClass(column)" :show-filter-menu="rowCapabilityByKey.has(column.key)" :show-filter-match-modes="false"><template #body="{ data }"><span class="safe-wrap" :class="{ 'metric-value': column.dataType === 'NUMBER' }">{{ formatReportCell(data[column.key], column) }}</span></template><template v-if="rowCapabilityByKey.has(column.key)" #filter="{ filterModel }"><DatePicker v-if="rowCapabilityByKey.get(column.key)?.dataType === 'DATE'" v-model="filterModel.value" selection-mode="range" date-format="dd/mm/yy" placeholder="เลือกช่วงวันที่" /><div v-else class="grid gap-2"><Select v-model="rowFilterOperators[column.key]" :options="rowOperatorOptions(rowCapabilityByKey.get(column.key)!)" option-label="label" option-value="value" aria-label="เงื่อนไขตัวกรอง" /><InputText v-model="filterModel.value" :placeholder="rowCapabilityByKey.get(column.key)?.dataType === 'NUMBER' ? 'กรอกตัวเลข' : 'กรอกคำค้นหา'" /></div></template></Column><template #empty><div class="py-8 text-center text-muted-color">{{ loadingRows ? 'กำลังโหลดข้อมูล' : 'ไม่พบข้อมูลที่ตรงกับตัวกรอง' }} <Button v-if="rowHasFilters" label="ล้างตัวกรอง" text size="small" @click="clearRowFilter" /></div></template></DataTable></div>
             <div class="md:hidden grid gap-3 mt-4" aria-label="รายละเอียดรายงานแบบมือถือ"><article v-for="row in rows" :key="String(row.__rowKey)" class="mobile-row"><div v-for="column in mobileColumns(row)" :key="column.key" class="flex items-start justify-between gap-4"><span class="text-xs text-muted-color safe-wrap">{{ column.label }}</span><strong class="text-sm safe-wrap" :class="column.dataType === 'NUMBER' ? 'text-right metric-value' : 'text-left'">{{ formatReportCell(row[column.key], column) }}</strong></div><Button v-if="displayedColumns.length > mobileSummaryColumns.length" :label="expandedMobileRows.has(String(row.__rowKey)) ? 'แสดงน้อยลง' : 'ดูรายละเอียดเพิ่ม'" :icon="expandedMobileRows.has(String(row.__rowKey)) ? 'pi pi-angle-up' : 'pi pi-angle-down'" text size="small" class="justify-self-start" @click="toggleMobileRow(row)" /></article><div v-if="!loadingRows && !rows.length" class="py-8 text-center text-muted-color">ไม่พบข้อมูลที่ตรงกับตัวกรอง</div></div>
-            <Paginator :first="rowPage * rowPageSize" :rows="rowPageSize" :total-records="rowTotal" :rows-per-page-options="[25, 50, 100]" template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" :pt="{ root: { 'aria-label': 'เปลี่ยนหน้ารายละเอียดรายงาน' } }" @page="changeRowsPage" />
+            <div class="md:hidden mt-3"><SakaiTableHeader v-model:global-search="rowGlobalSearch" :loading="loadingRows" :has-filters="rowHasFilters" mobile-filters @clear="clearRowFilter" @open-mobile-filters="openMobileRowFilters" /><Paginator :first="rowPage * rowPageSize" :rows="rowPageSize" :total-records="rowTotal" :rows-per-page-options="[25, 50, 100]" template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" @page="changeRowsPage" /></div>
           </div>
         </template>
       </TabPanel>
     </TabPanels>
   </Tabs>
+  <Dialog :visible="mobileRowFiltersOpen" modal header="กรองข้อมูลรายละเอียด" class="responsive-dialog" :style="{ width: '34rem' }" @update:visible="(value) => { if (!value) closeMobileRowFilters(); }">
+    <div class="grid gap-4">
+      <div v-for="column in filterableDisplayedColumns" :key="column.key" class="grid gap-2">
+        <label :for="`mobile-filter-${column.key}`" class="font-semibold">{{ column.label }}</label>
+        <DatePicker v-if="rowCapabilityByKey.get(column.key)?.dataType === 'DATE'" :input-id="`mobile-filter-${column.key}`" :model-value="dateRowFilterValue(column.key)" selection-mode="range" date-format="dd/mm/yy" placeholder="เลือกวันเริ่มต้นและวันสิ้นสุด" fluid @update:model-value="setRowFilterValue(column.key, $event as Date[] | null)" />
+        <template v-else>
+          <Select v-model="rowFilterOperators[column.key]" :options="rowOperatorOptions(rowCapabilityByKey.get(column.key)!)" option-label="label" option-value="value" aria-label="เงื่อนไขตัวกรอง" fluid />
+          <InputText :id="`mobile-filter-${column.key}`" :model-value="textRowFilterValue(column.key)" :placeholder="rowCapabilityByKey.get(column.key)?.dataType === 'NUMBER' ? 'กรอกตัวเลข' : 'กรอกคำค้นหา'" fluid @update:model-value="setRowFilterValue(column.key, String($event ?? ''))" />
+        </template>
+      </div>
+    </div>
+    <template #footer><Button label="ยกเลิก" text @click="closeMobileRowFilters()" /><Button label="ล้างตัวกรอง" icon="pi pi-filter-slash" text @click="clearRowFilter" /><Button label="ใช้ตัวกรอง" icon="pi pi-filter" :loading="loadingRows" @click="applyRowFilters()" /></template>
+  </Dialog>
 </template>
 
 <style scoped>

@@ -45,6 +45,7 @@ declare module 'vue' {
     ReportPickerPanel: typeof import('./src/components/admin/ReportPickerPanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SakaiTableHeader: typeof import('./src/components/table/SakaiTableHeader.vue')['default']
     Select: typeof import('primevue/select')['default']
     Skeleton: typeof import('primevue/skeleton')['default']
     Tab: typeof import('primevue/tab')['default']

@@ -1,25 +1,16 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import type { DataTableFilterEvent } from 'primevue/datatable';
 import { ApiError, adminApi, type AdminReportDefinition, type ReportKey, type ReportRun, type ReportRunDetail } from '@/api';
-import CursorPaginator from '@/components/admin/CursorPaginator.vue';
 import TenantFilterSelect from '@/components/admin/TenantFilterSelect.vue';
+import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import { useServerTable } from '@/composables/useServerTable';
+import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
 import { evidenceLevelLabel, formatDurationMs, lineImpactLabel, reportImpactLabel, transportPhaseLabel, triggerKindLabel } from '@/utils/operationalPresentation';
 import { toDateFilter } from '@/utils/adminTableFilters';
-import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
-
-const rows = ref<ReportRun[]>([]);
-const loading = ref(false);
-const error = ref('');
-const pagination = reactive(createCursorPagination());
-const status = ref<string>();
-const tenantId = ref('');
-const reportKey = ref<string>();
-const source = ref<string>();
-const dateFrom = ref<Date>();
-const dateTo = ref<Date>();
 const statuses = ['QUEUED', 'CLAIMED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED'].map((value) => ({ value, label: statusLabel(value) }));
 const sources = [
   { value: 'SCHEDULE', label: 'ตารางส่ง LINE' },
@@ -33,32 +24,43 @@ const detailLoading = ref(false);
 const detailError = ref('');
 const reportDefinitions = ref<AdminReportDefinition[]>([]);
 const reportDefinitionByKey = computed(() => new Map(reportDefinitions.value.map((item) => [item.reportKey, item])));
-let loadGeneration = 0;
-let controller: AbortController | undefined;
 let detailController: AbortController | undefined;
 let detailGeneration = 0;
 
-async function load(reset = false) {
-  if (reset) resetCursorPagination(pagination);
-  loadGeneration++;
-  controller?.abort(reset ? 'filters-changed' : 'page-changed');
-  controller = new AbortController();
-  const context = loadGeneration;
-  loading.value = true; error.value = '';
-  try {
-    const page = await adminApi.reportRuns({
-      cursor: pagination.cursor, pageSize: pagination.pageSize, tenantId: tenantId.value || undefined,
-      status: status.value, reportKey: reportKey.value as ReportKey | undefined, source: source.value,
-      dateFrom: toDateFilter(dateFrom.value), dateTo: toDateFilter(dateTo.value)
-    }, controller.signal);
-    if (context !== loadGeneration) return;
-    rows.value = page.data;
-    acceptCursorPage(pagination, page.page.nextCursor ?? undefined, page.page.hasMore);
-  } catch (cause) { if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause); }
-  finally { if (context === loadGeneration) loading.value = false; }
+type RunFilters = { tenantId?: string; statuses: ReportRun['status'][]; reportKeys: ReportKey[]; sources: Array<'DASHBOARD' | 'SCHEDULE' | 'BACKGROUND'>; dateFrom?: string; dateTo?: string };
+const primeFilters = ref({
+  tenantName: { value: null as string | null, matchMode: 'equals' },
+  reportKey: { value: null as ReportKey[] | null, matchMode: 'in' },
+  status: { value: null as ReportRun['status'][] | null, matchMode: 'in' },
+  source: { value: null as RunFilters['sources'] | null, matchMode: 'in' },
+  queuedAt: { value: null as Date[] | null, matchMode: 'between' }
+});
+useSakaiFilterMenu(primeFilters);
+const table = useServerTable<ReportRun, RunFilters>({
+  initialFilters: { statuses: [], reportKeys: [], sources: [] },
+  query: (input, signal) => adminApi.queryReportRuns(input, signal)
+});
+const rows = table.rows;
+const loading = table.loading;
+const error = table.error;
+const hasFilters = computed(() => Boolean(table.appliedGlobalSearch.value || table.appliedFilters.value.tenantId || table.appliedFilters.value.statuses.length || table.appliedFilters.value.reportKeys.length || table.appliedFilters.value.sources.length || table.appliedFilters.value.dateFrom || table.appliedFilters.value.dateTo));
+
+function filterValue<T>(event: DataTableFilterEvent, key: string): T | undefined { return (event.filters[key] as { value?: T } | undefined)?.value; }
+function applyPrimeFilters(event: DataTableFilterEvent) {
+  const range = filterValue<Date[] | null>(event, 'queuedAt') ?? [];
+  table.draftFilters.value = {
+    tenantId: filterValue<string | null>(event, 'tenantName') || undefined,
+    reportKeys: filterValue<ReportKey[] | null>(event, 'reportKey') ?? [],
+    statuses: filterValue<ReportRun['status'][] | null>(event, 'status') ?? [],
+    sources: filterValue<RunFilters['sources'] | null>(event, 'source') ?? [],
+    dateFrom: toDateFilter(range[0]), dateTo: toDateFilter(range[1])
+  };
+  void table.applyFilters();
 }
-function changePage(direction: 'previous' | 'next') { if (moveCursorPage(pagination, direction)) void load(); }
-function changePageSize(value: number) { resizeCursorPagination(pagination, value); void load(); }
+function clearTableFilters() {
+  Object.values(primeFilters.value).forEach((filter) => { filter.value = null; });
+  void table.clearFilters();
+}
 function severity(value: string) { return value === 'SUCCEEDED' ? 'success' : value === 'FAILED' ? 'danger' : value === 'RUNNING' || value === 'CLAIMED' ? 'info' : value === 'QUEUED' ? 'warn' : 'secondary'; }
 function runStatusLabel(run: ReportRun) { return run.runtimeStatus === 'STALLED' ? 'งานหยุดค้าง' : statusLabel(run.status); }
 function runSeverity(run: ReportRun) { return run.runtimeStatus === 'STALLED' ? 'danger' : severity(run.status); }
@@ -99,38 +101,28 @@ function closeDetail() {
 }
 onMounted(() => {
   void loadAdminReportCatalog().then((catalog) => { reportDefinitions.value = catalog.data; }).catch(() => undefined);
-  void load(true);
 });
-onBeforeUnmount(() => { controller?.abort('unmounted'); detailController?.abort('unmounted'); });
+onBeforeUnmount(() => { detailController?.abort('unmounted'); });
 </script>
 
 <template>
   <AppPageHeader title="การสร้างรายงาน" subtitle="ตรวจคิวและผลการทำงาน · เวลาไทย" />
   <div class="card table-card">
-    <Toolbar class="mb-4 border-0 p-0"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="load()" /></template></Toolbar>
-    <form class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7 gap-3 mb-4" aria-label="ตัวกรองประวัติการสร้างรายงาน" @submit.prevent="load(true)">
-      <TenantFilterSelect v-model="tenantId" />
-      <Select v-model="reportKey" aria-label="กรองรายงาน" :options="reportDefinitions" option-label="label" option-value="reportKey" show-clear placeholder="ทุกรายงาน" />
-      <Select v-model="status" aria-label="กรองสถานะการสร้างรายงาน" :options="statuses" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" />
-      <Select v-model="source" aria-label="กรองแหล่งงาน" :options="sources" option-label="label" option-value="value" show-clear placeholder="ทุกแหล่งงาน" />
-      <DatePicker v-model="dateFrom" aria-label="กรองวันที่เริ่มต้น" date-format="dd/mm/yy" show-icon placeholder="ตั้งแต่วันที่" />
-      <DatePicker v-model="dateTo" aria-label="กรองวันที่สิ้นสุด" date-format="dd/mm/yy" show-icon placeholder="ถึงวันที่" />
-      <Button type="submit" label="ใช้ตัวกรอง" icon="pi pi-filter" />
-    </form>
-    <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
-    <DataTable :value="rows" :loading="loading" data-key="id" striped-rows scrollable>
-      <Column field="tenantName" header="ร้านค้า" frozen><template #body="{ data }"><span class="font-semibold">{{ data.tenantName || '—' }}</span></template></Column>
-      <Column field="reportKey" header="รายงาน"><template #body="{ data }"><div class="font-medium">{{ reportDefinitionByKey.get(data.reportKey)?.label ?? data.reportKey }}</div></template></Column>
-      <Column field="status" header="สถานะ"><template #body="{ data }"><div class="grid gap-1"><Tag class="w-fit" :severity="runSeverity(data)" :value="runStatusLabel(data)" /><small v-if="data.waitReason" class="text-muted-color">{{ waitReasonLabel(data.waitReason) }}</small><small v-if="data.retryAvailableAt" class="text-muted-color">ลองใหม่ได้หลัง {{ formatDateTime(data.retryAvailableAt) }}</small></div></template></Column>
+    <Message v-if="error" severity="error" :closable="false" class="mb-4">โหลดข้อมูลใหม่ไม่สำเร็จ ข้อมูลเดิมยังแสดงอยู่ · {{ error }}</Message>
+    <DataTable v-model:filters="primeFilters" :value="rows" :loading="loading" data-key="id" lazy paginator :first="table.page.value * table.pageSize.value" :rows="table.pageSize.value" :total-records="table.total.value" :rows-per-page-options="[25, 50, 100]" filter-display="menu" row-hover show-gridlines scrollable current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" @page="table.changePage" @filter="applyPrimeFilters">
+      <template #header><SakaiTableHeader v-model:global-search="table.globalSearch.value" :loading="loading" :has-filters="hasFilters" @clear="clearTableFilters"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="loading" @click="table.refresh()" /></template></SakaiTableHeader></template>
+      <Column field="tenantName" header="ร้านค้า" frozen :show-filter-match-modes="false"><template #body="{ data }"><span class="font-semibold">{{ data.tenantName || '—' }}</span></template><template #filter="{ filterModel }"><TenantFilterSelect v-model="filterModel.value" /></template></Column>
+      <Column field="reportKey" header="รายงาน" :show-filter-match-modes="false"><template #body="{ data }"><div class="font-medium">{{ reportDefinitionByKey.get(data.reportKey)?.label ?? data.reportKey }}</div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="reportDefinitions" option-label="label" option-value="reportKey" placeholder="ทุกรายงาน" /></template></Column>
+      <Column field="status" header="สถานะ" :show-filter-match-modes="false"><template #body="{ data }"><div class="grid gap-1"><Tag class="w-fit" :severity="runSeverity(data)" :value="runStatusLabel(data)" /><small v-if="data.waitReason" class="text-muted-color">{{ waitReasonLabel(data.waitReason) }}</small><small v-if="data.retryAvailableAt" class="text-muted-color">ลองใหม่ได้หลัง {{ formatDateTime(data.retryAvailableAt) }}</small></div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="statuses" option-label="label" option-value="value" placeholder="ทุกสถานะ" /></template></Column>
+      <Column field="source" header="แหล่งงาน" :show-filter-match-modes="false"><template #body="{ data }">{{ sources.find((item) => item.value === data.source)?.label ?? data.source }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="sources" option-label="label" option-value="value" placeholder="ทุกแหล่งงาน" /></template></Column>
       <Column header="สาเหตุ"><template #body="{ data }"><div class="max-w-80"><span :class="data.status === 'FAILED' ? 'font-semibold text-red-600 dark:text-red-400' : 'text-muted-color'">{{ failureTitle(data) }}</span><small v-if="data.failureSummary?.level === 'LEGACY_PARTIAL'" class="block text-muted-color mt-1">หลักฐานจากระบบรุ่นเดิมมีรายละเอียดจำกัด</small></div></template></Column>
       <Column header="ช่วงข้อมูล"><template #body="{ data }">{{ data.dateFrom || '—' }}<span v-if="data.dateTo && data.dateTo !== data.dateFrom"> → {{ data.dateTo }}</span></template></Column>
       <Column field="rowCount" header="จำนวนแถว" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }"><span class="metric-value">{{ data.rowCount.toLocaleString('th-TH') }}</span></template></Column>
-      <Column field="queuedAt" header="เข้าคิวเมื่อ"><template #body="{ data }">{{ formatDateTime(data.queuedAt) }}</template></Column>
+      <Column field="queuedAt" header="เข้าคิวเมื่อ" :show-filter-match-modes="false"><template #body="{ data }">{{ formatDateTime(data.queuedAt) }}</template><template #filter="{ filterModel }"><DatePicker v-model="filterModel.value" selection-mode="range" date-format="dd/mm/yy" placeholder="เลือกช่วงวันที่" show-icon /></template></Column>
       <Column field="finishedAt" header="เสร็จเมื่อ"><template #body="{ data }">{{ formatDateTime(data.finishedAt) }}</template></Column>
       <Column header="" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button icon="pi pi-info-circle" text rounded class="touch-action" aria-label="ดูสาเหตุและหลักฐาน" v-tooltip.top="'ดูสาเหตุและหลักฐาน'" @click="openDetail(data)" /></template></Column>
-      <template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีประวัติการสร้างรายงาน</div></template>
+      <template #empty><div class="py-8 text-center text-muted-color">ไม่พบข้อมูลตามเงื่อนไข <Button v-if="hasFilters" label="ล้างตัวกรอง" text size="small" @click="clearTableFilters" /></div></template>
     </DataTable>
-    <CursorPaginator :page="pagination.page" :page-size="pagination.pageSize" :item-count="rows.length" :has-next="pagination.hasNext" :disabled="loading" @previous="changePage('previous')" @next="changePage('next')" @update:page-size="changePageSize" />
   </div>
   <Dialog :visible="detailVisible" modal header="สาเหตุและหลักฐานการสร้างรายงาน" class="responsive-dialog failure-dialog" :style="{ width: '46rem' }" @update:visible="(value) => { if (!value) closeDetail(); }">
     <div v-if="detailLoading" class="grid gap-3"><Skeleton height="5rem" /><Skeleton height="10rem" /></div>

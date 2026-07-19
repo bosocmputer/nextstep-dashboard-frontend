@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import type { DataTableFilterEvent } from 'primevue/datatable';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
@@ -8,8 +9,9 @@ import { newIdempotencyKey } from '@/api/client';
 import { beginAdminTenantContext, setAdminTenantContext } from '@/stores/adminTenantContext';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
-import CursorPaginator from '@/components/admin/CursorPaginator.vue';
-import { acceptCursorPage, createCursorPagination, moveCursorPage, resetCursorPagination, resizeCursorPagination } from '@/utils/cursorPagination';
+import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import { useServerTable } from '@/composables/useServerTable';
+import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 
 const route = useRoute();
 const router = useRouter();
@@ -20,17 +22,6 @@ beginAdminTenantContext(tenantId);
 const activeTab = ref(typeof route.query.tab === 'string' ? route.query.tab : 'overview');
 const tenant = ref<Tenant>();
 const sml = ref<SMLConnectionStatus>();
-const recipients = ref<Recipient[]>([]);
-const schedules = ref<Schedule[]>([]);
-const recipientPage = ref(0);
-const recipientPageSize = ref(25);
-const recipientTotal = ref(0);
-const recipientSearch = ref('');
-const recipientStatus = ref<string>();
-const recipientPermissionState = ref<string>();
-const schedulePagination = reactive(createCursorPagination());
-const scheduleSearch = ref('');
-const scheduleStatus = ref<string>();
 const refreshPolicy = ref<DashboardRefreshPolicy>();
 const showArchived = ref(false);
 const loading = ref(true);
@@ -55,12 +46,31 @@ const smlLoaded = ref(false);
 let inviteActionKey = '';
 const reissueActionKeys = new Map<string, string>();
 const testSendActionKeys = new Map<string, string>();
-let scheduleLoadGeneration = 0;
-let recipientLoadGeneration = 0;
-let recipientController: AbortController | undefined;
-let scheduleController: AbortController | undefined;
-let recipientFilterTimer: ReturnType<typeof setTimeout> | undefined;
-let scheduleFilterTimer: ReturnType<typeof setTimeout> | undefined;
+
+type RecipientFilters = { statuses: Array<'PENDING' | 'ACTIVE'>; permissionStates: Array<'WITH_REPORTS' | 'WITHOUT_REPORTS'> };
+type ScheduleStatus = Schedule['status'];
+type ScheduleFilters = { statuses: ScheduleStatus[]; includeArchived: boolean };
+const recipientPrimeFilters = ref({
+  status: { value: null as Array<'PENDING' | 'ACTIVE'> | null, matchMode: 'in' },
+  permissionState: { value: null as Array<'WITH_REPORTS' | 'WITHOUT_REPORTS'> | null, matchMode: 'in' }
+});
+const schedulePrimeFilters = ref({ status: { value: null as ScheduleStatus[] | null, matchMode: 'in' } });
+useSakaiFilterMenu(recipientPrimeFilters);
+useSakaiFilterMenu(schedulePrimeFilters);
+const recipientTable = useServerTable<Recipient, RecipientFilters>({
+  immediate: false,
+  initialFilters: { statuses: [], permissionStates: [] },
+  query: (input, signal) => adminApi.queryRecipients(tenantId, input, signal)
+});
+const scheduleTable = useServerTable<Schedule, ScheduleFilters>({
+  immediate: false,
+  initialFilters: { statuses: [], includeArchived: false },
+  query: (input, signal) => adminApi.querySchedules(tenantId, input, signal)
+});
+const recipients = recipientTable.rows;
+const schedules = scheduleTable.rows;
+const recipientHasFilters = computed(() => Boolean(recipientTable.appliedGlobalSearch.value || recipientTable.appliedFilters.value.statuses.length || recipientTable.appliedFilters.value.permissionStates.length));
+const scheduleHasFilters = computed(() => Boolean(scheduleTable.appliedGlobalSearch.value || scheduleTable.appliedFilters.value.statuses.length || scheduleTable.appliedFilters.value.includeArchived));
 
 const tenantForm = reactive({ name: '', status: 'DISABLED' as Tenant['status'], accessEndsAt: new Date(), version: 1 });
 const smlForm = reactive({ endpointUrl: '', configFileName: 'SMLConfigDATA.xml', databaseName: '', version: 0 });
@@ -104,12 +114,11 @@ async function load() {
     setAdminTenantContext(tenantId, tenant.value.name);
     Object.assign(tenantForm, { name: tenant.value.name, status: tenant.value.status, accessEndsAt: new Date(tenant.value.accessEndsAt), version: tenant.value.version });
     tenantBaseline.value = tenantFingerprint.value;
-    const [smlResult, recipientResult, scheduleResult, policyResult] = await Promise.allSettled([
+    const [smlResult, policyResult] = await Promise.allSettled([
       adminApi.getSML(tenantId),
-      adminApi.queryRecipients(tenantId, { search: '', page: 0, pageSize: recipientPageSize.value }),
-      adminApi.listSchedules(tenantId, { pageSize: schedulePagination.pageSize, includeArchived: showArchived.value }),
       adminApi.getDashboardRefreshPolicy(tenantId)
     ]);
+    await Promise.all([recipientTable.refresh(), scheduleTable.refresh()]);
     if (smlResult.status === 'fulfilled') {
       sml.value = smlResult.value;
       Object.assign(smlForm, { endpointUrl: sml.value.endpointUrl ?? '', configFileName: sml.value.configFileName ?? 'SMLConfigDATA.xml', databaseName: sml.value.databaseName ?? '', version: sml.value.version });
@@ -118,14 +127,6 @@ async function load() {
     } else if (smlResult.reason instanceof ApiError && smlResult.reason.status === 404) {
       smlBaseline.value = smlFingerprint.value; smlLoaded.value = true;
     } else throw smlResult.reason;
-    if (recipientResult.status === 'fulfilled') {
-      recipients.value = recipientResult.value.data;
-      recipientTotal.value = recipientResult.value.total;
-    } else throw recipientResult.reason;
-    if (scheduleResult.status === 'fulfilled') {
-      schedules.value = scheduleResult.value.data;
-      acceptCursorPage(schedulePagination, scheduleResult.value.page.nextCursor ?? undefined, scheduleResult.value.page.hasMore);
-    } else throw scheduleResult.reason;
     if (policyResult.status === 'fulfilled') {
       applyRefreshPolicy(policyResult.value);
     } else throw policyResult.reason;
@@ -246,7 +247,7 @@ async function invite() {
     const created = await adminApi.inviteRecipient(tenantId, inviteLabel.value.trim(), inviteActionKey);
     inviteActionKey = '';
     inviteURL.value = created.invitationUrl ?? '';
-    await loadRecipients(true);
+    await loadRecipients();
     toast.add({ severity: 'success', summary: 'สร้างคำเชิญแล้ว', life: 2500 });
   } catch (cause) { if (!(cause instanceof ApiError) || !cause.retryable) inviteActionKey = ''; toast.add({ severity: 'error', summary: 'สร้างคำเชิญไม่สำเร็จ', detail: errorMessage(cause), life: 5000 }); }
   finally { inviting.value = false; }
@@ -332,25 +333,19 @@ async function revokeRecipient(item: Recipient) {
   }
 }
 
-async function loadRecipients(resetPage = false) {
-  if (resetPage) recipientPage.value = 0;
-  const generation = ++recipientLoadGeneration;
-  recipientController?.abort(resetPage ? 'recipient-filters-changed' : 'recipient-page-changed');
-  recipientController = new AbortController();
-  const result = await adminApi.queryRecipients(tenantId, {
-    search: recipientSearch.value.trim(), status: recipientStatus.value as 'PENDING' | 'ACTIVE' | undefined,
-    permissionState: recipientPermissionState.value as 'WITH_REPORTS' | 'WITHOUT_REPORTS' | undefined,
-    page: recipientPage.value, pageSize: recipientPageSize.value
-  }, recipientController.signal);
-  if (generation !== recipientLoadGeneration) return;
-  recipients.value = result.data;
-  recipientTotal.value = result.total;
+async function loadRecipients() { await recipientTable.refresh(); }
+function filterValue<T>(event: DataTableFilterEvent, key: string): T | undefined { return (event.filters[key] as { value?: T } | undefined)?.value; }
+function applyRecipientFilters(event: DataTableFilterEvent) {
+  recipientTable.draftFilters.value = {
+    statuses: filterValue<Array<'PENDING' | 'ACTIVE'> | null>(event, 'status') ?? [],
+    permissionStates: filterValue<Array<'WITH_REPORTS' | 'WITHOUT_REPORTS'> | null>(event, 'permissionState') ?? []
+  };
+  void recipientTable.applyFilters();
 }
-
-function changeRecipientPage(event: { page: number; rows: number }) {
-  recipientPage.value = event.rows === recipientPageSize.value ? event.page : 0;
-  recipientPageSize.value = event.rows;
-  void loadRecipients();
+function clearRecipientFilters() {
+  recipientPrimeFilters.value.status.value = null;
+  recipientPrimeFilters.value.permissionState.value = null;
+  void recipientTable.clearFilters();
 }
 
 function confirmRevokeRecipient(item: Recipient) {
@@ -379,42 +374,38 @@ async function changeScheduleState(item: Schedule) {
   if (changingScheduleId.value) return;
   changingScheduleId.value = item.id;
   try {
-    const updated = item.status === 'ACTIVE' ? await adminApi.pauseSchedule(tenantId, item.id) : await adminApi.activateSchedule(tenantId, item.id);
-    schedules.value = schedules.value.map((schedule) => schedule.id === updated.id ? updated : schedule);
+    await (item.status === 'ACTIVE' ? adminApi.pauseSchedule(tenantId, item.id) : adminApi.activateSchedule(tenantId, item.id));
+    await scheduleTable.refresh();
     toast.add({ severity: 'success', summary: item.status === 'ACTIVE' ? 'พักตารางส่งรายงานแล้ว' : 'เปิดตารางส่งรายงานแล้ว', life: 2500 });
   } catch (cause) { toast.add({ severity: 'error', summary: 'เปลี่ยนสถานะไม่ได้', detail: errorMessage(cause), life: 6000 }); }
   finally { changingScheduleId.value = ''; }
 }
 
-async function refreshSchedules(reset = false) {
-  if (reset) resetCursorPagination(schedulePagination);
-  const generation = ++scheduleLoadGeneration;
-  scheduleController?.abort(reset ? 'schedule-filters-changed' : 'schedule-page-changed');
-  scheduleController = new AbortController();
-  try {
-    const page = await adminApi.listSchedules(tenantId, {
-      cursor: schedulePagination.cursor, pageSize: schedulePagination.pageSize, includeArchived: showArchived.value,
-      status: scheduleStatus.value, search: scheduleSearch.value.trim() || undefined
-    }, scheduleController.signal);
-    if (generation === scheduleLoadGeneration) {
-      schedules.value = page.data;
-      acceptCursorPage(schedulePagination, page.page.nextCursor ?? undefined, page.page.hasMore);
-    }
-  } catch (cause) {
-    if (generation === scheduleLoadGeneration && !(cause instanceof ApiError && cause.code === 'CANCELLED')) toast.add({ severity: 'error', summary: 'โหลดตารางส่งรายงานไม่ได้', detail: errorMessage(cause), life: 5000 });
-  }
+function applyScheduleFilters(event: DataTableFilterEvent) {
+  const statuses = filterValue<ScheduleStatus[] | null>(event, 'status') ?? [];
+  if (statuses.includes('ARCHIVED')) showArchived.value = true;
+  scheduleTable.draftFilters.value = {
+    statuses,
+    includeArchived: showArchived.value
+  };
+  void scheduleTable.applyFilters();
 }
-function changeSchedulePage(direction: 'previous' | 'next') { if (moveCursorPage(schedulePagination, direction)) void refreshSchedules(); }
-function changeSchedulePageSize(value: number) { resizeCursorPagination(schedulePagination, value); void refreshSchedules(); }
+function toggleArchivedSchedules() {
+  scheduleTable.draftFilters.value.includeArchived = showArchived.value;
+  void scheduleTable.applyFilters();
+}
+function clearScheduleFilters() {
+  schedulePrimeFilters.value.status.value = null;
+  showArchived.value = false;
+  void scheduleTable.clearFilters();
+}
 
 async function archiveSchedule(item: Schedule) {
   if (changingScheduleId.value || item.status === 'ACTIVE' || item.status === 'ARCHIVED') return;
   changingScheduleId.value = item.id;
   try {
-    const archived = await adminApi.archiveSchedule(tenantId, item.id, item.version);
-    schedules.value = showArchived.value
-      ? schedules.value.map((schedule) => schedule.id === archived.id ? archived : schedule)
-      : schedules.value.filter((schedule) => schedule.id !== archived.id);
+    await adminApi.archiveSchedule(tenantId, item.id, item.version);
+    await scheduleTable.refresh();
     toast.add({ severity: 'success', summary: 'ลบตารางส่งรายงานแล้ว', detail: 'หยุดการส่งในอนาคต และยังเก็บประวัติการส่งเดิมไว้', life: 3500 });
   } catch (cause) {
     toast.add({ severity: 'error', summary: 'ลบตารางส่งรายงานไม่ได้', detail: errorMessage(cause), life: 6000 });
@@ -440,8 +431,8 @@ async function restoreSchedule(item: Schedule) {
   if (changingScheduleId.value || item.status !== 'ARCHIVED') return;
   changingScheduleId.value = item.id;
   try {
-    const restored = await adminApi.restoreSchedule(tenantId, item.id, item.version);
-    schedules.value = schedules.value.map((schedule) => schedule.id === restored.id ? restored : schedule);
+    await adminApi.restoreSchedule(tenantId, item.id, item.version);
+    await scheduleTable.refresh();
     toast.add({ severity: 'success', summary: 'กู้คืนเป็นฉบับร่างแล้ว', detail: 'ตารางยังไม่ส่งจนกว่าจะตรวจสอบและเปิดใช้งาน', life: 3500 });
   } catch (cause) {
     toast.add({ severity: 'error', summary: 'กู้คืนตารางไม่ได้', detail: errorMessage(cause), life: 6000 });
@@ -511,27 +502,11 @@ function blockerLabel(code: string) {
   return ({ TENANT_INACTIVE: 'ร้านยังไม่เปิดใช้งานหรือหมดอายุ', SML_NOT_READY: 'SML ยังไม่พร้อม', RECIPIENT_NOT_ACTIVE: 'มีผู้รับที่ยังไม่ยืนยัน LINE', RECIPIENT_PERMISSION_MISMATCH: 'สิทธิ์ผู้รับไม่ตรงกับรายงาน', LINE_NOT_CONFIGURED: 'LINE OA ยังไม่พร้อม' } as Record<string, string>)[code] ?? code;
 }
 watch(inviteLabel, () => { if (!inviting.value) inviteActionKey = ''; });
-watch([recipientSearch, recipientStatus, recipientPermissionState], () => {
-  if (recipientFilterTimer) clearTimeout(recipientFilterTimer);
-  recipientFilterTimer = setTimeout(() => { if (!loading.value) void loadRecipients(true); }, 300);
-});
-watch([showArchived, scheduleSearch, scheduleStatus], () => {
-  if (scheduleStatus.value === 'ARCHIVED' && !showArchived.value) {
-    showArchived.value = true;
-    return;
-  }
-  if (scheduleFilterTimer) clearTimeout(scheduleFilterTimer);
-  scheduleFilterTimer = setTimeout(() => { if (!loading.value) void refreshSchedules(true); }, 300);
-});
 function beforeUnload(event: BeforeUnloadEvent) { if (hasUnsavedChanges.value) { event.preventDefault(); event.returnValue = ''; } }
 onBeforeRouteLeave(() => !hasUnsavedChanges.value || window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่'));
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void load(); });
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload);
-  if (recipientFilterTimer) clearTimeout(recipientFilterTimer);
-  if (scheduleFilterTimer) clearTimeout(scheduleFilterTimer);
-  recipientController?.abort('unmounted');
-  scheduleController?.abort('unmounted');
 });
 </script>
 
@@ -561,15 +536,12 @@ onBeforeUnmount(() => {
         <TabPanel value="recipients">
           <Message severity="info" :closable="false" class="mb-5"><strong>ขั้นที่ 1: ให้สิทธิ์เปิดดู Dashboard แก่ผู้รับ</strong><div class="mt-1">สิทธิ์กำหนดเพดานว่าผู้รับเปิดรายงานใดได้ ส่วนรายงานที่จะส่งจริงเลือกอีกครั้งใน “ตารางส่ง LINE”</div></Message>
           <Toolbar class="mb-5 border-0 p-0"><template #start><div><h2 class="text-lg font-semibold m-0">ผู้รับและสิทธิ์เปิดดู Dashboard</h2><p class="text-muted-color mt-1 mb-0">ผู้รับที่รอยืนยันสามารถออกลิงก์เชิญใหม่ได้ ส่วนผู้รับที่ยืนยันแล้วสามารถส่งลิงก์ Dashboard เดิมให้เข้าใช้งานอีกครั้ง</p></div></template><template #end><Button label="เพิ่มผู้รับ LINE" icon="pi pi-user-plus" @click="inviteOpen = true; inviteURL = ''; inviteLabel = ''" /></template></Toolbar>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-            <IconField><InputIcon class="pi pi-search" /><InputText v-model="recipientSearch" aria-label="ค้นหาชื่อผู้รับ" placeholder="ค้นหาชื่อผู้รับ" fluid /></IconField>
-            <Select v-model="recipientStatus" aria-label="กรองสถานะผู้รับ" :options="[{ label: 'รอยืนยัน LINE', value: 'PENDING' }, { label: 'ใช้งาน', value: 'ACTIVE' }]" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" />
-            <Select v-model="recipientPermissionState" aria-label="กรองสิทธิ์รายงาน" :options="[{ label: 'กำหนดรายงานแล้ว', value: 'WITH_REPORTS' }, { label: 'ยังไม่กำหนดรายงาน', value: 'WITHOUT_REPORTS' }]" option-label="label" option-value="value" show-clear placeholder="ทุกสิทธิ์" />
-          </div>
-          <DataTable :value="recipients" data-key="id" striped-rows scrollable>
+          <Message v-if="recipientTable.error.value" severity="error" :closable="false" class="mb-4">โหลดข้อมูลใหม่ไม่สำเร็จ ข้อมูลเดิมยังแสดงอยู่ · {{ recipientTable.error.value }}</Message>
+          <DataTable v-model:filters="recipientPrimeFilters" :value="recipients" :loading="recipientTable.loading.value" data-key="id" lazy paginator :first="recipientTable.page.value * recipientTable.pageSize.value" :rows="recipientTable.pageSize.value" :total-records="recipientTable.total.value" :rows-per-page-options="[25, 50, 100]" filter-display="menu" row-hover show-gridlines striped-rows scrollable current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" @page="recipientTable.changePage" @filter="applyRecipientFilters">
+            <template #header><SakaiTableHeader v-model:global-search="recipientTable.globalSearch.value" :loading="recipientTable.loading.value" :has-filters="recipientHasFilters" @clear="clearRecipientFilters"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="recipientTable.loading.value" @click="recipientTable.refresh()" /></template></SakaiTableHeader></template>
             <Column field="displayName" header="ชื่อ" />
-            <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template></Column>
-            <Column header="สิทธิ์เปิดดู" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template></Column>
+            <Column field="status" header="สถานะ" :show-filter-match-modes="false"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : 'warn'" :value="statusLabel(data.status)" /></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="[{ label: 'รอยืนยัน LINE', value: 'PENDING' }, { label: 'ใช้งาน', value: 'ACTIVE' }]" option-label="label" option-value="value" placeholder="ทุกสถานะ" /></template></Column>
+            <Column field="permissionState" header="สิทธิ์เปิดดู" header-class="table-number-column" body-class="table-number-column" :show-filter-match-modes="false"><template #body="{ data }"><span>{{ data.reportKeys.length }} รายงาน</span></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="[{ label: 'กำหนดรายงานแล้ว', value: 'WITH_REPORTS' }, { label: 'ยังไม่กำหนดรายงาน', value: 'WITHOUT_REPORTS' }]" option-label="label" option-value="value" placeholder="ทุกสิทธิ์" /></template></Column>
             <Column field="verifiedAt" header="ยืนยันเมื่อ"><template #body="{ data }">{{ formatDateTime(data.verifiedAt) }}</template></Column>
             <Column header="การจัดการ" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><div class="flex flex-wrap items-center justify-end gap-1">
               <Button label="กำหนดสิทธิ์" icon="pi pi-lock" text class="touch-action" :disabled="!!revokingRecipientId || !!reissuingRecipientId" @click="editPermissions(data)" />
@@ -577,23 +549,20 @@ onBeforeUnmount(() => {
               <Button v-else-if="data.status === 'ACTIVE'" label="คัดลอกลิงก์ Dashboard" icon="pi pi-copy" text class="touch-action" :disabled="!tenant?.viewerUrl || !!revokingRecipientId || !!reissuingRecipientId" @click="copyDashboardLink" />
               <Button :label="data.status === 'PENDING' ? 'ยกเลิกคำเชิญ' : 'ลบผู้รับ'" icon="pi pi-trash" severity="danger" text class="touch-action" :loading="revokingRecipientId === data.id" :disabled="!!reissuingRecipientId || (!!revokingRecipientId && revokingRecipientId !== data.id)" @click="confirmRevokeRecipient(data)" />
             </div></template></Column>
-            <template #empty><div class="py-8 text-center text-muted-color">ยังไม่มีผู้รับ กด “เพิ่มผู้รับ LINE” เพื่อเริ่มต้น</div></template>
+            <template #empty><div class="py-8 text-center text-muted-color">ไม่พบผู้รับที่ตรงกับตัวกรอง <Button v-if="recipientHasFilters" label="ล้างตัวกรอง" text size="small" @click="clearRecipientFilters" /></div></template>
           </DataTable>
-          <Paginator :first="recipientPage * recipientPageSize" :rows="recipientPageSize" :total-records="recipientTotal" :rows-per-page-options="[25, 50, 100]" template="RowsPerPageDropdown PrevPageLink CurrentPageReport NextPageLink" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" @page="changeRecipientPage" />
         </TabPanel>
         <TabPanel value="schedules">
           <Message severity="info" :closable="false" class="mb-5"><strong>ขั้นที่ 2–4: เลือกรายงานใน LINE รอบนี้ → เลือกผู้รับ → ตั้งวันเวลา → ตรวจสอบและเปิดใช้งาน</strong><div class="mt-1">การเลือกรายงานในตารางส่งไม่เพิ่มสิทธิ์ ผู้รับทุกคนต้องมีสิทธิ์เปิดดูรายงานนั้นจากแท็บ “ผู้รับและสิทธิ์” ก่อน</div></Message>
           <Toolbar class="mb-5 border-0 p-0">
             <template #start><p class="m-0 text-muted-color">หนึ่ง LINE Card รองรับสูงสุด 10 รายงาน รายงานละ 2 ตัวเลขสำคัญ</p></template>
-            <template #end><div class="flex flex-wrap items-center gap-3"><label class="flex items-center gap-2 cursor-pointer"><Checkbox v-model="showArchived" binary /><span>แสดงรายการที่ลบแล้ว</span></label><Button label="เพิ่มตารางส่งรายงาน" icon="pi pi-calendar-plus" @click="openSchedule()" /></div></template>
+            <template #end><Button label="เพิ่มตารางส่งรายงาน" icon="pi pi-calendar-plus" @click="openSchedule()" /></template>
           </Toolbar>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-            <IconField><InputIcon class="pi pi-search" /><InputText v-model="scheduleSearch" aria-label="ค้นหาชื่อตารางส่ง LINE" placeholder="ค้นหาชื่อตารางส่ง LINE" fluid /></IconField>
-            <Select v-model="scheduleStatus" aria-label="กรองสถานะตารางส่ง LINE" :options="[{ label: 'ฉบับร่าง', value: 'DRAFT' }, { label: 'ใช้งาน', value: 'ACTIVE' }, { label: 'พักไว้', value: 'PAUSED' }, { label: 'หมดอายุ', value: 'EXPIRED' }, { label: 'ลบแล้ว', value: 'ARCHIVED' }]" option-label="label" option-value="value" show-clear placeholder="ทุกสถานะ" />
-          </div>
-          <DataTable :value="schedules" data-key="id" striped-rows scrollable>
+          <Message v-if="scheduleTable.error.value" severity="error" :closable="false" class="mb-4">โหลดข้อมูลใหม่ไม่สำเร็จ ข้อมูลเดิมยังแสดงอยู่ · {{ scheduleTable.error.value }}</Message>
+          <DataTable v-model:filters="schedulePrimeFilters" :value="schedules" :loading="scheduleTable.loading.value" data-key="id" lazy paginator :first="scheduleTable.page.value * scheduleTable.pageSize.value" :rows="scheduleTable.pageSize.value" :total-records="scheduleTable.total.value" :rows-per-page-options="[25, 50, 100]" filter-display="menu" row-hover show-gridlines striped-rows scrollable current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" @page="scheduleTable.changePage" @filter="applyScheduleFilters">
+            <template #header><SakaiTableHeader v-model:global-search="scheduleTable.globalSearch.value" :loading="scheduleTable.loading.value" :has-filters="scheduleHasFilters" @clear="clearScheduleFilters"><template #start><div class="flex items-center gap-2"><Checkbox v-model="showArchived" binary input-id="show-archived-schedules" @change="toggleArchivedSchedules" /><label for="show-archived-schedules">รวมรายการที่ลบแล้ว</label></div></template></SakaiTableHeader></template>
             <Column field="name" header="ชื่อตาราง"><template #body="{ data }"><span class="font-medium">{{ data.name }}</span><div class="text-xs text-muted-color mt-1">{{ data.localTime }} · เวลาไทย</div></template></Column>
-            <Column field="status" header="สถานะ"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : data.status === 'PAUSED' ? 'warn' : 'secondary'" :value="statusLabel(data.status)" /></template></Column>
+            <Column field="status" header="สถานะ" :show-filter-match-modes="false"><template #body="{ data }"><Tag :severity="data.status === 'ACTIVE' ? 'success' : data.status === 'PAUSED' ? 'warn' : 'secondary'" :value="statusLabel(data.status)" /></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="[{ label: 'ฉบับร่าง', value: 'DRAFT' }, { label: 'ใช้งาน', value: 'ACTIVE' }, { label: 'พักไว้', value: 'PAUSED' }, { label: 'หมดอายุ', value: 'EXPIRED' }, { label: 'ลบแล้ว', value: 'ARCHIVED' }]" option-label="label" option-value="value" placeholder="ทุกสถานะ" /></template></Column>
             <Column header="รายงาน" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }">{{ data.reportKeys.length }}</template></Column>
             <Column header="ผู้รับ" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }">{{ data.recipientIds.length }}</template></Column>
             <Column header="รอบถัดไป"><template #body="{ data }">{{ data.status === 'ARCHIVED' ? '—' : formatDateTime(data.nextOccurrences[0]) }}</template></Column>
@@ -607,9 +576,8 @@ onBeforeUnmount(() => {
                 <Button icon="pi pi-trash" text rounded class="touch-action" severity="danger" aria-label="ลบตารางส่งรายงาน" v-tooltip.top="data.status === 'ACTIVE' ? 'พักตารางก่อนลบ' : 'ลบตารางและหยุดการส่งในอนาคต'" :loading="changingScheduleId === data.id" :disabled="data.status === 'ACTIVE' || !!changingScheduleId || !!testSendingScheduleId" @click="confirmArchiveSchedule(data)" />
               </template>
             </div></template></Column>
-            <template #empty><div class="py-8 text-center text-muted-color">{{ showArchived ? 'ไม่พบตารางส่งรายงาน' : 'ยังไม่มีตารางส่งรายงาน กด “เพิ่มตารางส่งรายงาน” เพื่อเริ่มต้น' }}</div></template>
+            <template #empty><div class="py-8 text-center text-muted-color">ไม่พบตารางส่งรายงานที่ตรงกับตัวกรอง <Button v-if="scheduleHasFilters" label="ล้างตัวกรอง" text size="small" @click="clearScheduleFilters" /></div></template>
           </DataTable>
-          <CursorPaginator :page="schedulePagination.page" :page-size="schedulePagination.pageSize" :item-count="schedules.length" :has-next="schedulePagination.hasNext" @previous="changeSchedulePage('previous')" @next="changeSchedulePage('next')" @update:page-size="changeSchedulePageSize" />
         </TabPanel>
       </TabPanels>
     </Tabs></div>
