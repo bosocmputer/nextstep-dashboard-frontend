@@ -52,6 +52,9 @@
     "vitest": "4.1.10",
     "vue-tsc": "2.2.10"
   },
+  "overrides": {
+    "js-yaml": "4.3.0"
+  },
   "engines": {
     "node": ">=20.19.0"
   }
