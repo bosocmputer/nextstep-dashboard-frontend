@@ -4,7 +4,7 @@ import type { DataTableFilterEvent } from 'primevue/datatable';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { useConfirm } from 'primevue/useconfirm';
-import { ApiError, adminApi, type AdminReportDefinition, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentOccurrence, type OperationalIncidentStatus, type ReportKey, type SMLConnectionTestResult } from '@/api';
+import { ApiError, adminApi, type AdminReportDefinition, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentOccurrence, type ReportKey, type SMLConnectionTestResult } from '@/api';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
@@ -12,7 +12,8 @@ import { useServerTable } from '@/composables/useServerTable';
 import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 import {
   buildCodexIncidentText, causalChain, evidenceLevelLabel, eventKindLabel, formatDurationMs,
-  lineImpactLabel, reportImpactLabel, sourceKindLabel, triggerKindLabel
+  incidentLifecycleIcon, incidentLifecycleSeverity, lineImpactLabel, reportImpactLabel,
+  sourceKindLabel, triggerKindLabel
 } from '@/utils/operationalPresentation';
 
 const route = useRoute();
@@ -61,6 +62,18 @@ const reportDefinitionByKey = computed(() => new Map(reportDefinitions.value.map
 const primaryEvent = computed(() => incident.value?.events.find((event) => event.failureEvidence && !event.isDownstream) ?? incident.value?.events.find((event) => event.failureEvidence));
 const chain = computed(() => causalChain(primaryEvent.value));
 const affectedLabel = computed(() => incident.value?.causeBreakdown?.[0]?.affectedLabelTh ?? 'ส่วนที่ได้รับผล');
+const singleOccurrence = computed(() => occurrenceTable.total.value === 1 && occurrences.value.length === 1 ? occurrences.value[0] : undefined);
+const hasMultipleOccurrences = computed(() => occurrenceTable.total.value > 1);
+const isSMLIncident = computed(() => incident.value?.rootCause === 'SML_CONNECTIVITY');
+const isResolvedLifecycle = computed(() => {
+  const state = incident.value?.statusPresentation.state;
+  return state === 'CONNECTION_RESTORED' || state === 'RESOLVED';
+});
+const lifecycleVerifiedAt = computed(() => incident.value?.statusPresentation.verifiedAt || incident.value?.lastSeenAt);
+const occurrenceStatusLabel = computed(() => {
+  if (isSMLIncident.value) return isResolvedLifecycle.value ? 'เชื่อมต่อได้แล้ว' : 'เชื่อมต่อไม่สำเร็จ';
+  return isResolvedLifecycle.value ? 'สถานะปกติ' : 'ต้องตรวจสอบ';
+});
 const eventGlobalSearch = computed({
   get: () => eventFilters.value.global.value ?? '',
   set: (value: string) => { eventFilters.value.global.value = value || null; }
@@ -86,11 +99,9 @@ const safeErrorOptions = computed(() => {
   return [...labels].map(([value, label]) => ({ label, value }));
 });
 
-function statusLabel(value: OperationalIncidentStatus) {
-  return ({ OPEN: 'ยังไม่รับทราบ', ACKNOWLEDGED: 'รับทราบแล้ว', RESOLVED: 'ระบบยืนยันว่าหายแล้ว', CLOSED_ACCEPTED: 'ยอมรับความเสี่ยง' } as const)[value];
-}
-function statusSeverity(value: OperationalIncidentStatus) {
-  return value === 'OPEN' ? 'danger' : value === 'ACKNOWLEDGED' ? 'warn' : value === 'RESOLVED' ? 'success' : 'secondary';
+function lifecycleStatusLabel() {
+  if (!incident.value) return '';
+  return ({ OPEN: 'ต้องตรวจสอบ', ACKNOWLEDGED: 'รับทราบแล้ว', RESOLVED: 'ปิดเหตุแล้ว', CLOSED_ACCEPTED: 'ปิดโดยยอมรับความเสี่ยง' } as const)[incident.value.status];
 }
 function reportLabel(event: OperationalIncidentEvent) {
   if (!event.reportKey) return 'ไม่ระบุรายงาน';
@@ -227,7 +238,6 @@ onBeforeUnmount(() => {
   <AppPageHeader title="รายละเอียดเหตุสำคัญ" :subtitle="incident ? incident.alertRef : 'กำลังโหลดข้อมูล'" mobile-mode="entity">
     <template #back><Button icon="pi pi-arrow-left" text rounded aria-label="กลับไปเหตุสำคัญ" @click="router.push('/admin/operational-incidents')" /></template>
     <template #actions>
-      <Button label="คัดลอกสำหรับ Codex" icon="pi pi-copy" outlined :disabled="!incident" @click="copyForCodex" />
       <Button v-if="canAcknowledge" label="รับทราบ" icon="pi pi-check" :loading="mutating" @click="acknowledge" />
       <Button v-if="canAcceptRisk" label="ยอมรับความเสี่ยง" icon="pi pi-times-circle" severity="danger" outlined :disabled="mutating" @click="acceptDialog = true" />
     </template>
@@ -235,123 +245,124 @@ onBeforeUnmount(() => {
   <Message v-if="error" severity="error" :closable="false" class="mb-4">{{ error }}</Message>
   <div v-if="loading && !incident" class="card"><Skeleton height="12rem" /></div>
   <template v-else-if="incident">
-    <Message v-if="incident.status === 'CLOSED_ACCEPTED'" severity="warn" :closable="false" class="mb-4">ปิดโดย Admin ยอมรับความเสี่ยง ไม่ได้หมายความว่าระบบฟื้นตัวแล้ว</Message>
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-      <section class="card lg:col-span-2 m-0">
-        <div class="flex flex-wrap items-center gap-3 mb-4"><Tag :severity="incident.severity === 'P1' ? 'danger' : 'warn'" :value="incident.severity" /><Tag :severity="statusSeverity(incident.status)" :value="statusLabel(incident.status)" /></div>
-        <h2 class="incident-title">{{ incident.presentation.titleTh }}</h2>
-        <p class="text-muted-color mt-0 mb-5">{{ incident.presentation.summaryTh }}</p>
-        <dl class="incident-summary m-0">
-          <dt>พบครั้งแรก</dt><dd>{{ formatDateTime(incident.firstSeenAt) }} เวลาไทย</dd>
-          <dt>พบล่าสุด</dt><dd>{{ formatDateTime(incident.lastSeenAt) }} เวลาไทย</dd>
-          <dt>ลักษณะการตรวจพบ</dt><dd>{{ incident.observationMode === 'CONTINUOUS' ? 'ตรวจพบต่อเนื่อง' : `พบ ${incident.occurrenceCount.toLocaleString('th-TH')} เหตุการณ์` }}</dd>
-          <dt>{{ affectedLabel }}ที่ยังไม่หาย</dt><dd>{{ incident.activeAffectedCount.toLocaleString('th-TH') }} รายการ</dd>
-          <template v-if="incident.measurement"><dt>ค่าที่ตรวจพบล่าสุด</dt><dd>{{ incident.measurement.value.toLocaleString('th-TH', { maximumFractionDigits: 1 }) }}{{ incident.measurement.unit === 'PERCENT' ? '%' : incident.measurement.unit === 'SECONDS' ? ' วินาที' : '' }} · เริ่มเตือนที่ {{ incident.measurement.threshold.toLocaleString('th-TH', { maximumFractionDigits: 1 }) }}{{ incident.measurement.unit === 'PERCENT' ? '%' : incident.measurement.unit === 'SECONDS' ? ' วินาที' : '' }}</dd></template>
-          <template v-if="incident.acceptedReason"><dt>เหตุผลที่ยอมรับความเสี่ยง</dt><dd>{{ incident.acceptedReason }}</dd></template>
-        </dl>
-      </section>
-      <aside class="card m-0">
-        <h2 class="text-base mt-0">หลักการสถานะ</h2>
-        <p class="text-muted-color mb-0">Admin รับทราบได้เพื่อหยุดการเตือนซ้ำ แต่มีเพียงหลักฐานจากระบบเท่านั้นที่เปลี่ยนเหตุเป็น “หายแล้ว”</p>
-      </aside>
-    </div>
-
-    <section v-if="incident.causeBreakdown?.length" class="card">
-      <h2 class="text-lg mt-0 mb-1">สาเหตุและส่วนที่ควรตรวจสอบ</h2>
-      <p class="text-muted-color mt-0 mb-4">แยกตามหลักฐานที่ระบบบันทึก ไม่สรุปว่า Server ปิดหรือ Firewall บล็อกหากยังพิสูจน์ไม่ได้</p>
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div v-for="cause in incident.causeBreakdown" :key="`${cause.category}-${cause.stage}-${cause.transportPhase}`" class="cause-card">
-          <strong>{{ cause.presentation.titleTh }}</strong>
-          <span>{{ cause.presentation.stageTh }}</span>
-          <small>{{ cause.affectedLabelTh }}ที่ยังไม่หาย {{ cause.activeAffectedCount.toLocaleString('th-TH') }} รายการ · {{ cause.investigationScope === 'CUSTOMER_SYSTEM' ? 'ควรตรวจ Server ลูกค้า' : cause.investigationScope === 'LINE_PROVIDER' ? 'ควรตรวจผู้ให้บริการ LINE' : cause.investigationScope === 'CONFIGURATION' ? 'ควรตรวจการตั้งค่า SML' : 'ควรตรวจระบบ Nextstep Dashboard' }}</small>
+    <section class="card incident-status-card" :class="`is-${incidentLifecycleSeverity(incident.statusPresentation.state)}`">
+      <div class="status-icon" aria-hidden="true"><i :class="incidentLifecycleIcon(incident.statusPresentation.state)" /></div>
+      <div class="status-content">
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <Tag :severity="incident.severity === 'P1' ? 'danger' : 'warn'" :value="incident.severity" />
+          <Tag :severity="incidentLifecycleSeverity(incident.statusPresentation.state)" :value="lifecycleStatusLabel()" />
         </div>
+        <h2 class="incident-title">{{ incident.statusPresentation.headlineTh }}</h2>
+        <p class="status-summary">{{ incident.statusPresentation.statusSummaryTh }}</p>
+        <dl class="incident-summary status-facts m-0">
+          <dt>ตรวจสอบล่าสุด</dt><dd>{{ formatDateTime(lifecycleVerifiedAt) }} เวลาไทย</dd>
+          <dt>ผลต่อ LINE</dt><dd>{{ lineImpactLabel(primaryEvent?.impact?.notificationOutcome) }}</dd>
+          <dt>{{ affectedLabel }}</dt><dd>{{ (isResolvedLifecycle ? incident.affectedCount : incident.activeAffectedCount).toLocaleString('th-TH') }} รายการ</dd>
+          <template v-if="incident.measurement"><dt>ค่าที่ตรวจพบล่าสุด</dt><dd>{{ incident.measurement.value.toLocaleString('th-TH', { maximumFractionDigits: 1 }) }}{{ incident.measurement.unit === 'PERCENT' ? '%' : incident.measurement.unit === 'SECONDS' ? ' วินาที' : '' }} · เริ่มเตือนที่ {{ incident.measurement.threshold.toLocaleString('th-TH', { maximumFractionDigits: 1 }) }}{{ incident.measurement.unit === 'PERCENT' ? '%' : incident.measurement.unit === 'SECONDS' ? ' วินาที' : '' }}</dd></template>
+          <template v-if="incident.acceptedReason"><dt>เหตุผลที่ปิดการติดตาม</dt><dd>{{ incident.acceptedReason }}</dd></template>
+        </dl>
       </div>
     </section>
 
-    <section v-if="chain.length" class="card causal-card">
-      <h2 class="text-lg mt-0 mb-4">ลำดับสาเหตุและผลกระทบ</h2>
-      <ol class="causal-chain m-0 p-0">
-        <li v-for="(item, index) in chain" :key="`${index}-${item}`">
-          <span class="causal-index" aria-hidden="true">{{ index + 1 }}</span>
-          <span>{{ item }}</span>
-        </li>
-      </ol>
+    <section v-if="occurrenceLoading && !occurrences.length" class="card"><Skeleton height="9rem" /></section>
+    <section v-else-if="singleOccurrence" class="card tenant-focus-card">
+      <div class="focus-heading">
+        <div>
+          <span class="focus-eyebrow">{{ affectedLabel }}</span>
+          <h2>{{ singleOccurrence.tenantName || 'ระบบส่วนกลาง' }}</h2>
+          <p>{{ singleOccurrence.reportKey ? (reportDefinitionByKey.get(singleOccurrence.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : sourceKindLabel(singleOccurrence.sourceKind) }} · {{ formatDateTime(singleOccurrence.observedAt) }} เวลาไทย</p>
+        </div>
+        <Tag :severity="isResolvedLifecycle ? 'success' : 'danger'" :value="occurrenceStatusLabel" />
+      </div>
+      <div v-if="isSMLIncident" class="connection-panel">
+        <div v-if="singleOccurrence.smlConnectionReference && displayEndpoint(singleOccurrence)" class="endpoint-cell">
+          <small>{{ singleOccurrence.smlConnectionReference.endpointUrlAtFailure ? 'Java Web Service URL ที่ใช้ตอนเกิดเหตุ' : 'Java Web Service URL ปัจจุบัน' }}</small>
+          <a :href="singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence)" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence) }}</a>
+          <template v-if="singleOccurrence.smlConnectionReference.status === 'CHANGED_SINCE_FAILURE'">
+            <small class="text-orange-600">การตั้งค่าเปลี่ยนหลังเกิดเหตุ · URL ปัจจุบัน</small>
+            <a :href="singleOccurrence.smlConnectionReference.currentEndpointUrl" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ singleOccurrence.smlConnectionReference.currentEndpointUrl }}</a>
+          </template>
+          <small v-else-if="singleOccurrence.smlConnectionReference.status === 'CURRENT_ONLY'" class="text-orange-600">ไม่มี URL รุ่นเดิม จึงแสดง URL ปัจจุบันโดยไม่อ้างว่าเป็นค่าตอนเกิดเหตุ</small>
+          <small v-if="singleOccurrence.smlConnectionReference.schemeSecurity === 'HTTP'" class="text-orange-600">การเชื่อมต่อนี้ไม่ได้เข้ารหัส</small>
+        </div>
+        <span v-else class="text-muted-color">ไม่มี URL ที่ยืนยันได้จากหลักฐาน</span>
+        <div class="connection-actions">
+          <a v-if="singleOccurrence.smlConnectionReference && displayEndpoint(singleOccurrence)" :href="singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence)" target="_blank" rel="noopener noreferrer" class="p-button p-component p-button-outlined endpoint-button"><i class="pi pi-external-link" aria-hidden="true" /><span>เปิด URL ใน Browser</span></a>
+          <Button label="ทดสอบจาก Server Dashboard" icon="pi pi-bolt" outlined :loading="testingTenantId === singleOccurrence.tenantId" :disabled="!singleOccurrence.tenantId || !currentTestEndpoint(singleOccurrence) || Boolean(testingTenantId)" @click="confirmConnectionTest(singleOccurrence)" />
+        </div>
+        <small class="text-muted-color">การเปิด URL ยืนยันได้เฉพาะเครื่องของคุณ ส่วนการทดสอบจาก Server Dashboard จะติดต่อ Java Web Service จริงด้วยคำสั่ง read-only และไม่เปลี่ยนสถานะเหตุนี้</small>
+        <Message v-if="testResult(singleOccurrence)" severity="success" :closable="false" class="mt-2 mb-0">ทดสอบสำเร็จเมื่อ {{ formatDateTime(testResult(singleOccurrence)!.testedAt) }} · {{ testResult(singleOccurrence)!.latencyMs.toLocaleString('th-TH') }} มิลลิวินาที</Message>
+      </div>
+      <p v-else class="text-muted-color mb-0">{{ singleOccurrence.failureEvidence?.presentation.summaryTh || incident.presentation.summaryTh }}</p>
     </section>
 
-    <section class="card table-card">
-      <h2 class="text-lg mt-0 mb-1">หลักฐานตามลำดับเวลา</h2>
-      <p class="text-muted-color mt-0 mb-4">แสดงข้อเท็จจริงที่ระบบบันทึกในเวลาที่เกิดเหตุ โดยไม่คาดเดาว่า Server ปิดหรือ Network ถูกบล็อก</p>
-      <DataTable v-model:filters="eventFilters" :value="incident.events" data-key="id" filter-display="menu" row-hover show-gridlines striped-rows scrollable paginator :rows="25" :rows-per-page-options="[25, 50, 100]" :global-filter-fields="['eventKind', 'tenantName', 'reportKey', 'sourceKind']" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport">
-        <template #header><SakaiTableHeader v-model:global-search="eventGlobalSearch" :has-filters="eventHasFilters" @clear="clearEventFilters" /></template>
-        <Column field="observedAt" header="เวลา"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template></Column>
-        <Column field="eventKind" header="เกิดอะไรขึ้น" :show-filter-match-modes="false"><template #body="{ data }"><div class="event-description"><span class="font-semibold">{{ eventTitle(data) }}</span><small>{{ eventKindLabel(data.eventKind) }} · {{ evidenceLevelLabel(data.failureEvidence?.level) }}</small></div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="eventKindOptions" option-label="label" option-value="value" placeholder="ทุกเหตุการณ์" /></template></Column>
-        <Column field="tenantName" header="ร้าน/รายงาน"><template #body="{ data }"><div class="event-description"><span>{{ data.tenantName || 'ระบบส่วนกลาง' }}</span><small>{{ reportLabel(data) }}</small></div></template></Column>
-        <Column field="sourceKind" header="แหล่งงาน" :show-filter-match-modes="false"><template #body="{ data }"><div class="event-description"><span>{{ sourceKindLabel(data.sourceKind) }}</span><small>{{ triggerKindLabel(data.triggerKind) }}</small></div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="sourceKindOptions" option-label="label" option-value="value" placeholder="ทุกแหล่งงาน" /></template></Column>
-        <Column header="ขั้นตอนและระยะเวลา"><template #body="{ data }"><div class="event-description"><span>{{ data.failureEvidence?.presentation.stageTh || 'ไม่มีรายละเอียดขั้นตอนเพิ่มเติม' }}</span><small>{{ formatDurationMs(data.failureEvidence?.durationMs) }}</small></div></template></Column>
-        <Column header="ผลกระทบ"><template #body="{ data }"><div class="event-description"><span>{{ reportImpactLabel(data.impact) }}</span><small>{{ lineImpactLabel(data.impact?.notificationOutcome) }}</small></div></template></Column>
-      </DataTable>
-    </section>
-
-    <section class="card table-card">
-      <h2 class="text-lg mt-0 mb-1">เหตุที่ได้รับผลและการตรวจ Java Web Service</h2>
-      <p class="text-muted-color mt-0 mb-4">การเปิด URL จาก Browser ยืนยันได้เฉพาะเครื่องของคุณ ส่วนการทดสอบจาก Server Dashboard จะติดต่อ Java Web Service จริงด้วยคำสั่ง read-only ขนาดเล็ก และไม่ทำให้ Incident เปลี่ยนเป็น “หายแล้ว”</p>
+    <section v-else-if="hasMultipleOccurrences" class="card table-card">
+      <h2 class="text-lg mt-0 mb-1">ร้านและรายงานที่ได้รับผล</h2>
+      <p class="text-muted-color mt-0 mb-4">มีหลายรายการ จึงแสดงเป็นตารางเพื่อค้นหาและตรวจสอบแยกร้าน</p>
       <Message v-if="occurrenceTable.error.value" severity="error" :closable="false" class="mb-4">โหลดข้อมูลใหม่ไม่สำเร็จ ข้อมูลเดิมยังแสดงอยู่ · {{ occurrenceTable.error.value }}</Message>
       <DataTable v-model:filters="occurrencePrimeFilters" :value="occurrences" :loading="occurrenceLoading" data-key="id" lazy paginator :first="occurrenceTable.page.value * occurrenceTable.pageSize.value" :rows="occurrenceTable.pageSize.value" :total-records="occurrenceTable.total.value" :rows-per-page-options="[25, 50, 100]" filter-display="menu" row-hover show-gridlines striped-rows scrollable current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport" @page="occurrenceTable.changePage" @filter="applyOccurrenceFilters">
         <template #header><SakaiTableHeader v-model:global-search="occurrenceTable.globalSearch.value" :loading="occurrenceLoading" :has-filters="occurrenceHasFilters" @clear="clearOccurrenceFilters"><template #start><Button label="รีเฟรช" icon="pi pi-refresh" outlined :loading="occurrenceLoading" @click="occurrenceTable.refresh()" /></template></SakaiTableHeader></template>
         <Column field="tenantName" header="ร้าน/รายงาน"><template #body="{ data }"><div class="event-description"><span>{{ data.tenantName || 'ระบบส่วนกลาง' }}</span><small>{{ data.reportKey ? (reportDefinitionByKey.get(data.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : sourceKindLabel(data.sourceKind) }}</small></div></template></Column>
         <Column field="reportKey" header="รายงาน" :show-filter-match-modes="false"><template #body="{ data }">{{ data.reportKey ? (reportDefinitionByKey.get(data.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : '—' }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="reportOptions" option-label="label" option-value="value" filter placeholder="ทุกรายงาน" /></template></Column>
-        <Column field="sourceKind" header="แหล่งงาน" :show-filter-match-modes="false"><template #body="{ data }">{{ sourceKindLabel(data.sourceKind) }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="sourceKindOptions" option-label="label" option-value="value" placeholder="ทุกแหล่งงาน" /></template></Column>
-        <Column field="safeErrorCode" header="สาเหตุ" :show-filter-match-modes="false"><template #body="{ data }">{{ data.failureEvidence?.presentation.titleTh || 'ปัญหาที่ระบบบันทึกไว้' }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="safeErrorOptions" option-label="label" option-value="value" filter placeholder="ทุกสาเหตุ" /></template></Column>
+        <Column field="sourceKind" header="ส่วนของระบบ" :show-filter-match-modes="false"><template #body="{ data }">{{ sourceKindLabel(data.sourceKind) }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="sourceKindOptions" option-label="label" option-value="value" placeholder="ทุกส่วนของระบบ" /></template></Column>
+        <Column field="safeErrorCode" header="เกิดอะไรขึ้น" :show-filter-match-modes="false"><template #body="{ data }">{{ data.failureEvidence?.presentation.titleTh || 'ปัญหาที่ระบบบันทึกไว้' }}</template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="safeErrorOptions" option-label="label" option-value="value" filter placeholder="ทุกสาเหตุ" /></template></Column>
         <Column field="observedAt" header="เวลา" :show-filter-match-modes="false"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template><template #filter="{ filterModel }"><DatePicker v-model="filterModel.value" selection-mode="range" date-format="dd/mm/yy" placeholder="เลือกช่วงวันที่" /></template></Column>
-        <Column header="URL Java Web Service">
-          <template #body="{ data }">
-            <div v-if="data.smlConnectionReference && displayEndpoint(data)" class="endpoint-cell">
-              <small>{{ data.smlConnectionReference.endpointUrlAtFailure ? 'URL ที่ใช้ตอนเกิดเหตุ' : 'URL ปัจจุบัน' }}</small>
-              <a :href="data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data)" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data) }}</a>
-              <template v-if="data.smlConnectionReference.status === 'CHANGED_SINCE_FAILURE'">
-                <small class="text-orange-600">การตั้งค่าเปลี่ยนหลังเกิดเหตุ · URL ปัจจุบัน</small>
-                <a :href="data.smlConnectionReference.currentEndpointUrl" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ data.smlConnectionReference.currentEndpointUrl }}</a>
-              </template>
-              <small v-else-if="data.smlConnectionReference.status === 'CURRENT_ONLY'" class="text-orange-600">ไม่มี URL รุ่นเดิม จึงแสดง URL ปัจจุบันโดยไม่อ้างว่าเป็นค่าตอนเกิดเหตุ</small>
-              <small v-if="data.smlConnectionReference.schemeSecurity === 'HTTP'" class="text-orange-600">การเชื่อมต่อนี้ไม่ได้เข้ารหัส</small>
-              <small>เปิดใน Browser ไม่ได้ยืนยันว่า Server Dashboard เชื่อมต่อได้</small>
-              <a :href="data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data)" target="_blank" rel="noopener noreferrer" class="endpoint-open-action"><i class="pi pi-external-link" aria-hidden="true" /> เปิด URL ใน Browser</a>
-            </div>
-            <span v-else class="text-muted-color">ไม่มี URL ที่ยืนยันได้จากหลักฐาน</span>
-          </template>
-        </Column>
-        <Column header="ตรวจจาก Server" header-class="table-action-column" body-class="table-action-column">
-          <template #body="{ data }">
-            <div class="grid justify-items-end gap-1">
-              <Button label="ทดสอบจาก Server Dashboard" icon="pi pi-bolt" outlined size="small" :loading="testingTenantId === data.tenantId" :disabled="!data.tenantId || !currentTestEndpoint(data) || Boolean(testingTenantId)" @click="confirmConnectionTest(data)" />
-              <small v-if="testResult(data)" class="text-green-600">สำเร็จเมื่อ {{ formatDateTime(testResult(data)!.testedAt) }} · {{ testResult(data)!.latencyMs.toLocaleString('th-TH') }} ms</small>
-              <small v-else-if="data.smlConnectionReference?.testAvailableAt" class="text-muted-color">ทดสอบได้อีกครั้งหลัง {{ formatDateTime(data.smlConnectionReference.testAvailableAt) }}</small>
-            </div>
-          </template>
-        </Column>
+        <Column v-if="isSMLIncident" header="Java Web Service URL"><template #body="{ data }"><div v-if="data.smlConnectionReference && displayEndpoint(data)" class="endpoint-cell"><a :href="data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data)" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data) }}</a><small v-if="data.smlConnectionReference.status === 'CURRENT_ONLY'" class="text-orange-600">URL ปัจจุบัน</small></div><span v-else class="text-muted-color">ไม่มี URL ที่ยืนยันได้</span></template></Column>
+        <Column v-if="isSMLIncident" header="ตรวจจาก Server" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button label="ทดสอบ" icon="pi pi-bolt" outlined size="small" :loading="testingTenantId === data.tenantId" :disabled="!data.tenantId || !currentTestEndpoint(data) || Boolean(testingTenantId)" @click="confirmConnectionTest(data)" /></template></Column>
         <template #empty><div class="py-6 text-center text-muted-color">ไม่พบเหตุที่ตรงกับตัวกรอง <Button v-if="occurrenceHasFilters" label="ล้างตัวกรอง" text size="small" @click="clearOccurrenceFilters" /></div></template>
       </DataTable>
     </section>
+    <Message v-else-if="!occurrenceLoading" severity="warn" :closable="false" class="mb-4">ไม่พบรายการร้านหรือทรัพยากรที่เชื่อมโยงกับเหตุนี้</Message>
 
-    <section v-if="primaryEvent?.failureEvidence" class="card">
-      <h2 class="text-lg mt-0">สิ่งที่ควรตรวจสอบต่อ</h2>
-      <p v-if="primaryEvent.failureEvidence.presentation.evidenceNoteTh" class="text-muted-color">{{ primaryEvent.failureEvidence.presentation.evidenceNoteTh }}</p>
-      <ul class="pl-5 mb-0"><li v-for="action in primaryEvent.failureEvidence.presentation.nextActionsTh" :key="action" class="mb-2">{{ action }}</li></ul>
-      <Message v-if="incident.subjectType === 'TENANT'" severity="info" :closable="false" class="mt-4 mb-0">ระบบจะยืนยันการฟื้นตัวจากรอบส่งตามตารางที่สำเร็จหลังเหตุนี้ หากตารางถูกพักหรือลบ จะไม่มีรอบถัดไปสำหรับยืนยันอัตโนมัติ</Message>
+    <section v-if="primaryEvent?.failureEvidence" class="card action-card">
+      <template v-if="incident.statusPresentation.actionRequired">
+        <h2 class="text-lg mt-0">Admin ควรทำอะไรต่อ</h2>
+        <p v-if="primaryEvent.failureEvidence.presentation.evidenceNoteTh" class="text-muted-color">{{ primaryEvent.failureEvidence.presentation.evidenceNoteTh }}</p>
+        <ul class="pl-5 mb-0"><li v-for="action in primaryEvent.failureEvidence.presentation.nextActionsTh" :key="action" class="mb-2">{{ action }}</li></ul>
+        <Message v-if="incident.subjectType === 'TENANT'" severity="info" :closable="false" class="mt-4 mb-0">ระบบจะตรวจยืนยันอีกครั้งจากรอบส่งตามตารางที่สำเร็จ หากตารางถูกพักหรือลบ จะไม่มีรอบถัดไปสำหรับยืนยันอัตโนมัติ</Message>
+      </template>
+      <Message v-else severity="success" :closable="false" class="m-0"><strong>ไม่ต้องดำเนินการ</strong><br>ระบบมีหลักฐานยืนยันสถานะปัจจุบันแล้ว คุณยังเปิดรายละเอียดด้านล่างเพื่อตรวจสอบย้อนหลังได้</Message>
       <Message v-if="primaryEvent.connectionChangedSinceFailure" severity="warn" :closable="false" class="mt-4 mb-0">การตั้งค่าการเชื่อมต่อ SML ถูกแก้ไขหลังเกิดเหตุ หลักฐานนี้อ้างอิงค่าที่ระบบใช้ในเวลานั้น</Message>
     </section>
 
-    <Accordion class="mb-4">
-      <AccordionPanel value="technical">
-        <AccordionHeader>ข้อมูลสำหรับทีมเทคนิค</AccordionHeader>
+    <Accordion class="mb-4 evidence-accordion">
+      <AccordionPanel value="evidence">
+        <AccordionHeader>หลักฐานและรายละเอียดเพิ่มเติม</AccordionHeader>
         <AccordionContent>
-          <dl class="incident-summary technical-detail m-0">
-            <dt>Alert reference</dt><dd>{{ incident.alertRef }}</dd>
-            <dt>Incident type</dt><dd>{{ incident.incidentType }}</dd>
-            <dt>Root cause</dt><dd>{{ incident.rootCause }}</dd>
-            <dt>Safe error code</dt><dd>{{ incident.safeErrorCode || 'UNKNOWN' }}</dd>
-            <template v-if="primaryEvent?.failureEvidence"><dt>Stage</dt><dd>{{ primaryEvent.failureEvidence.stage }}</dd><dt>Transport phase</dt><dd>{{ primaryEvent.failureEvidence.transportPhase || 'UNKNOWN' }}</dd><dt>Remote state</dt><dd>{{ primaryEvent.failureEvidence.remoteStateUnknown ? 'UNKNOWN' : 'CONFIRMED TERMINAL' }}</dd></template>
-          </dl>
+          <div v-if="incident.causeBreakdown?.length" class="evidence-section">
+            <h3>สาเหตุที่ระบบบันทึก</h3>
+            <p class="text-muted-color">ระบบไม่สรุปว่า Server ปิดหรือ Firewall บล็อก หากยังไม่มีหลักฐานยืนยัน</p>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div v-for="cause in incident.causeBreakdown" :key="`${cause.category}-${cause.stage}-${cause.transportPhase}`" class="cause-card"><strong>{{ cause.presentation.titleTh }}</strong><span>{{ cause.presentation.stageTh }}</span><small>{{ cause.affectedLabelTh }}ที่ยังไม่หาย {{ cause.activeAffectedCount.toLocaleString('th-TH') }} รายการ</small></div>
+            </div>
+          </div>
+          <div v-if="chain.length" class="evidence-section">
+            <h3>ลำดับสาเหตุและผลกระทบ</h3>
+            <ol class="causal-chain m-0 p-0"><li v-for="(item, index) in chain" :key="`${index}-${item}`"><span class="causal-index" aria-hidden="true">{{ index + 1 }}</span><span>{{ item }}</span></li></ol>
+          </div>
+          <div class="evidence-section table-card">
+            <h3>หลักฐานตามลำดับเวลา</h3>
+            <DataTable v-model:filters="eventFilters" :value="incident.events" data-key="id" filter-display="menu" row-hover show-gridlines striped-rows scrollable paginator :rows="25" :rows-per-page-options="[25, 50, 100]" :global-filter-fields="['eventKind', 'tenantName', 'reportKey', 'sourceKind']" current-page-report-template="หน้า {currentPage} จาก {totalPages} · ทั้งหมด {totalRecords} รายการ" paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport">
+              <template #header><SakaiTableHeader v-model:global-search="eventGlobalSearch" :has-filters="eventHasFilters" @clear="clearEventFilters" /></template>
+              <Column field="observedAt" header="เวลา"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template></Column>
+              <Column field="eventKind" header="เกิดอะไรขึ้น" :show-filter-match-modes="false"><template #body="{ data }"><div class="event-description"><span class="font-semibold">{{ eventTitle(data) }}</span><small>{{ eventKindLabel(data.eventKind) }} · {{ evidenceLevelLabel(data.failureEvidence?.level) }}</small></div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="eventKindOptions" option-label="label" option-value="value" placeholder="ทุกเหตุการณ์" /></template></Column>
+              <Column field="tenantName" header="ร้าน/รายงาน"><template #body="{ data }"><div class="event-description"><span>{{ data.tenantName || 'ระบบส่วนกลาง' }}</span><small>{{ reportLabel(data) }}</small></div></template></Column>
+              <Column field="sourceKind" header="ส่วนของระบบ" :show-filter-match-modes="false"><template #body="{ data }"><div class="event-description"><span>{{ sourceKindLabel(data.sourceKind) }}</span><small>{{ triggerKindLabel(data.triggerKind) }}</small></div></template><template #filter="{ filterModel }"><MultiSelect v-model="filterModel.value" :options="sourceKindOptions" option-label="label" option-value="value" placeholder="ทุกส่วนของระบบ" /></template></Column>
+              <Column header="ขั้นตอนและระยะเวลา"><template #body="{ data }"><div class="event-description"><span>{{ data.failureEvidence?.presentation.stageTh || 'ไม่มีรายละเอียดขั้นตอนเพิ่มเติม' }}</span><small>{{ formatDurationMs(data.failureEvidence?.durationMs) }}</small></div></template></Column>
+              <Column header="ผลกระทบ"><template #body="{ data }"><div class="event-description"><span>{{ reportImpactLabel(data.impact) }}</span><small>{{ lineImpactLabel(data.impact?.notificationOutcome) }}</small></div></template></Column>
+            </DataTable>
+          </div>
+          <div class="evidence-section technical-detail">
+            <h3>ข้อมูลสำหรับทีมเทคนิค</h3>
+            <dl class="incident-summary m-0">
+              <dt>Alert reference</dt><dd>{{ incident.alertRef }}</dd>
+              <dt>Incident type</dt><dd>{{ incident.incidentType }}</dd>
+              <dt>Root cause</dt><dd>{{ incident.rootCause }}</dd>
+              <dt>Safe error code</dt><dd>{{ incident.safeErrorCode || 'UNKNOWN' }}</dd>
+              <template v-if="primaryEvent?.failureEvidence"><dt>Stage</dt><dd>{{ primaryEvent.failureEvidence.stage }}</dd><dt>Transport phase</dt><dd>{{ primaryEvent.failureEvidence.transportPhase || 'UNKNOWN' }}</dd><dt>Remote state</dt><dd>{{ primaryEvent.failureEvidence.remoteStateUnknown ? 'UNKNOWN' : 'CONFIRMED TERMINAL' }}</dd></template>
+            </dl>
+            <Button label="คัดลอกข้อมูลปลอดภัยสำหรับ Codex" icon="pi pi-copy" outlined class="mt-4" @click="copyForCodex" />
+          </div>
         </AccordionContent>
       </AccordionPanel>
     </Accordion>
@@ -371,7 +382,30 @@ onBeforeUnmount(() => {
 .incident-summary dt { color: var(--text-color-secondary); }
 .incident-summary dd { margin: 0; overflow-wrap: anywhere; }
 .incident-title { font-size: clamp(1.25rem, 2vw, 1.65rem); line-height: 1.35; margin: 0 0 .35rem; }
-.causal-card { border-inline-start: .25rem solid var(--p-primary-color); }
+.incident-status-card { display: grid; grid-template-columns: 3.25rem minmax(0, 1fr); gap: 1rem; align-items: start; border-inline-start: .3rem solid var(--surface-border); }
+.incident-status-card.is-danger { border-inline-start-color: var(--p-red-500); }
+.incident-status-card.is-success { border-inline-start-color: var(--p-green-500); }
+.incident-status-card.is-warn { border-inline-start-color: var(--p-orange-500); }
+.status-icon { width: 3.25rem; height: 3.25rem; display: grid; place-items: center; border-radius: 999px; background: var(--surface-100); color: var(--text-color-secondary); font-size: 1.35rem; }
+.is-danger .status-icon { color: var(--p-red-600); background: color-mix(in srgb, var(--p-red-500) 12%, transparent); }
+.is-success .status-icon { color: var(--p-green-600); background: color-mix(in srgb, var(--p-green-500) 12%, transparent); }
+.is-warn .status-icon { color: var(--p-orange-600); background: color-mix(in srgb, var(--p-orange-500) 12%, transparent); }
+.status-summary { color: var(--text-color-secondary); margin: .25rem 0 1.25rem; line-height: 1.55; }
+.status-facts { max-width: 52rem; }
+.focus-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.focus-heading h2 { margin: .2rem 0 .25rem; font-size: 1.25rem; }
+.focus-heading p { margin: 0; color: var(--text-color-secondary); }
+.focus-eyebrow { color: var(--text-color-secondary); font-size: .875rem; }
+.connection-panel { display: grid; gap: .85rem; padding-top: 1rem; border-top: 1px solid var(--surface-border); }
+.connection-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.endpoint-button { display: inline-flex; align-items: center; gap: .5rem; text-decoration: none; }
+.action-card { border-inline-start: .25rem solid var(--p-primary-color); }
+.evidence-accordion { width: 100%; min-width: 0; max-width: 100%; }
+.evidence-accordion :deep(.p-accordioncontent-wrapper), .evidence-accordion :deep(.p-accordioncontent-content) { min-width: 0; max-width: 100%; }
+.evidence-section { min-width: 0; max-width: 100%; padding-block: .25rem 1.25rem; }
+.evidence-section.table-card { overflow-x: auto; }
+.evidence-section + .evidence-section { padding-top: 1.25rem; border-top: 1px solid var(--surface-border); }
+.evidence-section h3 { margin: 0 0 .75rem; font-size: 1rem; }
 .causal-chain { list-style: none; display: grid; gap: .75rem; }
 .causal-chain li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); align-items: center; gap: .75rem; position: relative; }
 .causal-chain li:not(:last-child)::after { content: ''; position: absolute; inset-block-start: 2rem; inset-inline-start: .95rem; height: .75rem; border-inline-start: 2px solid var(--surface-border); }
@@ -385,5 +419,13 @@ onBeforeUnmount(() => {
 .endpoint-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .endpoint-open-action { display: inline-flex; align-items: center; gap: .4rem; width: max-content; max-width: 100%; font-weight: 600; }
 .technical-detail { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .875rem; }
-@media (max-width: 640px) { .incident-summary { grid-template-columns: 1fr; gap: .25rem; } .incident-summary dd { margin-bottom: .75rem; } }
+@media (max-width: 640px) {
+  .incident-status-card { grid-template-columns: 1fr; }
+  .status-icon { width: 2.75rem; height: 2.75rem; }
+  .incident-summary { grid-template-columns: 1fr; gap: .25rem; }
+  .incident-summary dd { margin-bottom: .75rem; }
+  .focus-heading { align-items: flex-start; flex-direction: column; }
+  .connection-actions > * { width: 100%; justify-content: center; }
+  .endpoint-cell { min-width: 0; width: 100%; }
+}
 </style>

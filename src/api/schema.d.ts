@@ -2089,6 +2089,16 @@ export interface components {
         OperationalIncidentSeverity: "P1" | "P2";
         /** @enum {string} */
         OperationalIncidentSubjectType: "TENANT" | "HOST_RESOURCE" | "BACKUP_POLICY" | "DATABASE" | "CONTAINER" | "LINE_PROVIDER";
+        /** @enum {string} */
+        OperationalIncidentLifecycleState: "CONNECTION_FAILED" | "CONNECTION_RESTORED" | "ACTIVE_PROBLEM" | "RESOLVED" | "ACCEPTED_RISK";
+        OperationalIncidentStatusPresentation: {
+            state: components["schemas"]["OperationalIncidentLifecycleState"];
+            headlineTh: string;
+            statusSummaryTh: string;
+            /** Format: date-time */
+            verifiedAt?: string;
+            actionRequired: boolean;
+        };
         OperationalMeasurement: {
             /** @enum {string} */
             kind: "DISK_USED_PERCENT" | "MEMORY_AVAILABLE_PERCENT" | "DATABASE_CONNECTIONS_PERCENT" | "QUEUE_AGE_SECONDS";
@@ -2148,6 +2158,7 @@ export interface components {
             acceptedReason?: string;
             version: number;
             presentation: components["schemas"]["FailurePresentation"];
+            statusPresentation: components["schemas"]["OperationalIncidentStatusPresentation"];
             isDownstream: boolean;
             causedByAlertRef?: string;
             events?: components["schemas"]["OperationalIncidentEvent"][];

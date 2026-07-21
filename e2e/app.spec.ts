@@ -283,7 +283,11 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
     occurrenceCount: 2, affectedCount: 3, activeAffectedCount: 3, observationMode: 'DISCRETE', subjectType: 'TENANT',
     tenantExamples: ['ร้านตัวอย่างหนึ่ง', 'ร้านตัวอย่างสอง'], firstSeenAt: '2026-07-16T01:00:00Z',
     lastSeenAt: '2026-07-16T01:01:00Z', version: status === 'OPEN' ? 1 : 2,
+    ...(status === 'RESOLVED' ? { resolvedAt: '2026-07-16T01:06:00Z' } : {}),
     presentation: { titleTh: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ', summaryTh: 'ระบบไม่สามารถเริ่มส่งคำขอไปยัง Server ลูกค้าได้', stageTh: 'เชื่อมต่อ Java Web Service', nextActionsTh: ['ตรวจสอบ Java Web Service'] },
+    statusPresentation: status === 'RESOLVED'
+      ? { state: 'CONNECTION_RESTORED', headlineTh: 'เชื่อมต่อ Java Web Service ได้แล้ว', statusSummaryTh: 'ไม่ต้องดำเนินการ', verifiedAt: '2026-07-16T01:06:00Z', actionRequired: false }
+      : { state: 'CONNECTION_FAILED', headlineTh: 'เชื่อมต่อ Java Web Service ไม่สำเร็จ', statusSummaryTh: 'ควรตรวจสอบ Java Web Service, Network และ Server ของลูกค้า', actionRequired: true },
     causeBreakdown: [{
       presentation: { titleTh: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ', summaryTh: 'ระบบไม่สามารถเริ่มส่งคำขอไปยัง Server ลูกค้าได้', stageTh: 'เชื่อมต่อ Java Web Service', nextActionsTh: ['ตรวจสอบ Java Web Service'] },
       category: 'JAVA_WS_CONNECTIVITY', stage: 'CONNECT_JAVA_WS', transportPhase: 'BEFORE_REQUEST_SENT', investigationScope: 'CUSTOMER_SYSTEM', subjectType: 'TENANT',
@@ -346,9 +350,12 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
     openIncident.click()
   ]);
   await expect(page.getByRole('heading', { name: 'รายละเอียดเหตุสำคัญ' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ' })).toBeVisible();
+  await expect(page.getByText('เชื่อมต่อ Java Web Service ไม่สำเร็จ', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'ร้านตัวอย่างหนึ่ง' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'ลำดับสาเหตุและผลกระทบ' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'หลักฐานและรายละเอียดเพิ่มเติม' }).click();
   await expect(page.getByRole('heading', { name: 'ลำดับสาเหตุและผลกระทบ' })).toBeVisible();
-  await expect(page.getByText('SML_UNREACHABLE', { exact: true })).toBeHidden();
+  await expect(page.getByText('SML_UNREACHABLE', { exact: true })).toBeVisible();
   await expect(page.getByText('การเชื่อมต่อนี้ไม่ได้เข้ารหัส')).toBeVisible();
   const openEndpoint = page.getByRole('link', { name: 'เปิด URL ใน Browser' });
   await expect(openEndpoint).toHaveAttribute('href', 'http://sml.example.test:8092');
@@ -362,6 +369,11 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
   await expect(page.getByRole('button', { name: /หายแล้ว|Resolve/i })).toHaveCount(0);
   await page.getByRole('button', { name: 'รับทราบ' }).click();
   await expect(page.getByText('รับทราบแล้ว')).toBeVisible();
+  await expect(page.getByText('ระบบยืนยันว่าหายแล้ว')).toHaveCount(0);
+  status = 'RESOLVED';
+  await page.reload();
+  await expect(page.getByText('เชื่อมต่อ Java Web Service ได้แล้ว', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('ไม่ต้องดำเนินการ', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('ระบบยืนยันว่าหายแล้ว')).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
