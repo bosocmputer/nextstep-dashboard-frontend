@@ -1,7 +1,7 @@
 ---
 status: current
-last_verified: 2026-07-16
-source_of_truth: [src/main.ts, src/constants/themeConstants.ts, src/layout/AppShell.vue, src/components/dashboard/ExecutiveChart.vue]
+last_verified: 2026-07-21
+source_of_truth: [src/main.ts, src/constants/themeConstants.ts, src/layout/AppShell.vue, src/components/dashboard/ExecutiveChart.vue, src/components/operations/IncidentDiagnosisPanel.vue]
 tags: [frontend, ui, accessibility, performance]
 ---
 
@@ -31,6 +31,10 @@ tags: [frontend, ui, accessibility, performance]
 - API values are not mutated for display; identifiers retain leading zeros.
 - Numeric table headers/cells are right-aligned with tabular numerals.
 - Missing, zero, partial, stale, and invalid data are distinct states.
+- Operational diagnosis uses a progressive hierarchy: plain-language cause,
+  affected subsystem, investigation owner, JavaWS status, request evidence,
+  containment, then the next action. Hashes and raw transport fields remain out
+  of the primary Admin surface.
 - Narrow ranking/composition charts use semantic lists; trend charts retain bounded ticks and reduced motion.
 
 ## Performance Budgets

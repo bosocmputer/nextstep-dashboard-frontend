@@ -67,6 +67,11 @@ the UI refetches after conflicts rather than overwriting newer evidence.
 Incident lifecycle text and action-required state come from the additive
 `statusPresentation` contract so the list, detail page, and Telegram behavior do
 not derive conflicting recovery claims from raw status or error codes.
+The per-occurrence diagnosis is an Admin-only safe GET with abort/generation
+guards. It reads persisted protocol metadata and matching-run baseline only;
+opening it never starts a connection test, report run, SML query, or LINE work.
+The view caches a diagnosis by occurrence ID for the current incident and drops
+that cache when the incident context changes.
 Report Run detail is also a read-only Admin request. It is fetched only when the
 operator opens a row, aborts when the dialog closes, and uses a generation guard
 so a slower previous selection cannot replace the active evidence. Neither

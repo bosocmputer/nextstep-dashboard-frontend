@@ -1023,6 +1023,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/operational-incidents/{incidentId}/occurrences/{occurrenceId}/diagnosis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOperationalIncidentDiagnosis"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/operational-incidents/{incidentId}/acknowledge": {
         parameters: {
             query?: never;
@@ -1649,8 +1665,63 @@ export interface components {
             retryable: boolean;
             remoteStateUnknown: boolean;
             connectionVersion?: number;
+            protocolEvidence?: components["schemas"]["JavaWSProtocolEvidence"];
             safeErrorCode: string;
             presentation: components["schemas"]["FailurePresentation"];
+        };
+        JavaWSProtocolEvidence: {
+            requestRef: string;
+            requestCount: number;
+            retryCount: number;
+            /** Format: date-time */
+            requestSentAt?: string;
+            /** Format: date-time */
+            firstResponseByteAt?: string;
+            /** Format: date-time */
+            responseCompletedAt?: string;
+            httpStatus?: number;
+            responseContentType?: string;
+            responseBodyBytes?: number;
+            soapValid?: boolean;
+            soapReturnCharacters?: number;
+            base64Valid?: boolean;
+            decodedPayloadBytes?: number;
+            zipSignatureValid?: boolean;
+            responseSha256?: string;
+            tenantConcurrentQueries: number;
+            hostConcurrentQueries: number;
+        };
+        AdminFailureAssessment: {
+            /** @enum {string} */
+            problemArea: "CUSTOMER_NETWORK" | "CUSTOMER_JAVA_WS" | "NEXTSTEP_REPORT_BUILD" | "NEXTSTEP_REPORT_STORAGE" | "NEXTSTEP_JOB_PROCESSING" | "NEXTSTEP_NOTIFICATION" | "LINE_PROVIDER" | "NEXTSTEP_DATABASE" | "NEXTSTEP_CAPACITY" | "CONFIGURATION" | "UNKNOWN";
+            /** @enum {string} */
+            investigationOwner: "CUSTOMER_IT" | "NEXTSTEP_TEAM" | "LINE_PROVIDER" | "JOINT_INVESTIGATION";
+            /** @enum {string} */
+            loadSignal: "NO_NEXTSTEP_LOAD_SIGNAL" | "REVIEW_REQUIRED" | "INSUFFICIENT_EVIDENCE";
+            summaryTh: string;
+            problemAreaTh: string;
+            ownerTh: string;
+            loadSignalTh: string;
+            customerActionTh: string;
+        };
+        MatchingReportSuccess: {
+            /** Format: date-time */
+            finishedAt: string;
+            durationMs: number;
+        };
+        ReportDurationBaseline: {
+            p50Ms?: number;
+            p90Ms?: number;
+            sampleCount: number;
+        };
+        IncidentDiagnosis: {
+            assessment: components["schemas"]["AdminFailureAssessment"];
+            protocolEvidence?: components["schemas"]["JavaWSProtocolEvidence"];
+            priorMatchingSuccess?: components["schemas"]["MatchingReportSuccess"];
+            subsequentMatchingSuccess?: components["schemas"]["MatchingReportSuccess"];
+            baseline: components["schemas"]["ReportDurationBaseline"];
+            /** @description Authenticated Admin-only text that may include a sanitized tenant name and endpoint. Never use for Telegram or Codex clipboard. */
+            customerMessageTh?: string;
         };
         FailureImpact: {
             reportsTotal: number;
@@ -4363,6 +4434,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperationalIncidentOccurrencePage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getOperationalIncidentDiagnosis: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incidentId: string;
+                occurrenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Admin-only bounded diagnosis computed from persisted evidence. This endpoint never contacts JavaWS. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentDiagnosis"];
                 };
             };
             401: components["responses"]["Unauthorized"];
