@@ -91,6 +91,24 @@ describe('adminApi operational incidents', () => {
     expect(url).toBe('/api/v1/admin/operational-incidents/11111111-1111-4111-8111-111111111111/occurrences?cursor=cursor-value&pageSize=25');
   });
 
+  it('loads one persisted diagnosis without starting a JavaWS test', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      assessment: {
+        problemArea: 'CUSTOMER_JAVA_WS', investigationOwner: 'CUSTOMER_IT', loadSignal: 'INSUFFICIENT_EVIDENCE',
+        summaryTh: 'คำตอบไม่สมบูรณ์', problemAreaTh: 'Java Web Service', ownerTh: 'ผู้ดูแลลูกค้า',
+        loadSignalTh: 'หลักฐานยังไม่พอ', customerActionTh: 'ตรวจ Java Web Service'
+      },
+      baseline: { sampleCount: 0 }
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    await adminApi.incidentDiagnosis('incident-id', 'occurrence-id');
+
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/v1/admin/operational-incidents/incident-id/occurrences/occurrence-id/diagnosis');
+    expect(options?.method ?? 'GET').toBe('GET');
+    expect(String(url)).not.toMatch(/sml-connection\/test|report-runs/);
+  });
+
   it('acknowledges by optimistic version with admin CSRF protection', async () => {
     document.cookie = 'nextstep_admin_csrf=csrf-value; path=/';
     const incident = {

@@ -59,7 +59,7 @@ test.beforeEach(async ({ page }) => {
 
 async function mockAdminLogin(page: Page) {
   let authenticated = false;
-  const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
+  const session = { username: 'superadmin', expiresAt: '2099-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
   await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(authenticated ? json(session) : unauthorized()));
   await page.route(`**${api}/auth/admin/login`, (route) => {
     authenticated = true;
@@ -273,10 +273,13 @@ test('admin operation tables identify the tenant and LINE recipient', async ({ p
 test('admin incident flow separates acknowledgement from evidence-based recovery', async ({ page }) => {
   const consoleErrors = captureUnexpectedConsoleErrors(page);
   await mockAdminLogin(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
   const incidentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const incidentTenantId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const occurrenceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   let status = 'OPEN';
   let connectionTestCount = 0;
+  let diagnosisCount = 0;
   const incident = () => ({
     id: incidentId, alertRef: 'NST-ABC123DEF456', incidentType: 'SCHEDULED_REPORT_FAILED',
     rootCause: 'SML_CONNECTIVITY', severity: 'P1', status, safeErrorCode: 'SML_UNREACHABLE',
@@ -302,10 +305,42 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
       await route.fulfill(json(incident()));
       return;
     }
+    if (url.pathname.endsWith(`/occurrences/${occurrenceId}/diagnosis`)) {
+      diagnosisCount++;
+      await route.fulfill(json({
+        assessment: {
+          problemArea: 'CUSTOMER_JAVA_WS', investigationOwner: 'CUSTOMER_IT', loadSignal: 'NO_NEXTSTEP_LOAD_SIGNAL',
+          summaryTh: 'เชื่อมต่อ Java Web Service สำเร็จ แต่ข้อมูลตอบกลับไม่ใช่ ZIP',
+          problemAreaTh: 'คำตอบจาก Java Web Service', ownerTh: 'ผู้ดูแล Java Web Service ของลูกค้า',
+          loadSignalTh: 'ไม่พบสัญญาณว่า Nextstep สร้างภาระผิดปกติ',
+          customerActionTh: 'ตรวจสอบ Java Web Service log ด้วย Request Ref โดยไม่ต้อง Restart Server จากหลักฐานนี้'
+        },
+        protocolEvidence: {
+          requestRef: 'NXR-E2E4C9F7D120', requestCount: 1, retryCount: 0,
+          requestSentAt: '2026-07-16T01:00:00Z', firstResponseByteAt: '2026-07-16T01:00:00.032Z',
+          responseCompletedAt: '2026-07-16T01:00:00.064Z', httpStatus: 200,
+          responseContentType: 'application/soap+xml', responseBodyBytes: 384,
+          soapValid: true, soapReturnCharacters: 128, base64Valid: true,
+          decodedPayloadBytes: 64, zipSignatureValid: false,
+          tenantConcurrentQueries: 1, hostConcurrentQueries: 1
+        },
+        priorMatchingSuccess: { finishedAt: '2026-07-15T01:00:00Z', durationMs: 61 },
+        subsequentMatchingSuccess: { finishedAt: '2026-07-17T01:00:00Z', durationMs: 66 },
+        baseline: { p50Ms: 62, p90Ms: 80, sampleCount: 8 },
+        customerMessageTh: 'ร้าน: ร้านตัวอย่างหนึ่ง\nเวลา: 16 ก.ค. 2569 08:00 น.\nRequest Ref: NXR-E2E4C9F7D120\nส่งคำขอ 1 ครั้ง ไม่มี Retry และได้รับ HTTP 200 แต่ข้อมูลไม่ใช่ ZIP'
+      }));
+      return;
+    }
     if (url.pathname.endsWith('/occurrences') || url.pathname.endsWith('/occurrences/query')) {
       const occurrences = [{
-        id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', tenantId: incidentTenantId, tenantName: 'ร้านตัวอย่างหนึ่ง', reportKey: 'stock_balance',
-        sourceKind: 'REPORT', safeErrorCode: 'SML_UNREACHABLE', observedAt: '2026-07-16T01:00:00Z',
+        id: occurrenceId, tenantId: incidentTenantId, tenantName: 'ร้านตัวอย่างหนึ่ง', reportKey: 'stock_balance',
+        sourceKind: 'REPORT', safeErrorCode: 'SML_ZIP_FORMAT_INVALID', observedAt: '2026-07-16T01:00:00Z',
+        failureEvidence: {
+          version: 2, level: 'CONFIRMED', category: 'JAVA_WS_RESPONSE', stage: 'DECODE_PAYLOAD', transportPhase: 'RESPONSE_STARTED',
+          occurredAt: '2026-07-16T01:00:00Z', durationMs: 64, retryable: false, remoteStateUnknown: false,
+          safeErrorCode: 'SML_ZIP_FORMAT_INVALID', presentation: incident().presentation
+        },
+        impact: { reportsTotal: 10, reportsSucceeded: 9, reportsFailed: 1, reportsCancelled: 0, notificationOutcome: 'NOT_CREATED_INCOMPLETE_REPORT_SET' },
         smlConnectionReference: {
           endpointUrlAtFailure: 'http://sml.example.test:8092', currentEndpointUrl: 'http://sml.example.test:8092', endpointHost: 'sml.example.test:8092',
           versionAtFailure: 2, currentVersion: 2, status: 'EXACT_VERSION', schemeSecurity: 'HTTP'
@@ -352,6 +387,14 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
   await expect(page.getByRole('heading', { name: 'รายละเอียดเหตุสำคัญ' })).toBeVisible();
   await expect(page.getByText('เชื่อมต่อ Java Web Service ไม่สำเร็จ', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'ร้านตัวอย่างหนึ่ง' })).toBeVisible();
+  await expect(page.getByText('เชื่อมต่อ Java Web Service สำเร็จ แต่ข้อมูลตอบกลับไม่ใช่ ZIP')).toBeVisible();
+  await expect(page.getByText('คำตอบจาก Java Web Service', { exact: true })).toBeVisible();
+  await expect(page.getByText('ผู้ดูแล Java Web Service ของลูกค้า', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('ไม่พบสัญญาณว่า Nextstep สร้างภาระผิดปกติ', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 ครั้ง · ไม่มี Retry', { exact: true })).toBeVisible();
+  await expect(page.getByText('พบรายงานเงื่อนไขเดียวกันที่สำเร็จทั้งก่อนและหลังเหตุ')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'คัดลอกคำตอบให้ลูกค้า' })).toBeVisible();
+  expect(diagnosisCount).toBe(1);
   await expect(page.getByRole('heading', { name: 'ลำดับสาเหตุและผลกระทบ' })).toHaveCount(0);
   await page.getByRole('button', { name: 'หลักฐานและรายละเอียดเพิ่มเติม' }).click();
   await expect(page.getByRole('heading', { name: 'ลำดับสาเหตุและผลกระทบ' })).toBeVisible();
@@ -375,6 +418,8 @@ test('admin incident flow separates acknowledgement from evidence-based recovery
   await expect(page.getByText('เชื่อมต่อ Java Web Service ได้แล้ว', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('ไม่ต้องดำเนินการ', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('ระบบยืนยันว่าหายแล้ว')).toHaveCount(0);
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
   expect(consoleErrors).toEqual([]);

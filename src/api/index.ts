@@ -6,7 +6,7 @@ import type {
   DashboardRefresh, DashboardRefreshInput, DashboardRefreshResult, ExecutiveOverview, ReportDashboard, ViewerMe, ViewerTenant,
   DashboardRefreshPolicy, DashboardRefreshPolicyInput, ReportRevalidation, OverviewRevalidation, DashboardSnapshot,
   DeliveryContext, DeliveryReportContext, PermissionDependencies, ScheduleRecipientOptions, ScheduleRecipientOptionsInput,
-  OperationalIncident, OperationalIncidentDetail, OperationalIncidentPage, OperationalIncidentStatus, OperationalIncidentSeverity, OperationalIncidentOccurrencePage, RecipientQueryInput, RecipientQueryResult
+  OperationalIncident, OperationalIncidentDetail, OperationalIncidentPage, OperationalIncidentStatus, OperationalIncidentSeverity, OperationalIncidentOccurrencePage, IncidentDiagnosis, RecipientQueryInput, RecipientQueryResult
   , TenantsTableQueryInput, TenantsTableQueryResult, SchedulesTableQueryInput, SchedulesTableQueryResult, ReportRunsTableQueryInput, ReportRunsTableQueryResult,
   DeliveriesTableQueryInput, DeliveriesTableQueryResult, AuditTableQueryInput, AuditTableQueryResult, IncidentsTableQueryInput, IncidentsTableQueryResult, OccurrencesTableQueryInput, OccurrencesTableQueryResult
 } from './types';
@@ -63,6 +63,7 @@ export const adminApi = {
   incident: (incidentId: string, signal?: AbortSignal) => apiRequest<OperationalIncidentDetail>(`${api}/admin/operational-incidents/${incidentId}`, { signal }),
   incidentOccurrences: (incidentId: string, cursor?: string, signal?: AbortSignal, pageSize = 25) => apiRequest<OperationalIncidentOccurrencePage>(`${api}/admin/operational-incidents/${incidentId}/occurrences${queryString({ cursor, pageSize })}`, { signal }),
   queryIncidentOccurrences: (incidentId: string, input: OccurrencesTableQueryInput, signal?: AbortSignal) => apiRequest<OccurrencesTableQueryResult>(`${api}/admin/operational-incidents/${incidentId}/occurrences/query`, { method: 'POST', scope: 'admin', body: input, signal }),
+  incidentDiagnosis: (incidentId: string, occurrenceId: string, signal?: AbortSignal) => apiRequest<IncidentDiagnosis>(`${api}/admin/operational-incidents/${incidentId}/occurrences/${occurrenceId}/diagnosis`, { signal }),
   acknowledgeIncident: (incident: OperationalIncident) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/acknowledge`, { method: 'POST', scope: 'admin', body: { version: incident.version } }),
   acceptIncidentRisk: (incident: OperationalIncident, reason: string) => apiRequest<OperationalIncident>(`${api}/admin/operational-incidents/${incident.id}/accept-risk`, { method: 'POST', scope: 'admin', body: { version: incident.version, reason } })
 };

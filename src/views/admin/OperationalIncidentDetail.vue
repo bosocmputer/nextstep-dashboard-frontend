@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { DataTableFilterEvent } from 'primevue/datatable';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import { useConfirm } from 'primevue/useconfirm';
-import { ApiError, adminApi, type AdminReportDefinition, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentOccurrence, type ReportKey, type SMLConnectionTestResult } from '@/api';
+import { ApiError, adminApi, type AdminReportDefinition, type IncidentDiagnosis, type OperationalIncidentDetail, type OperationalIncidentEvent, type OperationalIncidentOccurrence, type ReportKey, type SMLConnectionTestResult } from '@/api';
 import { errorMessage, formatDateTime } from '@/utils/format';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
 import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
+import IncidentDiagnosisPanel from '@/components/operations/IncidentDiagnosisPanel.vue';
 import { useServerTable } from '@/composables/useServerTable';
 import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 import {
@@ -34,7 +35,14 @@ const eventFilters = ref({
 });
 const testingTenantId = ref('');
 const testResults = ref<Record<string, SMLConnectionTestResult>>({});
+const diagnosisCache = ref<Record<string, IncidentDiagnosis>>({});
+const diagnosisErrors = ref<Record<string, string>>({});
+const diagnosisLoadingId = ref('');
+const diagnosisDialog = ref(false);
+const selectedDiagnosisOccurrence = ref<OperationalIncidentOccurrence>();
 let controller: AbortController | undefined;
+let diagnosisController: AbortController | undefined;
+let diagnosisGeneration = 0;
 
 const incidentId = computed(() => String(route.params.incidentId || ''));
 type OccurrenceSource = OperationalIncidentOccurrence['sourceKind'];
@@ -64,16 +72,16 @@ const chain = computed(() => causalChain(primaryEvent.value));
 const affectedLabel = computed(() => incident.value?.causeBreakdown?.[0]?.affectedLabelTh ?? 'ส่วนที่ได้รับผล');
 const singleOccurrence = computed(() => occurrenceTable.total.value === 1 && occurrences.value.length === 1 ? occurrences.value[0] : undefined);
 const hasMultipleOccurrences = computed(() => occurrenceTable.total.value > 1);
+const singleDiagnosis = computed(() => singleOccurrence.value ? diagnosisCache.value[singleOccurrence.value.id] : undefined);
+const singleDiagnosisError = computed(() => singleOccurrence.value ? diagnosisErrors.value[singleOccurrence.value.id] : '');
+const selectedDiagnosis = computed(() => selectedDiagnosisOccurrence.value ? diagnosisCache.value[selectedDiagnosisOccurrence.value.id] : undefined);
+const selectedDiagnosisError = computed(() => selectedDiagnosisOccurrence.value ? diagnosisErrors.value[selectedDiagnosisOccurrence.value.id] : '');
 const isSMLIncident = computed(() => incident.value?.rootCause === 'SML_CONNECTIVITY');
 const isResolvedLifecycle = computed(() => {
   const state = incident.value?.statusPresentation.state;
   return state === 'CONNECTION_RESTORED' || state === 'RESOLVED';
 });
 const lifecycleVerifiedAt = computed(() => incident.value?.statusPresentation.verifiedAt || incident.value?.lastSeenAt);
-const occurrenceStatusLabel = computed(() => {
-  if (isSMLIncident.value) return isResolvedLifecycle.value ? 'เชื่อมต่อได้แล้ว' : 'เชื่อมต่อไม่สำเร็จ';
-  return isResolvedLifecycle.value ? 'สถานะปกติ' : 'ต้องตรวจสอบ';
-});
 const eventGlobalSearch = computed({
   get: () => eventFilters.value.global.value ?? '',
   set: (value: string) => { eventFilters.value.global.value = value || null; }
@@ -113,6 +121,13 @@ function eventTitle(event: OperationalIncidentEvent) {
 
 async function load() {
   controller?.abort('superseded');
+  diagnosisController?.abort('superseded');
+  diagnosisGeneration += 1;
+  diagnosisCache.value = {};
+  diagnosisErrors.value = {};
+  diagnosisLoadingId.value = '';
+  selectedDiagnosisOccurrence.value = undefined;
+  diagnosisDialog.value = false;
   controller = new AbortController();
   loading.value = true;
   error.value = '';
@@ -124,6 +139,29 @@ async function load() {
     if (!(cause instanceof ApiError && cause.code === 'CANCELLED')) error.value = errorMessage(cause);
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadDiagnosis(item: OperationalIncidentOccurrence, openDialog = false) {
+  if (openDialog) {
+    selectedDiagnosisOccurrence.value = item;
+    diagnosisDialog.value = true;
+  }
+  if (diagnosisCache.value[item.id]) return;
+  diagnosisController?.abort('superseded');
+  diagnosisController = new AbortController();
+  const generation = ++diagnosisGeneration;
+  diagnosisLoadingId.value = item.id;
+  diagnosisErrors.value = { ...diagnosisErrors.value, [item.id]: '' };
+  try {
+    const value = await adminApi.incidentDiagnosis(incidentId.value, item.id, diagnosisController.signal);
+    if (generation !== diagnosisGeneration) return;
+    diagnosisCache.value = { ...diagnosisCache.value, [item.id]: value };
+  } catch (cause) {
+    if (generation !== diagnosisGeneration || (cause instanceof ApiError && cause.code === 'CANCELLED')) return;
+    diagnosisErrors.value = { ...diagnosisErrors.value, [item.id]: errorMessage(cause) };
+  } finally {
+    if (generation === diagnosisGeneration) diagnosisLoadingId.value = '';
   }
 }
 
@@ -225,12 +263,27 @@ async function copyForCodex() {
   }
 }
 
+async function copyForCustomer(diagnosis: IncidentDiagnosis) {
+  if (!diagnosis.customerMessageTh) return;
+  try {
+    await navigator.clipboard.writeText(diagnosis.customerMessageTh);
+    toast.add({ severity: 'success', summary: 'คัดลอกคำตอบให้ลูกค้าแล้ว', detail: 'ข้อความนี้มีชื่อร้าน, Base URL และ Request Ref ที่ผ่านการล้างข้อมูลแล้ว', life: 5000 });
+  } catch {
+    toast.add({ severity: 'error', summary: 'คัดลอกไม่สำเร็จ', detail: 'กรุณาอนุญาตการใช้ Clipboard แล้วลองใหม่', life: 4000 });
+  }
+}
+
+watch(singleOccurrence, (item) => {
+  if (item) void loadDiagnosis(item);
+}, { flush: 'post' });
+
 onMounted(() => {
   void loadAdminReportCatalog().then((catalog) => { reportDefinitions.value = catalog.data; }).catch(() => undefined);
   void load();
 });
 onBeforeUnmount(() => {
   controller?.abort('unmounted');
+  diagnosisController?.abort('unmounted');
 });
 </script>
 
@@ -265,36 +318,39 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-if="occurrenceLoading && !occurrences.length" class="card"><Skeleton height="9rem" /></section>
-    <section v-else-if="singleOccurrence" class="card tenant-focus-card">
-      <div class="focus-heading">
-        <div>
-          <span class="focus-eyebrow">{{ affectedLabel }}</span>
-          <h2>{{ singleOccurrence.tenantName || 'ระบบส่วนกลาง' }}</h2>
-          <p>{{ singleOccurrence.reportKey ? (reportDefinitionByKey.get(singleOccurrence.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : sourceKindLabel(singleOccurrence.sourceKind) }} · {{ formatDateTime(singleOccurrence.observedAt) }} เวลาไทย</p>
+    <IncidentDiagnosisPanel
+      v-else-if="singleOccurrence"
+      :diagnosis="singleDiagnosis"
+      :occurrence="singleOccurrence"
+      :report-label="singleOccurrence.reportKey ? (reportDefinitionByKey.get(singleOccurrence.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : sourceKindLabel(singleOccurrence.sourceKind)"
+      :loading="diagnosisLoadingId === singleOccurrence.id"
+      :error="singleDiagnosisError"
+      @retry="loadDiagnosis(singleOccurrence)"
+      @copy-customer="copyForCustomer"
+    >
+      <template v-if="isSMLIncident" #connection>
+        <div class="connection-panel diagnosis-connection">
+          <h3 class="m-0">URL และการตรวจสอบ Java Web Service</h3>
+          <div v-if="singleOccurrence.smlConnectionReference && displayEndpoint(singleOccurrence)" class="endpoint-cell">
+            <small>{{ singleOccurrence.smlConnectionReference.endpointUrlAtFailure ? 'Java Web Service URL ที่ใช้ตอนเกิดเหตุ' : 'Java Web Service URL ปัจจุบัน' }}</small>
+            <a :href="singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence)" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence) }}</a>
+            <template v-if="singleOccurrence.smlConnectionReference.status === 'CHANGED_SINCE_FAILURE'">
+              <small class="text-orange-600">การตั้งค่าเปลี่ยนหลังเกิดเหตุ · URL ปัจจุบัน</small>
+              <a :href="singleOccurrence.smlConnectionReference.currentEndpointUrl" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ singleOccurrence.smlConnectionReference.currentEndpointUrl }}</a>
+            </template>
+            <small v-else-if="singleOccurrence.smlConnectionReference.status === 'CURRENT_ONLY'" class="text-orange-600">ไม่มี URL รุ่นเดิม จึงแสดง URL ปัจจุบันโดยไม่อ้างว่าเป็นค่าตอนเกิดเหตุ</small>
+            <small v-if="singleOccurrence.smlConnectionReference.schemeSecurity === 'HTTP'" class="text-orange-600">การเชื่อมต่อนี้ไม่ได้เข้ารหัส</small>
+          </div>
+          <span v-else class="text-muted-color">ไม่มี URL ที่ยืนยันได้จากหลักฐาน</span>
+          <div class="connection-actions">
+            <a v-if="singleOccurrence.smlConnectionReference && displayEndpoint(singleOccurrence)" :href="singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence)" target="_blank" rel="noopener noreferrer" class="p-button p-component p-button-outlined endpoint-button"><i class="pi pi-external-link" aria-hidden="true" /><span>เปิด URL ใน Browser</span></a>
+            <Button label="ทดสอบจาก Server Dashboard" icon="pi pi-bolt" outlined :loading="testingTenantId === singleOccurrence.tenantId" :disabled="!singleOccurrence.tenantId || !currentTestEndpoint(singleOccurrence) || Boolean(testingTenantId)" @click="confirmConnectionTest(singleOccurrence)" />
+          </div>
+          <small class="text-muted-color">การเปิด URL ยืนยันได้เฉพาะเครื่องของคุณ ส่วนการทดสอบจาก Server Dashboard จะติดต่อ Java Web Service จริงด้วยคำสั่ง read-only และไม่เปลี่ยนสถานะเหตุนี้</small>
+          <Message v-if="testResult(singleOccurrence)" severity="success" :closable="false" class="mt-2 mb-0">ทดสอบสำเร็จเมื่อ {{ formatDateTime(testResult(singleOccurrence)!.testedAt) }} · {{ testResult(singleOccurrence)!.latencyMs.toLocaleString('th-TH') }} มิลลิวินาที</Message>
         </div>
-        <Tag :severity="isResolvedLifecycle ? 'success' : 'danger'" :value="occurrenceStatusLabel" />
-      </div>
-      <div v-if="isSMLIncident" class="connection-panel">
-        <div v-if="singleOccurrence.smlConnectionReference && displayEndpoint(singleOccurrence)" class="endpoint-cell">
-          <small>{{ singleOccurrence.smlConnectionReference.endpointUrlAtFailure ? 'Java Web Service URL ที่ใช้ตอนเกิดเหตุ' : 'Java Web Service URL ปัจจุบัน' }}</small>
-          <a :href="singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence)" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence) }}</a>
-          <template v-if="singleOccurrence.smlConnectionReference.status === 'CHANGED_SINCE_FAILURE'">
-            <small class="text-orange-600">การตั้งค่าเปลี่ยนหลังเกิดเหตุ · URL ปัจจุบัน</small>
-            <a :href="singleOccurrence.smlConnectionReference.currentEndpointUrl" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ singleOccurrence.smlConnectionReference.currentEndpointUrl }}</a>
-          </template>
-          <small v-else-if="singleOccurrence.smlConnectionReference.status === 'CURRENT_ONLY'" class="text-orange-600">ไม่มี URL รุ่นเดิม จึงแสดง URL ปัจจุบันโดยไม่อ้างว่าเป็นค่าตอนเกิดเหตุ</small>
-          <small v-if="singleOccurrence.smlConnectionReference.schemeSecurity === 'HTTP'" class="text-orange-600">การเชื่อมต่อนี้ไม่ได้เข้ารหัส</small>
-        </div>
-        <span v-else class="text-muted-color">ไม่มี URL ที่ยืนยันได้จากหลักฐาน</span>
-        <div class="connection-actions">
-          <a v-if="singleOccurrence.smlConnectionReference && displayEndpoint(singleOccurrence)" :href="singleOccurrence.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(singleOccurrence)" target="_blank" rel="noopener noreferrer" class="p-button p-component p-button-outlined endpoint-button"><i class="pi pi-external-link" aria-hidden="true" /><span>เปิด URL ใน Browser</span></a>
-          <Button label="ทดสอบจาก Server Dashboard" icon="pi pi-bolt" outlined :loading="testingTenantId === singleOccurrence.tenantId" :disabled="!singleOccurrence.tenantId || !currentTestEndpoint(singleOccurrence) || Boolean(testingTenantId)" @click="confirmConnectionTest(singleOccurrence)" />
-        </div>
-        <small class="text-muted-color">การเปิด URL ยืนยันได้เฉพาะเครื่องของคุณ ส่วนการทดสอบจาก Server Dashboard จะติดต่อ Java Web Service จริงด้วยคำสั่ง read-only และไม่เปลี่ยนสถานะเหตุนี้</small>
-        <Message v-if="testResult(singleOccurrence)" severity="success" :closable="false" class="mt-2 mb-0">ทดสอบสำเร็จเมื่อ {{ formatDateTime(testResult(singleOccurrence)!.testedAt) }} · {{ testResult(singleOccurrence)!.latencyMs.toLocaleString('th-TH') }} มิลลิวินาที</Message>
-      </div>
-      <p v-else class="text-muted-color mb-0">{{ singleOccurrence.failureEvidence?.presentation.summaryTh || incident.presentation.summaryTh }}</p>
-    </section>
+      </template>
+    </IncidentDiagnosisPanel>
 
     <section v-else-if="hasMultipleOccurrences" class="card table-card">
       <h2 class="text-lg mt-0 mb-1">ร้านและรายงานที่ได้รับผล</h2>
@@ -309,12 +365,13 @@ onBeforeUnmount(() => {
         <Column field="observedAt" header="เวลา" :show-filter-match-modes="false"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTime(data.observedAt) }}</span></template><template #filter="{ filterModel }"><DatePicker v-model="filterModel.value" selection-mode="range" date-format="dd/mm/yy" placeholder="เลือกช่วงวันที่" /></template></Column>
         <Column v-if="isSMLIncident" header="Java Web Service URL"><template #body="{ data }"><div v-if="data.smlConnectionReference && displayEndpoint(data)" class="endpoint-cell"><a :href="data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data)" target="_blank" rel="noopener noreferrer" class="endpoint-link">{{ data.smlConnectionReference.endpointUrlAtFailure || displayEndpoint(data) }}</a><small v-if="data.smlConnectionReference.status === 'CURRENT_ONLY'" class="text-orange-600">URL ปัจจุบัน</small></div><span v-else class="text-muted-color">ไม่มี URL ที่ยืนยันได้</span></template></Column>
         <Column v-if="isSMLIncident" header="ตรวจจาก Server" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button label="ทดสอบ" icon="pi pi-bolt" outlined size="small" :loading="testingTenantId === data.tenantId" :disabled="!data.tenantId || !currentTestEndpoint(data) || Boolean(testingTenantId)" @click="confirmConnectionTest(data)" /></template></Column>
+        <Column header="สาเหตุ" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button label="ดูสาเหตุ" icon="pi pi-search" size="small" @click="loadDiagnosis(data, true)" /></template></Column>
         <template #empty><div class="py-6 text-center text-muted-color">ไม่พบเหตุที่ตรงกับตัวกรอง <Button v-if="occurrenceHasFilters" label="ล้างตัวกรอง" text size="small" @click="clearOccurrenceFilters" /></div></template>
       </DataTable>
     </section>
     <Message v-else-if="!occurrenceLoading" severity="warn" :closable="false" class="mb-4">ไม่พบรายการร้านหรือทรัพยากรที่เชื่อมโยงกับเหตุนี้</Message>
 
-    <section v-if="primaryEvent?.failureEvidence" class="card action-card">
+    <section v-if="primaryEvent?.failureEvidence && !singleOccurrence" class="card action-card">
       <template v-if="incident.statusPresentation.actionRequired">
         <h2 class="text-lg mt-0">Admin ควรทำอะไรต่อ</h2>
         <p v-if="primaryEvent.failureEvidence.presentation.evidenceNoteTh" class="text-muted-color">{{ primaryEvent.failureEvidence.presentation.evidenceNoteTh }}</p>
@@ -367,6 +424,19 @@ onBeforeUnmount(() => {
       </AccordionPanel>
     </Accordion>
   </template>
+  <Dialog v-model:visible="diagnosisDialog" modal header="สาเหตุและหลักฐาน" class="responsive-dialog diagnosis-dialog" :style="{ width: 'min(58rem, 96vw)' }">
+    <IncidentDiagnosisPanel
+      v-if="selectedDiagnosisOccurrence"
+      :diagnosis="selectedDiagnosis"
+      :occurrence="selectedDiagnosisOccurrence"
+      :report-label="selectedDiagnosisOccurrence.reportKey ? (reportDefinitionByKey.get(selectedDiagnosisOccurrence.reportKey)?.label ?? 'รายงานที่เกี่ยวข้อง') : sourceKindLabel(selectedDiagnosisOccurrence.sourceKind)"
+      :loading="diagnosisLoadingId === selectedDiagnosisOccurrence.id"
+      :error="selectedDiagnosisError"
+      embedded
+      @retry="loadDiagnosis(selectedDiagnosisOccurrence)"
+      @copy-customer="copyForCustomer"
+    />
+  </Dialog>
   <Dialog v-model:visible="acceptDialog" modal header="ยอมรับความเสี่ยง" class="responsive-dialog" :style="{ width: '34rem' }">
     <Message severity="warn" :closable="false" class="mb-4">การทำรายการนี้จะปิด Incident โดยไม่อ้างว่าระบบฟื้นตัว กรุณาระบุเหตุผลที่ตรวจสอบย้อนหลังได้</Message>
     <label for="accept-risk-reason" class="block font-semibold mb-2">เหตุผล (12–500 ตัวอักษร)</label>
@@ -392,10 +462,6 @@ onBeforeUnmount(() => {
 .is-warn .status-icon { color: var(--p-orange-600); background: color-mix(in srgb, var(--p-orange-500) 12%, transparent); }
 .status-summary { color: var(--text-color-secondary); margin: .25rem 0 1.25rem; line-height: 1.55; }
 .status-facts { max-width: 52rem; }
-.focus-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
-.focus-heading h2 { margin: .2rem 0 .25rem; font-size: 1.25rem; }
-.focus-heading p { margin: 0; color: var(--text-color-secondary); }
-.focus-eyebrow { color: var(--text-color-secondary); font-size: .875rem; }
 .connection-panel { display: grid; gap: .85rem; padding-top: 1rem; border-top: 1px solid var(--surface-border); }
 .connection-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
 .endpoint-button { display: inline-flex; align-items: center; gap: .5rem; text-decoration: none; }
@@ -424,7 +490,6 @@ onBeforeUnmount(() => {
   .status-icon { width: 2.75rem; height: 2.75rem; }
   .incident-summary { grid-template-columns: 1fr; gap: .25rem; }
   .incident-summary dd { margin-bottom: .75rem; }
-  .focus-heading { align-items: flex-start; flex-direction: column; }
   .connection-actions > * { width: 100%; justify-content: center; }
   .endpoint-cell { min-width: 0; width: 100%; }
 }

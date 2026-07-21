@@ -29,6 +29,7 @@ declare module 'vue' {
     Dialog: typeof import('primevue/dialog')['default']
     ExecutiveChart: typeof import('./src/components/dashboard/ExecutiveChart.vue')['default']
     IconField: typeof import('primevue/iconfield')['default']
+    IncidentDiagnosisPanel: typeof import('./src/components/operations/IncidentDiagnosisPanel.vue')['default']
     InputGroup: typeof import('primevue/inputgroup')['default']
     InputIcon: typeof import('primevue/inputicon')['default']
     InputMask: typeof import('primevue/inputmask')['default']

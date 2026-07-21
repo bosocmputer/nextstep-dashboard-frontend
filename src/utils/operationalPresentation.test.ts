@@ -56,6 +56,10 @@ describe('ข้อความสำหรับ Codex', () => {
         occurredAt: '2026-07-16T11:00:04Z',
         retryable: true,
         remoteStateUnknown: false,
+        protocolEvidence: {
+          requestRef: 'NXR-ABCDEFGHIJKLMNOP', requestCount: 1, retryCount: 0,
+          responseSha256: 'a'.repeat(64), tenantConcurrentQueries: 1, hostConcurrentQueries: 1
+        },
         safeErrorCode: 'SML_UNREACHABLE',
         presentation: { titleTh: 'ติดต่อ Java Web Service ของร้านไม่สำเร็จ', summaryTh: 'ทดสอบ', stageTh: 'เชื่อมต่อ', nextActionsTh: ['ตรวจสอบ'] }
       }
@@ -80,6 +84,8 @@ describe('ข้อความสำหรับ Codex', () => {
     expect(value).toContain('cancelled=9');
     expect(value).not.toContain(event.tenantName);
     expect(value).not.toContain('endpoint');
+    expect(value).not.toContain('NXR-ABCDEFGHIJKLMNOP');
+    expect(value).not.toContain('a'.repeat(64));
     expect(causalChain(event)).toHaveLength(4);
   });
 });

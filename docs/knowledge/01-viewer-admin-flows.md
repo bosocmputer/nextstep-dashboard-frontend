@@ -1,7 +1,7 @@
 ---
 status: current
 last_verified: 2026-07-21
-source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/TenantDetail.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue, src/composables/useServerTable.ts, src/utils/adminTableFilters.ts]
+source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/TenantDetail.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue, src/components/operations/IncidentDiagnosisPanel.vue, src/utils/incidentDiagnosis.ts, src/composables/useServerTable.ts, src/utils/adminTableFilters.ts]
 tags: [frontend, viewer, admin, routing]
 ---
 
@@ -76,8 +76,15 @@ Opening that URL is explicitly different from the guarded Server Dashboard
 connection test; neither action runs automatically and a successful test never
 marks the scheduled incident recovered. The timeline may show tenant/report
 context and a causal chain, while technical fields remain collapsed.
+The occurrence diagnosis is fetched lazily from persisted evidence and never
+contacts JavaWS. It leads with the failure area and investigation owner, then
+shows protocol/request evidence, LINE containment, and the next Admin action.
+Single-occurrence incidents load one diagnosis automatically; multi-occurrence
+incidents load only the row the Admin opens. The customer clipboard may include
+the sanitized tenant/Base URL and opaque request reference supplied by the
+backend; it is a separate action from the redacted Codex clipboard.
 Copy-for-Codex excludes tenant names, tenant IDs, endpoints, KPI, SQL,
-credentials, and raw payloads.
+credentials, request references, response hashes, and raw payloads.
 
 Permission and schedule selection are different concepts:
 
