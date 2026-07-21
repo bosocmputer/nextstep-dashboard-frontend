@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-19
+last_verified: 2026-07-21
 source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/TenantDetail.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue, src/composables/useServerTable.ts, src/utils/adminTableFilters.ts]
 tags: [frontend, viewer, admin, routing]
 ---
@@ -65,8 +65,13 @@ direct evidence, and opening the detail must never test SML automatically.
 Incident list defaults to active episodes and leads with Thai cause, area to
 inspect, active impact, and local time rather than raw codes. Continuous
 conditions say `ตรวจพบต่อเนื่อง` instead of displaying probe counts. The detail
-page loads bounded occurrences separately from the incident summary and may show
-a sanitized historical/current JavaWS URL only to an authenticated Admin.
+page leads with the backend-provided lifecycle state, the affected subject, the
+sanitized JavaWS URL, current LINE impact, and the next Admin action. A single
+tenant uses a compact action card; multiple tenants use the bounded server-side
+occurrence table. Cause breakdown, causal chain, timeline, and technical fields
+remain available in one collapsed evidence section instead of competing with the
+current status. The page loads bounded occurrences separately from the incident
+summary and may show a sanitized historical/current JavaWS URL only to an authenticated Admin.
 Opening that URL is explicitly different from the guarded Server Dashboard
 connection test; neither action runs automatically and a successful test never
 marks the scheduled incident recovered. The timeline may show tenant/report

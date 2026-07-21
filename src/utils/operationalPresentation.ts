@@ -5,6 +5,21 @@ import type {
   OperationalIncidentEvent
 } from '@/api';
 
+type IncidentLifecycleState = OperationalIncidentDetail['statusPresentation']['state'];
+
+export function incidentLifecycleSeverity(value: IncidentLifecycleState): 'danger' | 'success' | 'warn' | 'secondary' {
+  if (value === 'CONNECTION_FAILED' || value === 'ACTIVE_PROBLEM') return 'danger';
+  if (value === 'CONNECTION_RESTORED' || value === 'RESOLVED') return 'success';
+  if (value === 'ACCEPTED_RISK') return 'warn';
+  return 'secondary';
+}
+
+export function incidentLifecycleIcon(value: IncidentLifecycleState): string {
+  if (value === 'CONNECTION_FAILED' || value === 'ACTIVE_PROBLEM') return 'pi pi-exclamation-triangle';
+  if (value === 'CONNECTION_RESTORED' || value === 'RESOLVED') return 'pi pi-check-circle';
+  return 'pi pi-info-circle';
+}
+
 export function formatDurationMs(value?: number): string {
   if (value === undefined || value < 0) return 'ไม่ทราบ';
   if (value < 1_000) return `${value.toLocaleString('th-TH')} มิลลิวินาที`;

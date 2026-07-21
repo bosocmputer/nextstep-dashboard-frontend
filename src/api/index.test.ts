@@ -99,6 +99,7 @@ describe('adminApi operational incidents', () => {
       activeAffectedCount: 1, observationMode: 'CONTINUOUS', subjectType: 'CONTAINER',
       firstSeenAt: '2026-07-16T01:00:00Z', lastSeenAt: '2026-07-16T01:00:00Z', version: 4,
       presentation: { titleTh: 'ระบบประมวลผลงานไม่ตอบสนอง', summaryTh: 'ไม่พบสัญญาณการทำงาน', stageTh: 'ตรวจระบบ', nextActionsTh: ['ตรวจสอบ Worker'] as string[] },
+      statusPresentation: { state: 'ACTIVE_PROBLEM', headlineTh: 'ระบบประมวลผลงานไม่ตอบสนอง', statusSummaryTh: 'ควรเปิดรายละเอียดและตรวจสอบ', actionRequired: true },
       isDownstream: false
     } as const;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ...incident, status: 'ACKNOWLEDGED', version: 5 }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
