@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-21
+last_verified: 2026-07-23
 source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/TenantDetail.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue, src/components/operations/IncidentDiagnosisPanel.vue, src/utils/incidentDiagnosis.ts, src/composables/useServerTable.ts, src/utils/adminTableFilters.ts]
 tags: [frontend, viewer, admin, routing]
 ---
@@ -61,6 +61,8 @@ detail request per table row. `ดูสาเหตุและหลักฐ�
 and separates confirmed stage/transport evidence from possible checks. It must
 not claim that a customer Server is down or a Firewall blocked traffic without
 direct evidence, and opening the detail must never test SML automatically.
+The `เข้าคิวเมื่อ` and `เสร็จเมื่อ` columns retain Bangkok time and include
+milliseconds so Admin can compare closely spaced report executions.
 
 Incident list defaults to active episodes and leads with Thai cause, area to
 inspect, active impact, and local time rather than raw codes. Continuous

@@ -7,7 +7,7 @@ import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
 import { useServerTable } from '@/composables/useServerTable';
 import { useSakaiFilterMenu } from '@/composables/useSakaiFilterMenu';
 import { loadAdminReportCatalog } from '@/stores/reportCatalog';
-import { errorMessage, formatDateTime } from '@/utils/format';
+import { errorMessage, formatDateTime, formatDateTimeWithMilliseconds } from '@/utils/format';
 import { statusLabel } from '@/utils/status';
 import { evidenceLevelLabel, formatDurationMs, lineImpactLabel, reportImpactLabel, transportPhaseLabel, triggerKindLabel } from '@/utils/operationalPresentation';
 import { toDateFilter } from '@/utils/adminTableFilters';
@@ -118,8 +118,8 @@ onBeforeUnmount(() => { detailController?.abort('unmounted'); });
       <Column header="สาเหตุ"><template #body="{ data }"><div class="max-w-80"><span :class="data.status === 'FAILED' ? 'font-semibold text-red-600 dark:text-red-400' : 'text-muted-color'">{{ failureTitle(data) }}</span><small v-if="data.failureSummary?.level === 'LEGACY_PARTIAL'" class="block text-muted-color mt-1">หลักฐานจากระบบรุ่นเดิมมีรายละเอียดจำกัด</small></div></template></Column>
       <Column header="ช่วงข้อมูล"><template #body="{ data }">{{ data.dateFrom || '—' }}<span v-if="data.dateTo && data.dateTo !== data.dateFrom"> → {{ data.dateTo }}</span></template></Column>
       <Column field="rowCount" header="จำนวนแถว" header-class="table-number-column" body-class="table-number-column"><template #body="{ data }"><span class="metric-value">{{ data.rowCount.toLocaleString('th-TH') }}</span></template></Column>
-      <Column field="queuedAt" header="เข้าคิวเมื่อ" :show-filter-match-modes="false"><template #body="{ data }">{{ formatDateTime(data.queuedAt) }}</template><template #filter="{ filterModel }"><DatePicker v-model="filterModel.value" selection-mode="range" date-format="dd/mm/yy" placeholder="เลือกช่วงวันที่" show-icon /></template></Column>
-      <Column field="finishedAt" header="เสร็จเมื่อ"><template #body="{ data }">{{ formatDateTime(data.finishedAt) }}</template></Column>
+      <Column field="queuedAt" header="เข้าคิวเมื่อ" :show-filter-match-modes="false"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTimeWithMilliseconds(data.queuedAt) }}</span></template><template #filter="{ filterModel }"><DatePicker v-model="filterModel.value" selection-mode="range" date-format="dd/mm/yy" placeholder="เลือกช่วงวันที่" show-icon /></template></Column>
+      <Column field="finishedAt" header="เสร็จเมื่อ"><template #body="{ data }"><span class="whitespace-nowrap">{{ formatDateTimeWithMilliseconds(data.finishedAt) }}</span></template></Column>
       <Column header="" header-class="table-action-column" body-class="table-action-column"><template #body="{ data }"><Button icon="pi pi-info-circle" text rounded class="touch-action" aria-label="ดูสาเหตุและหลักฐาน" v-tooltip.top="'ดูสาเหตุและหลักฐาน'" @click="openDetail(data)" /></template></Column>
       <template #empty><div class="py-8 text-center text-muted-color">ไม่พบข้อมูลตามเงื่อนไข <Button v-if="hasFilters" label="ล้างตัวกรอง" text size="small" @click="clearTableFilters" /></div></template>
     </DataTable>
