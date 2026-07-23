@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorMessage, formatDateOnly, formatMetric, formatSourceCollection, formatTime, metricLabel } from './format';
+import { errorMessage, formatDateOnly, formatDateTimeWithMilliseconds, formatMetric, formatSourceCollection, formatTime, metricLabel } from './format';
 
 describe('format utilities', () => {
   it('preserves the local calendar date instead of converting through UTC', () => {
@@ -37,6 +37,20 @@ describe('formatTime', () => {
   it('returns a safe placeholder for invalid values', () => {
     expect(formatTime('not-a-date')).toBe('—');
     expect(formatTime()).toBe('—');
+  });
+});
+
+describe('formatDateTimeWithMilliseconds', () => {
+  it('preserves milliseconds while formatting the timestamp in Thailand time', () => {
+    const formatted = formatDateTimeWithMilliseconds('2026-07-12T13:24:00.123Z');
+
+    expect(formatted).toMatch(/20:24:00/);
+    expect(formatted).toMatch(/[.,]123/);
+  });
+
+  it('returns a safe placeholder for an invalid or missing timestamp', () => {
+    expect(formatDateTimeWithMilliseconds('not-a-date')).toBe('—');
+    expect(formatDateTimeWithMilliseconds()).toBe('—');
   });
 });
 

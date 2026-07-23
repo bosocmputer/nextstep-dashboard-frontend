@@ -5,6 +5,23 @@ export function formatDateTime(value?: string | null): string {
   return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' }).format(date);
 }
 
+export function formatDateTimeWithMilliseconds(value?: string | null): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('th-TH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    fractionalSecondDigits: 3,
+    hourCycle: 'h23',
+    timeZone: 'Asia/Bangkok'
+  }).format(date);
+}
+
 export function formatTime(value?: string | null): string {
   if (!value) return '—';
   const date = new Date(value);
