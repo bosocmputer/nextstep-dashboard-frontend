@@ -533,8 +533,39 @@ test('tenant detail restores the editable SML URL, removes duplicate entity head
 
   await expect(page.locator('.page-header')).toHaveCount(0);
   await expect(page.getByLabel('Java Web Service Base URL')).toHaveValue('http://43.229.149.11:8080');
+  await expect(page.getByText('ปลายทางที่ระบบจะทดสอบ:')).toContainText('ปลายทางที่ระบบจะทดสอบ:');
+  await expect(page.getByText('http://43.229.149.11:8080/SMLJavaWebService/DotNetFrameWork')).toBeVisible();
+  await expect(page.getByText('การเชื่อมต่อ SML พร้อมใช้งาน')).toBeVisible();
+  await expect(page.getByText(/การทดสอบส่ง/)).toContainText('select 1');
   await expect(page.getByRole('link', { name: 'ร้านค้า', exact: true })).toHaveClass(/active-route/);
   await expect(page.getByText('เวลาไทย', { exact: true })).toHaveCount(0);
+});
+
+test('SML connection cooldown keeps the test safe and tells the admin when to retry', async ({ page }) => {
+  const session = { username: 'superadmin', expiresAt: '2026-07-11T00:00:00Z', mustRotateBootstrapPassword: false };
+  await page.route(`**${api}/auth/admin/session`, (route) => route.fulfill(json(session)));
+  await page.route(`**${api}/admin/tenants/${tenantId}`, (route) => route.fulfill(json({
+    id: tenantId, slug: 'sample-shop', name: 'ร้านตัวอย่าง', timezone: 'Asia/Bangkok', status: 'ACTIVE',
+    accessEndsAt: '2027-07-10T00:00:00Z', version: 1, smlReadiness: 'READY',
+    createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z'
+  })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection/test`, (route) => route.fulfill({
+    ...json({ error: { code: 'SML_TEST_COOLDOWN', message: 'SML connection test failed safely.', requestId: 'e2e', retryable: true } }, 429),
+    headers: { 'Retry-After': '60' }
+  }));
+  await page.route(`**${api}/admin/tenants/${tenantId}/sml-connection`, (route) => route.fulfill(json({
+    isConfigured: true, endpointUrl: 'https://shop.example.com', endpointHost: 'shop.example.com',
+    databaseName: 'DATA1', configFileName: 'SMLConfigDATA.xml', readinessStatus: 'READY', version: 2
+  })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/recipients**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([]) : { data: [], page: { hasMore: false } })));
+  await page.route(`**${api}/admin/tenants/${tenantId}/schedules**`, (route) => route.fulfill(json(isTableQuery(route.request().url()) ? tableResult([]) : { data: [], page: { hasMore: false } })));
+
+  await page.goto(`/admin/tenants/${tenantId}?tab=sml`);
+  await page.getByRole('button', { name: 'ทดสอบการเชื่อมต่อ' }).click();
+
+  await expect(page.getByText('กำลังพักการทดสอบชั่วคราว')).toBeVisible();
+  await expect(page.getByText(/ระบบจะไม่เริ่มคำขอซ้ำ/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'ทดสอบการเชื่อมต่อ' })).toBeDisabled();
 });
 
 test('an unconfigured tenant starts with the standard SMLConfigDATA filename', async ({ page }) => {

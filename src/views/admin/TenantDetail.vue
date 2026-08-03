@@ -8,6 +8,7 @@ import { adminApi, ApiError, type DashboardRefreshPolicy, type DashboardRefreshP
 import { newIdempotencyKey } from '@/api/client';
 import { beginAdminTenantContext, setAdminTenantContext } from '@/stores/adminTenantContext';
 import { errorMessage, formatDateTime } from '@/utils/format';
+import { formatSMLTestCooldown, resolveSMLJavaWSEndpoint } from '@/utils/smlConnectionPresentation';
 import { statusLabel } from '@/utils/status';
 import SakaiTableHeader from '@/components/table/SakaiTableHeader.vue';
 import { useServerTable } from '@/composables/useServerTable';
@@ -44,6 +45,10 @@ const smlBaseline = ref('');
 const refreshPolicyBaseline = ref('');
 const refreshPolicyConflict = ref<DashboardRefreshPolicy>();
 const smlLoaded = ref(false);
+const latestSMLTestLatencyMs = ref<number>();
+const smlCooldownUntil = ref<number>();
+const smlClock = ref(Date.now());
+let smlCooldownTimer: number | undefined;
 let inviteActionKey = '';
 const reissueActionKeys = new Map<string, string>();
 const testSendActionKeys = new Map<string, string>();
@@ -85,6 +90,45 @@ const smlDirty = computed(() => smlLoaded.value && smlFingerprint.value !== smlB
 const refreshPolicyFingerprint = computed(() => JSON.stringify(refreshPolicyForm));
 const refreshPolicyDirty = computed(() => !!refreshPolicy.value && refreshPolicyFingerprint.value !== refreshPolicyBaseline.value);
 const hasUnsavedChanges = computed(() => tenantDirty.value || smlDirty.value || refreshPolicyDirty.value);
+const resolvedSMLJavaWSEndpoint = computed(() => resolveSMLJavaWSEndpoint(smlForm.endpointUrl));
+const smlCooldownRemainingMs = computed(() => Math.max(0, (smlCooldownUntil.value ?? 0) - smlClock.value));
+const isSMLTestCoolingDown = computed(() => smlCooldownRemainingMs.value > 0);
+const smlTestDisabled = computed(() => !sml.value?.isConfigured || smlDirty.value || savingSML.value || testingSML.value || isSMLTestCoolingDown.value);
+const smlTestDisabledReason = computed(() => {
+  if (isSMLTestCoolingDown.value) return `ระบบพักการทดสอบเพื่อไม่ให้คำขอซ้อน ลองใหม่ได้ใน ${formatSMLTestCooldown(smlCooldownRemainingMs.value)}`;
+  if (smlDirty.value) return 'บันทึกค่าชุดล่าสุดก่อนทดสอบ';
+  if (!sml.value?.isConfigured) return 'ตั้งค่าและบันทึก SML ก่อนทดสอบ';
+  return '';
+});
+const smlStatusSeverity = computed(() => {
+  if (smlDirty.value || isSMLTestCoolingDown.value) return 'warn';
+  if (sml.value?.readinessStatus === 'READY') return 'success';
+  if (sml.value?.readinessStatus === 'FAILED') return 'error';
+  return 'info';
+});
+const smlStatusTitle = computed(() => {
+  if (smlDirty.value) return 'มีค่าการเชื่อมต่อที่ยังไม่บันทึก';
+  if (isSMLTestCoolingDown.value) return 'กำลังพักการทดสอบชั่วคราว';
+  if (sml.value?.readinessStatus === 'READY') return 'การเชื่อมต่อ SML พร้อมใช้งาน';
+  if (sml.value?.readinessStatus === 'FAILED') return 'การทดสอบ SML ล่าสุดไม่ผ่าน';
+  return 'ยังไม่ได้ทดสอบการเชื่อมต่อ SML';
+});
+const smlStatusDetail = computed(() => {
+  if (smlDirty.value) return 'บันทึกค่าชุดล่าสุดก่อน ระบบจึงจะทดสอบการเชื่อมต่อชุดนี้ได้';
+  if (isSMLTestCoolingDown.value) return `ระบบจะไม่เริ่มคำขอซ้ำขณะที่ผลของคำขอก่อนหน้าอาจยังไม่แน่นอน ลองใหม่ได้ใน ${formatSMLTestCooldown(smlCooldownRemainingMs.value)}`;
+  if (sml.value?.readinessStatus === 'READY') {
+    const testedAt = formatDateTime(sml.value.lastTestedAt);
+    const latency = latestSMLTestLatencyMs.value == null ? '' : ` · ใช้เวลา ${latestSMLTestLatencyMs.value} ms`;
+    return `Dashboard ติดต่อ Java Web Service ได้${testedAt === '—' ? '' : ` · ทดสอบล่าสุด ${testedAt}`}${latency}`;
+  }
+  if (sml.value?.readinessStatus === 'FAILED') {
+    const testedAt = formatDateTime(sml.value.lastTestedAt);
+    const safeCode = sml.value.lastSafeErrorCode;
+    const reason = safeCode ? errorMessage({ code: safeCode, message: 'การทดสอบการเชื่อมต่อไม่สำเร็จ' }) : 'ระบบไม่ได้บันทึกรายละเอียดของการทดสอบครั้งล่าสุด';
+    return `${reason}${testedAt === '—' ? '' : ` · ทดสอบล่าสุด ${testedAt}`}`;
+  }
+  return 'บันทึกค่าแล้ว แต่ต้องทดสอบแบบอ่านอย่างเดียวก่อนเปิดตารางส่ง LINE';
+});
 const fastIntervalOptions = [{ label: 'ปิด', value: null }, 5, 10, 15, 30, 60].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
 const standardIntervalOptions = [{ label: 'ปิด', value: null }, 15, 30, 60].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
 const heavyIntervalOptions = [{ label: 'ปิด', value: null }, 30, 60, 120].map((item) => typeof item === 'number' ? { label: `ทุก ${item} นาที`, value: item } : item);
@@ -94,6 +138,30 @@ const refreshPresets = [
   { label: 'ดึงด้วยตนเองเท่านั้น', description: 'ไม่อัปเดตเบื้องหลัง', values: [null, null, null] as const }
 ];
 const activeRefreshPreset = computed(() => refreshPresets.find((preset) => JSON.stringify(preset.values) === JSON.stringify([refreshPolicyForm.fastIntervalMinutes, refreshPolicyForm.standardIntervalMinutes, refreshPolicyForm.heavyIntervalMinutes]))?.label ?? 'กำหนดเอง');
+
+function updateSMLCooldownClock() {
+  smlClock.value = Date.now();
+  if (smlCooldownUntil.value && smlCooldownUntil.value <= smlClock.value) {
+    smlCooldownUntil.value = undefined;
+    if (smlCooldownTimer !== undefined) window.clearInterval(smlCooldownTimer);
+    smlCooldownTimer = undefined;
+  }
+}
+
+function startSMLCooldown(retryAfterMs?: number) {
+  if (!retryAfterMs || retryAfterMs <= 0) return;
+  smlCooldownUntil.value = Math.max(smlCooldownUntil.value ?? 0, Date.now() + retryAfterMs);
+  updateSMLCooldownClock();
+  if (smlCooldownTimer === undefined) smlCooldownTimer = window.setInterval(updateSMLCooldownClock, 1_000);
+}
+
+async function refreshSMLStatus() {
+  try {
+    sml.value = await adminApi.getSML(tenantId);
+  } catch {
+    // Preserve the last safe state. Loading this status never contacts JavaWS.
+  }
+}
 
 function applyRefreshPolicy(policy: DashboardRefreshPolicy, resetBaseline = true) {
   refreshPolicy.value = policy;
@@ -225,20 +293,30 @@ async function persistSML() {
     sml.value = await adminApi.replaceSML(tenantId, { ...smlForm });
     Object.assign(smlForm, { endpointUrl: sml.value.endpointUrl ?? '', configFileName: sml.value.configFileName ?? smlForm.configFileName, databaseName: sml.value.databaseName ?? smlForm.databaseName, version: sml.value.version });
     smlBaseline.value = smlFingerprint.value;
+    latestSMLTestLatencyMs.value = undefined;
     toast.add({ severity: 'success', summary: 'บันทึก SML แล้ว', detail: 'กรุณาทดสอบการเชื่อมต่อก่อนเปิดตารางส่งรายงาน', life: 4000 });
   } catch (cause) { toast.add({ severity: 'error', summary: 'บันทึก SML ไม่สำเร็จ', detail: errorMessage(cause), life: 5000 }); }
   finally { savingSML.value = false; }
 }
 
 async function testSML() {
-  if (testingSML.value) return;
+  if (testingSML.value || isSMLTestCoolingDown.value) return;
   if (smlDirty.value) { toast.add({ severity: 'warn', summary: 'ยังมีค่าที่ยังไม่บันทึก', detail: 'บันทึกการเชื่อมต่อก่อนทดสอบ เพื่อให้ระบบทดสอบค่าชุดล่าสุด', life: 4500 }); return; }
   testingSML.value = true;
   try {
     const result = await adminApi.testSML(tenantId);
-    toast.add({ severity: 'success', summary: 'SML พร้อมใช้งาน', detail: `${result.latencyMs} ms`, life: 3500 });
-    sml.value = await adminApi.getSML(tenantId);
-  } catch (cause) { toast.add({ severity: 'error', summary: 'ทดสอบ SML ไม่ผ่าน', detail: errorMessage(cause), life: 6000 }); }
+    latestSMLTestLatencyMs.value = result.latencyMs;
+    toast.add({ severity: 'success', summary: 'ทดสอบ SML สำเร็จ', detail: `Server Dashboard ติดต่อ Java Web Service ได้ · ใช้เวลา ${result.latencyMs} ms`, life: 5000 });
+    await refreshSMLStatus();
+  } catch (cause) {
+    if (cause instanceof ApiError && (cause.code === 'SML_TEST_COOLDOWN' || cause.code === 'SML_TEST_BUSY')) {
+      startSMLCooldown(cause.retryAfterMs);
+      toast.add({ severity: 'warn', summary: 'ยังทดสอบซ้ำไม่ได้', detail: smlTestDisabledReason.value || errorMessage(cause), life: 6000 });
+    } else {
+      toast.add({ severity: 'error', summary: 'ทดสอบ SML ไม่ผ่าน', detail: errorMessage(cause), life: 6000 });
+      await refreshSMLStatus();
+    }
+  }
   finally { testingSML.value = false; }
 }
 
@@ -510,6 +588,7 @@ onBeforeRouteLeave(() => !hasUnsavedChanges.value || window.confirm('มีข�
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void load(); });
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload);
+  if (smlCooldownTimer !== undefined) window.clearInterval(smlCooldownTimer);
 });
 </script>
 
@@ -528,7 +607,52 @@ onBeforeUnmount(() => {
       <TabList><Tab value="overview">ข้อมูลร้าน</Tab><Tab value="sml">การเชื่อมต่อ SML</Tab><Tab value="refresh">ความสดและการดึงข้อมูล</Tab><Tab value="recipients">ผู้รับและสิทธิ์</Tab><Tab value="schedules">ตารางส่ง LINE</Tab></TabList>
       <TabPanels>
         <TabPanel value="overview"><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveTenant"><div class="grid gap-2"><label for="tenant-name">ชื่อร้าน</label><InputText id="tenant-name" v-model="tenantForm.name" fluid /></div><div class="grid gap-2"><label for="tenant-status">สถานะ</label><Select input-id="tenant-status" aria-label="สถานะ" v-model="tenantForm.status" :options="['ACTIVE','DISABLED','EXPIRED']" fluid /></div><div class="grid gap-2"><label for="tenant-access-end">สิ้นสุดสิทธิ์ (เวลาไทย)</label><DatePicker input-id="tenant-access-end" v-model="tenantForm.accessEndsAt" show-icon show-time hour-format="24" fluid /></div><div class="md:col-span-2 flex items-center gap-3"><Button type="submit" label="บันทึกข้อมูลร้าน" icon="pi pi-save" :loading="savingTenant" :disabled="savingTenant || !tenantDirty" /><small v-if="tenantDirty" class="text-orange-600">มีการแก้ไขที่ยังไม่บันทึก</small></div><div class="md:col-span-2 flex flex-wrap items-center justify-between gap-3 border-t border-surface pt-4"><div><div class="font-semibold">ลิงก์ Dashboard ของร้าน</div><small class="text-muted-color">ลิงก์นี้ไม่โอนหรือเพิ่มสิทธิ์ ผู้รับต้องยืนยัน LINE และได้รับสิทธิ์ร้านนี้อยู่แล้ว</small></div><Button label="คัดลอกลิงก์ Dashboard" icon="pi pi-copy" outlined :disabled="!tenant.viewerUrl" @click="copyDashboardLink" /></div></form><Accordion class="mt-6 max-w-4xl"><AccordionPanel value="technical"><AccordionHeader>ข้อมูลทางเทคนิค</AccordionHeader><AccordionContent><div class="flex flex-wrap items-center gap-3"><div><div class="text-sm text-muted-color">รหัสระบบ</div><code>{{ tenant.slug }}</code></div><Button label="คัดลอกรหัส" icon="pi pi-copy" text @click="copySlug" /></div></AccordionContent></AccordionPanel></Accordion></TabPanel>
-        <TabPanel value="sml"><Message severity="info" :closable="false" class="mb-5">กรอก Base URL ของร้านได้ ระบบจะเติม <code>/SMLJavaWebService/DotNetFrameWork</code> ให้อัตโนมัติ และจะไม่แสดงรหัสผ่านหรือ token กลับมา</Message><form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveSML"><div class="grid gap-2 md:col-span-2"><label for="sml-endpoint">Java Web Service Base URL</label><InputText id="sml-endpoint" v-model="smlForm.endpointUrl" placeholder="http://shop.example.com:8092" fluid /></div><div class="grid gap-2"><label for="sml-config-file">ไฟล์ SMLConfig</label><InputText id="sml-config-file" v-model="smlForm.configFileName" placeholder="SMLConfigDATA.xml" fluid /></div><div class="grid gap-2"><label for="sml-database">ชื่อฐานข้อมูล SML</label><InputText id="sml-database" v-model="smlForm.databaseName" fluid /></div><div class="md:col-span-2 flex flex-wrap items-center gap-3"><Button type="submit" label="บันทึกการเชื่อมต่อ" icon="pi pi-save" :loading="savingSML" :disabled="savingSML || !smlDirty" /><span v-tooltip.top="smlDirty ? 'บันทึกค่าชุดล่าสุดก่อนทดสอบ' : !sml?.isConfigured ? 'ตั้งค่าและบันทึก SML ก่อนทดสอบ' : ''"><Button type="button" label="ทดสอบการเชื่อมต่อ" icon="pi pi-bolt" outlined :disabled="!sml?.isConfigured || smlDirty || savingSML" :loading="testingSML" @click="testSML" /></span><small v-if="smlDirty" class="text-orange-600">บันทึกค่าก่อนทดสอบการเชื่อมต่อ</small></div></form></TabPanel>
+        <TabPanel value="sml">
+          <Message severity="info" :closable="false" class="mb-5">
+            <strong>ตั้งค่า Java Web Service ของร้าน</strong>
+            <div class="mt-1">กรอกเฉพาะ Base URL เช่น <code>https://shop.example.com</code> ระบบจะเติม path มาตรฐานให้เอง และไม่แสดงรหัสผ่านหรือ token กลับมา</div>
+          </Message>
+
+          <Message :severity="smlStatusSeverity" :closable="false" class="mb-5" role="status">
+            <div class="flex items-start gap-2">
+              <i :class="smlStatusSeverity === 'success' ? 'pi pi-check-circle mt-1' : smlStatusSeverity === 'error' ? 'pi pi-times-circle mt-1' : 'pi pi-info-circle mt-1'" aria-hidden="true" />
+              <div>
+                <div class="font-semibold">{{ smlStatusTitle }}</div>
+                <div class="mt-1">{{ smlStatusDetail }}</div>
+              </div>
+            </div>
+          </Message>
+
+          <form class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl" @submit.prevent="saveSML">
+            <div class="grid gap-2 md:col-span-2">
+              <label for="sml-endpoint">Java Web Service Base URL</label>
+              <InputText id="sml-endpoint" v-model="smlForm.endpointUrl" type="url" inputmode="url" autocomplete="url" placeholder="https://shop.example.com" aria-describedby="sml-endpoint-help" fluid />
+              <small id="sml-endpoint-help" class="text-muted-color">ใช้ URL สุดท้ายที่ไม่ redirect และไม่ต้องใส่ชื่อฐานข้อมูลหรือชื่อไฟล์ใน URL</small>
+              <div v-if="resolvedSMLJavaWSEndpoint" class="flex flex-wrap gap-x-2 gap-y-1 text-sm">
+                <span class="font-medium">ปลายทางที่ระบบจะทดสอบ:</span>
+                <code class="break-all">{{ resolvedSMLJavaWSEndpoint }}</code>
+              </div>
+            </div>
+            <div class="grid gap-2">
+              <label for="sml-config-file">ไฟล์ SMLConfig</label>
+              <InputText id="sml-config-file" v-model="smlForm.configFileName" placeholder="SMLConfigDATA.xml" fluid />
+              <small class="text-muted-color">ต้องตรงกับไฟล์ที่ Java Web Service ของร้านเข้าถึงได้</small>
+            </div>
+            <div class="grid gap-2">
+              <label for="sml-database">ชื่อฐานข้อมูล SML</label>
+              <InputText id="sml-database" v-model="smlForm.databaseName" fluid />
+              <small class="text-muted-color">ต้องตรงกับชื่อฐานข้อมูลที่กำหนดไว้ใน SMLConfig</small>
+            </div>
+            <div class="md:col-span-2 flex flex-wrap items-center gap-3">
+              <Button type="submit" label="บันทึกการเชื่อมต่อ" icon="pi pi-save" :loading="savingSML" :disabled="savingSML || !smlDirty" />
+              <span v-tooltip.top="smlTestDisabledReason">
+                <Button type="button" label="ทดสอบการเชื่อมต่อ" icon="pi pi-bolt" outlined :disabled="smlTestDisabled" :loading="testingSML" @click="testSML" />
+              </span>
+              <small v-if="smlDirty" class="text-orange-600">บันทึกค่าก่อนทดสอบการเชื่อมต่อ</small>
+              <small v-else class="text-muted-color">การทดสอบส่ง <code>select 1</code> แบบอ่านอย่างเดียว ไม่สร้างรายงานและไม่ส่ง LINE</small>
+            </div>
+          </form>
+        </TabPanel>
         <TabPanel value="refresh">
           <Message severity="info" :closable="false" class="mb-5"><strong>กำหนดว่า Snapshot จะถือเป็น “ข้อมูลล่าสุด” ได้นานเท่าไร</strong><div class="mt-2">เมื่อผู้ใช้เปิด Dashboard หลังพ้นช่วงนี้ ระบบจึงอาจเริ่มดึงข้อมูลเบื้องหลัง ค่านี้ไม่ใช่ตารางส่ง LINE และไม่ได้ Query SML ต่อเนื่องตลอดวัน ผู้ใช้ยังกดดึงใหม่เองได้เสมอ</div></Message>
           <Message v-if="refreshPolicy?.rolloutStatus && refreshPolicy.rolloutStatus !== 'ACTIVE'" severity="warn" :closable="false" class="mb-5">การอัปเดตเบื้องหลังยังไม่เปิดใช้กับร้านนี้ใน Production ค่าที่ตั้งไว้จะมีผลเมื่อระบบเปิด feature นี้ แต่การกดดึงข้อมูลด้วยตนเองยังใช้ได้</Message>
