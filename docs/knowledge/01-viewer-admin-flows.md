@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-07-23
+last_verified: 2026-08-03
 source_of_truth: [src/router/index.ts, src/utils/viewerRouting.ts, src/views/viewer/ViewerShell.vue, src/views/admin/ScheduleEditor.vue, src/views/admin/TenantDetail.vue, src/views/admin/ReportRuns.vue, src/views/admin/OperationalIncidents.vue, src/views/admin/OperationalIncidentDetail.vue, src/components/operations/IncidentDiagnosisPanel.vue, src/utils/incidentDiagnosis.ts, src/composables/useServerTable.ts, src/utils/adminTableFilters.ts]
 tags: [frontend, viewer, admin, routing]
 ---
@@ -55,6 +55,14 @@ visible. The incident detail page may resolve authenticated tenant names, but
 the copy-for-Codex summary contains only safe operational fields. Admin cannot
 manually mark an incident recovered: Acknowledge stops reminders, and accepted
 risk is a separate closure with a required reason.
+
+The SML connection tab distinguishes saved readiness from an unsaved draft. It
+shows the standard JavaWS endpoint resolved from the Base URL, the latest
+persisted test state and timestamp, and explains that the test is a read-only
+`select 1` with no report or LINE side effect. A guarded `Retry-After` response
+becomes a visible countdown and disabled test action, not a generic failure;
+the UI must never encourage a retry while the Server protects a potentially
+in-flight JavaWS request.
 
 Report Run history shows a persisted Thai failure summary without loading one
 detail request per table row. `ดูสาเหตุและหลักฐาน` lazily loads the selected run
