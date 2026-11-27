@@ -22,7 +22,7 @@
   "dependencies": {
     "@fontsource/lato": "^5.2.7",
     "@fontsource/noto-sans-thai": "^5.2.7",
-    "@line/liff": "2.29.1",
+    "@line/liff": "2.32.0",
     "@primeuix/themes": "2.0.3",
     "chart.js": "4.5.1",
     "primeicons": "7.0.0",
